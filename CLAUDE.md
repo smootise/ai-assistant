@@ -71,11 +71,30 @@ When asked to make changes:
 5. If uncertain, **ask a clarification question** before large edits.
 
 ---
+## Configuration & Variables
 
-## Sprint 0: Current Tickets
-- Initialize repo & CI/CD — ✅ (in progress/complete)
-- Select & configure AI coding assistant — ⏳
-- Scaffold PWA shell (Next.js or SvelteKit) — 🎯 due Aug 21, 2025
+We use a hybrid config: ENV for secrets/toggles, config.yaml for structured defaults.
+Precedence: CLI > ENV (.env) > config.yaml. Always print effective values at start of a run.
+
+Primary ENV vars:
+JARVIS_PROVIDER — local | openai | benchmark. Default local.
+OPENAI_API_KEY — required only for openai/benchmark. Keep in .env (never commit).
+OPENAI_MODEL — cloud model (default gpt-4o-mini).
+LOCAL_MODEL_NAME — name/alias for local model (e.g., llama-3-8b-q4).
+JARVIS_OUTPUT_ROOT — default OUTPUTS.
+JARVIS_OUTPUT_TIMESTAMP — true|false (default true).
+JARVIS_OUTPUT_TS_FORMAT — default %Y%m%d_%H%M%S → subfolders like OUTPUTS/20250807_142915/.
+JARVIS_LOG_LEVEL — INFO by default.
+JARVIS_PROMPTS_DIR — prompts; JARVIS_SAMPLES_DIR — samples.
+
+Examples
+1. Local run to default timestamped folder:
+JARVIS_PROVIDER=local python -m jarvis.cli summarize --file samples/notes/note_small.md
+2. Benchmark (if key present), custom root:
+JARVIS_PROVIDER=benchmark JARVIS_OUTPUT_ROOT=OUTPUTS python -m jarvis.cli summarize --file samples/conversations/conv_short.json
+
+Security
+.env is ignored by Git. Use .env.example for placeholders. Never commit real keys.
 
 ---
 
