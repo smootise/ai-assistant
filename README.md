@@ -40,29 +40,16 @@ Notes: /samples/notes/ → note_small.md (~700–800 words), note_medium.md (~2,
 Conversations: /samples/conversations/ → conv_short.json (~30 msgs), conv_medium.json (~100 msgs)
 Supported input types: .md, .txt, .json.
 
-## Outputs
-Each run writes artifacts to a timestamped folder:
-OUTPUTS/
-  20250807_142915/
-    <basename>.json
-    <basename>.md
+### Output Spec & Schema
 
-JSON contract (schema jarvis.summarization v1.0.0)
-- summary: string (≤ ~200 words)
-- bullets: string[] (3–10)
-- action_items: string[] (0–10, imperative)
-- confidence: number (0–1)
-- provider: string (local|openai|…)
-- model: string
-- latency_ms: integer
-- token_stats?: { input, output, total }
-- source_file: string
-- created_at: ISO-8601
-- schema: "jarvis.summarization"
-- schema_version: "1.0.0"
-- (optional) status: "ok"|"degraded", warnings: string[]
+Summarization runs produce **JSON + Markdown** artifacts in timestamped folders:
+`OUTPUTS/<YYYYMMDD_HHMMSS>/<basename>.json|.md`.
 
-Markdown report mirrors JSON (Title, Confidence, Summary, Bullets, Action Items, Metadata footer).
+- Full spec: see **[docs/OUTPUTS.md](docs/OUTPUTS.md)** (fields, Markdown layout, error policy).
+- JSON Schema (Draft 2020-12, lenient): **[docs/schemas/jarvis.summarization.v1.schema.json](docs/schemas/jarvis.summarization.v1.schema.json)**.
+- Versioning: artifacts declare `schema="jarvis.summarization"` and `schema_version="1.0.0"`.  
+  Consumers accept any `1.*.*` and should fail on `>=2.0.0`.
+
 
 ## Error & Exit Policy
 - Hard error → cannot proceed (e.g., missing input file, unsupported extension, required secret absent in openai mode). Exit code 1.

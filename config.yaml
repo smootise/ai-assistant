@@ -1,0 +1,49 @@
+# JARVIS — Configuration defaults
+# Precedence: CLI flags > ENV (.env) > these YAML defaults
+# No secrets here; keep API keys only in .env
+
+schema: "jarvis.summarization"
+schema_version: "1.0.0"
+
+defaults:
+  provider: "local"         # local | openai | benchmark
+
+  model:
+    openai: "gpt-4o-mini"   # cloud model name
+    local: null             # fill later (e.g., "llama-3-8b-q4")
+
+  outputs:
+    root: "OUTPUTS"         # base folder for artifacts
+    timestamped: true       # create subfolders per run
+    ts_format: "%Y%m%d_%H%M%S"  # e.g., OUTPUTS/20250807_142915/
+
+  paths:
+    prompts_dir: "prompts"
+    samples_dir: "samples"
+
+  input:
+    # Sprint 0 scope: files only
+    supported_extensions:
+      - ".md"
+      - ".txt"
+      - ".json"
+
+  prompts:
+    # Map logical kinds to template files (kept in /prompts)
+    notation: "summarize_notation.md"
+    conversation: "summarize_conversation.md"
+
+  logging:
+    level: "INFO"           # DEBUG | INFO | WARNING | ERROR
+
+  benchmark:
+    # Activated by provider=benchmark via CLI/ENV; keep here for docs.
+    metrics:
+      - "latency_ms"
+      - "provider"
+      - "model"
+
+# Notes:
+# - CLI flags are for one-off overrides (e.g., --provider openai).
+# - ENV is for machine/CI defaults and secrets (OPENAI_API_KEY).
+# - This YAML documents structured, non-secret defaults for the repo.

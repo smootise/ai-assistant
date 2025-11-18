@@ -1,0 +1,49 @@
+[
+  { "speaker": "Mr.GPT", "content": "Hey Thibaud — we need to finalize the specs for the /samples structure for JARVIS. You have a minute to check that together and lock the decisions?", "ts": "2025-08-07T14:00:00Z" },
+  { "speaker": "Thibaud", "content": "Yes, I’m here. Let’s go point by point and keep it practical so I can create the files today.", "ts": "2025-08-07T14:00:30Z" },
+
+  { "speaker": "Mr.GPT", "content": "First: folder layout. Option A is a single /samples folder; Option B is two subfolders, /samples/notes and /samples/conversations. What’s your pick?", "ts": "2025-08-07T14:01:05Z" },
+  { "speaker": "Thibaud", "content": "Two subfolders. Decision: /samples/notes for Markdown notes and /samples/conversations for JSON threads.", "ts": "2025-08-07T14:01:40Z" },
+
+  { "speaker": "Mr.GPT", "content": "Naming conventions. I propose snake_case and always include language. Pattern: note_<size>[_<topic>]_<lang>.md and conv_<size>[_<topic>]_<lang>.json. OK?", "ts": "2025-08-07T14:02:15Z" },
+  { "speaker": "Thibaud", "content": "Agreed. Decision: snake_case with language suffix on every file (en or fr).", "ts": "2025-08-07T14:02:40Z" },
+
+  { "speaker": "Mr.GPT", "content": "Sizes. Notes: small = 700–800 words, medium = 2,000–3,000. Conversations: short ≈ 30 messages, medium ≈ 100 messages. Still good?", "ts": "2025-08-07T14:03:10Z" },
+  { "speaker": "Thibaud", "content": "Yes, that’s the right balance for quality vs performance on a 5090. Decision: accept those ranges.", "ts": "2025-08-07T14:03:40Z" },
+
+  { "speaker": "Mr.GPT", "content": "Formats. Notes as Markdown (.md), conversations as JSON arrays. This keeps the ingestion simple and the prompts clean.", "ts": "2025-08-07T14:04:10Z" },
+  { "speaker": "Thibaud", "content": "Confirmed. Decision: .md for notes and .json for conversations.", "ts": "2025-08-07T14:04:30Z" },
+
+  { "speaker": "Mr.GPT", "content": "Per-message shape for conversations: use 'speaker' (no 'role' field), with 'content' and optional 'ts' (ISO-8601 UTC). Agree?", "ts": "2025-08-07T14:04:55Z" },
+  { "speaker": "Thibaud", "content": "Yes. Decision: { speaker, content, ts? } only for v1.", "ts": "2025-08-07T14:05:15Z" },
+
+  { "speaker": "Mr.GPT", "content": "Metadata. For notes we’ll add a tiny HTML comment header (size/topic/lang/date). For conversations, rely on filename and keep JSON clean. OK?", "ts": "2025-08-07T14:05:45Z" },
+  { "speaker": "Thibaud", "content": "Agreed. Keep it minimal until we need more.", "ts": "2025-08-07T14:06:05Z" },
+
+  { "speaker": "Mr.GPT", "content": "Language coverage. Do you want to ship both EN and FR for the first set, or phase FR in later?", "ts": "2025-08-07T14:06:35Z" },
+  { "speaker": "Thibaud", "content": "Let’s do both for the small note and short conversation. Medium can be EN first, FR later.", "ts": "2025-08-07T14:06:55Z" },
+
+  { "speaker": "Mr.GPT", "content": "Versioning. Rely on Git history; add _v2 suffix only if we need parallel variants for the same size/topic.", "ts": "2025-08-07T14:07:25Z" },
+  { "speaker": "Thibaud", "content": "Yes. Decision: filenames stable; use _v2 sparingly.", "ts": "2025-08-07T14:07:45Z" },
+
+  { "speaker": "Mr.GPT", "content": "Encoding & line endings. Recommend UTF-8 with LF to keep cross-platform issues minimal.", "ts": "2025-08-07T14:08:10Z" },
+  { "speaker": "Thibaud", "content": "Agreed. I’ll configure my editor for UTF-8 LF.", "ts": "2025-08-07T14:08:30Z" },
+
+  { "speaker": "Mr.GPT", "content": "Here’s a checklist snippet we can drop into a note to test bullet extraction:\n- item A\n- item B\n- item C", "ts": "2025-08-07T14:09:00Z" },
+  { "speaker": "Thibaud", "content": "Great. I’ll include a small list like that in the small note to exercise the bullets.", "ts": "2025-08-07T14:09:25Z" },
+
+  { "speaker": "Mr.GPT", "content": "Let’s also test a tiny code block to make sure it doesn’t confuse the summarizer:\n```\n{\n  \"speaker\": \"Thibaud\",\n  \"content\": \"example\",\n  \"ts\": \"2025-08-07T10:00:00Z\"\n}\n```", "ts": "2025-08-07T14:09:55Z" },
+  { "speaker": "Thibaud", "content": "Good idea. I’ll paste a short JSON block into the medium note as well to test formatting resilience.", "ts": "2025-08-07T14:10:20Z" },
+
+  { "speaker": "Mr.GPT", "content": "We should include at least one link-like string so we see how it’s treated: https://example.com/jarvis/samples", "ts": "2025-08-07T14:10:45Z" },
+  { "speaker": "Thibaud", "content": "Noted. I’ll sprinkle that URL into the note context section.", "ts": "2025-08-07T14:11:05Z" },
+
+  { "speaker": "Mr.GPT", "content": "Risk management: please add one explicit risk with mitigation so action-item extraction can catch it.", "ts": "2025-08-07T14:11:30Z" },
+  { "speaker": "Thibaud", "content": "Risk: local model context window may clip longer notes. Mitigation: keep samples under ~12k tokens and plan chunking if needed.", "ts": "2025-08-07T14:11:55Z" },
+
+  { "speaker": "Mr.GPT", "content": "Great. Let’s close with explicit decisions and next steps. Decision: finalize /samples folder layout, naming, sizes, formats, encoding, and minimal metadata as discussed.", "ts": "2025-08-07T14:12:25Z" },
+  { "speaker": "Thibaud", "content": "Decision acknowledged. TODO: create the folders and initial files today. Owner: Thibaud.", "ts": "2025-08-07T14:12:50Z" },
+
+  { "speaker": "Mr.GPT", "content": "TODO: I’ll review your first two files (note_small_jarvis_scope_en.md and conv_short_samples_spec_en_v2.json) and suggest tweaks. Owner: Mr.GPT.", "ts": "2025-08-07T14:13:15Z" },
+  { "speaker": "Thibaud", "content": "Perfect. After that, I’ll mirror the small/short set in French and then start the medium English samples.", "ts": "2025-08-07T14:13:40Z" }
+]

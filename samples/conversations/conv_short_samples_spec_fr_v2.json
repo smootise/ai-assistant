@@ -1,0 +1,49 @@
+[
+  { "speaker": "Mr.GPT", "content": "Salut Thibaud — on doit finaliser les spécifications du dossier /samples pour JARVIS. Tu as quelques minutes pour passer en revue les décisions et les verrouiller ?", "ts": "2025-08-07T15:00:00Z" },
+  { "speaker": "Thibaud", "content": "Oui, je suis dispo. Allons-y point par point et restons pragmatiques pour que je puisse créer les fichiers aujourd’hui.", "ts": "2025-08-07T15:00:30Z" },
+
+  { "speaker": "Mr.GPT", "content": "Premier sujet : la structure. Option A, un seul dossier /samples ; Option B, deux sous-dossiers /samples/notes et /samples/conversations. Tu préfères quoi ?", "ts": "2025-08-07T15:01:05Z" },
+  { "speaker": "Thibaud", "content": "Deux sous-dossiers. Décision : /samples/notes pour les notes Markdown et /samples/conversations pour les fils JSON.", "ts": "2025-08-07T15:01:40Z" },
+
+  { "speaker": "Mr.GPT", "content": "Convention de nommage. Je propose snake_case et la langue toujours incluse. Modèle : note_<size>[_<topic>]_<lang>.md et conv_<size>[_<topic>]_<lang>.json. Ça te va ?", "ts": "2025-08-07T15:02:15Z" },
+  { "speaker": "Thibaud", "content": "OK. Décision : snake_case avec suffixe de langue sur chaque fichier (en ou fr).", "ts": "2025-08-07T15:02:40Z" },
+
+  { "speaker": "Mr.GPT", "content": "Tailles. Notes : small = 700–800 mots, medium = 2 000–3 000. Conversations : short ≈ 30 messages, medium ≈ 100 messages. Toujours bon ?", "ts": "2025-08-07T15:03:10Z" },
+  { "speaker": "Thibaud", "content": "Oui, c’est le bon compromis pour la qualité et les perfs sur une 5090. Décision : on garde ces plages.", "ts": "2025-08-07T15:03:40Z" },
+
+  { "speaker": "Mr.GPT", "content": "Formats. Notes en Markdown (.md) ; conversations en tableaux JSON. Ça simplifie l’ingestion et les prompts.", "ts": "2025-08-07T15:04:10Z" },
+  { "speaker": "Thibaud", "content": "Confirmé. Décision : .md pour les notes et .json pour les conversations.", "ts": "2025-08-07T15:04:30Z" },
+
+  { "speaker": "Mr.GPT", "content": "Structure par message pour les conversations : 'speaker', 'content' et 'ts' optionnel (ISO-8601 UTC). On laisse tomber 'actor' en v1 ?", "ts": "2025-08-07T15:04:55Z" },
+  { "speaker": "Thibaud", "content": "Oui. Décision : { speaker, content, ts? } uniquement pour v1.", "ts": "2025-08-07T15:05:15Z" },
+
+  { "speaker": "Mr.GPT", "content": "Métadonnées. Pour les notes, un petit en-tête en commentaire HTML (size/topic/lang/date). Pour les conversations, on s’appuie sur le nom du fichier et on garde le JSON propre. OK ?", "ts": "2025-08-07T15:05:45Z" },
+  { "speaker": "Thibaud", "content": "OK. Restons minimalistes tant qu’on n’a pas besoin de plus.", "ts": "2025-08-07T15:06:05Z" },
+
+  { "speaker": "Mr.GPT", "content": "Langues. Tu veux livrer EN et FR dès la première série, ou ajouter FR après ?", "ts": "2025-08-07T15:06:35Z" },
+  { "speaker": "Thibaud", "content": "Faisons les deux pour la petite note et la courte conversation. Pour medium, on peut commencer en EN puis ajouter FR.", "ts": "2025-08-07T15:06:55Z" },
+
+  { "speaker": "Mr.GPT", "content": "Versionning. On s’appuie sur l’historique Git ; suffixe _v2 uniquement si on a des variantes parallèles du même sujet/taille.", "ts": "2025-08-07T15:07:25Z" },
+  { "speaker": "Thibaud", "content": "Oui. Décision : noms stables ; _v2 avec parcimonie.", "ts": "2025-08-07T15:07:45Z" },
+
+  { "speaker": "Mr.GPT", "content": "Encodage et fins de ligne. Recommandation UTF-8 avec LF pour éviter les problèmes multi-OS.", "ts": "2025-08-07T15:08:10Z" },
+  { "speaker": "Thibaud", "content": "Validé. Je configure mon éditeur en UTF-8 LF.", "ts": "2025-08-07T15:08:30Z" },
+
+  { "speaker": "Mr.GPT", "content": "Extrait de liste à puces à insérer dans une note pour tester l’extraction :\n- élément A\n- élément B\n- élément C", "ts": "2025-08-07T15:09:00Z" },
+  { "speaker": "Thibaud", "content": "Parfait. J’ajouterai une petite liste comme ça dans la note small pour déclencher les bullets.", "ts": "2025-08-07T15:09:25Z" },
+
+  { "speaker": "Mr.GPT", "content": "Testons aussi un mini bloc de code pour vérifier que le résumeur ne se perd pas :\n```\n{\n  \"speaker\": \"Thibaud\",\n  \"content\": \"exemple\",\n  \"ts\": \"2025-08-07T10:00:00Z\"\n}\n```", "ts": "2025-08-07T15:09:55Z" },
+  { "speaker": "Thibaud", "content": "Bonne idée. Je collerai un petit bloc JSON dans la note medium pour tester la robustesse du rendu.", "ts": "2025-08-07T15:10:20Z" },
+
+  { "speaker": "Mr.GPT", "content": "On ajoute aussi une URL pour voir comment elle est traitée : https://example.com/jarvis/samples", "ts": "2025-08-07T15:10:45Z" },
+  { "speaker": "Thibaud", "content": "Noté. Je mettrai ce lien dans la section Contexte de la note.", "ts": "2025-08-07T15:11:05Z" },
+
+  { "speaker": "Mr.GPT", "content": "Gestion des risques : merci d’ajouter un risque explicite avec mitigation pour tester l’extraction.", "ts": "2025-08-07T15:11:30Z" },
+  { "speaker": "Thibaud", "content": "Risk: la fenêtre de contexte du modèle local peut couper les longues notes. Mitigation: garder les échantillons sous ~12k tokens et prévoir du découpage si besoin.", "ts": "2025-08-07T15:11:55Z" },
+
+  { "speaker": "Mr.GPT", "content": "Super. On clôture avec des décisions et les prochaines étapes. Décision : valider la structure /samples, les conventions de nommage, les tailles, les formats, l’encodage et le méta minimal comme discuté.", "ts": "2025-08-07T15:12:25Z" },
+  { "speaker": "Thibaud", "content": "Décision confirmée. TODO: créer les dossiers et les premiers fichiers aujourd’hui. Owner: Thibaud.", "ts": "2025-08-07T15:12:50Z" },
+
+  { "speaker": "Mr.GPT", "content": "TODO: je relis tes deux premiers fichiers (note_small_jarvis_scope_fr.md et conv_short_samples_spec_fr_v2.json) et je propose des ajustements. Owner: Mr.GPT.", "ts": "2025-08-07T15:13:15Z" },
+  { "speaker": "Thibaud", "content": "Parfait. Ensuite je ferai les versions EN/FR manquantes et j’attaquerai les échantillons medium en EN.", "ts": "2025-08-07T15:13:40Z" }
+]

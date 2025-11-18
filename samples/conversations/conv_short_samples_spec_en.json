@@ -1,0 +1,162 @@
+[
+  {
+    "speaker": "Mr.GPT",
+    "content": "Hey Thibaud — we need to finalize the specs for the /samples structure for JARVIS. You have a minute to run through the decisions together and lock them in?",
+    "ts": "2025-08-07T14:00:00Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "Yep, available now. Let’s go point by point and keep it pragmatic.",
+    "ts": "2025-08-07T14:00:30Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "First up: top-level layout. Do you prefer a single /samples folder or two subfolders (/samples/notes and /samples/conversations)?",
+    "ts": "2025-08-07T14:01:10Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "Two subfolders: /samples/notes and /samples/conversations. Keeps scope clear for Sprint 0.",
+    "ts": "2025-08-07T14:01:45Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "Great. Naming style next. I propose snake_case, always include language. Pattern:\n• Notes: note_<size>[_<topic>]_<lang>.md\n• Conversations: conv_<size>[_<topic>]_<lang>.json\nSound good?",
+    "ts": "2025-08-07T14:02:25Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "Agreed. snake_case and always include language. That will help me keep English vs French samples straight.",
+    "ts": "2025-08-07T14:02:55Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "Size taxonomy: For notes, small = 700–800 words, medium = 2,000–3,000. For conversations, short ≈ 30 messages, medium ≈ 100 messages. Accept?",
+    "ts": "2025-08-07T14:03:30Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "Yes, those ranges are perfect for a 5090 and still realistic for work docs.",
+    "ts": "2025-08-07T14:03:55Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "File formats: Markdown (.md) for notes; JSON (.json) array for conversations.",
+    "ts": "2025-08-07T14:04:25Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "Confirmed. That maps well to the prompts we’ll write.",
+    "ts": "2025-08-07T14:04:45Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "Conversation message shape: prefer 'speaker' instead of 'role', and skip any 'actor' field in v1?",
+    "ts": "2025-08-07T14:05:20Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "Yes: use speaker only. Keep v1 minimal.",
+    "ts": "2025-08-07T14:05:40Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "Embedded metadata: For notes, we can put a tiny HTML comment header (size/topic/lang/date). For conversations, rely on filename and keep JSON clean. Okay?",
+    "ts": "2025-08-07T14:06:10Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "Agreed. Header for notes; filenames for conv JSON is fine.",
+    "ts": "2025-08-07T14:06:35Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "Language: always include `_en` or `_fr` in filenames. Do you want both languages for the first set, or start with EN then add FR?",
+    "ts": "2025-08-07T14:07:05Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "Let’s aim for both. At minimum, ship small_note and short_conv in EN and FR. Medium can be EN first, FR later.",
+    "ts": "2025-08-07T14:07:40Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "Versioning: rely on Git history; add _v2 only if we need parallel variants of the same size/topic.",
+    "ts": "2025-08-07T14:08:10Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "Yes, keep filenames stable. Use _v2 sparingly.",
+    "ts": "2025-08-07T14:08:30Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "Encoding/line endings: UTF-8, LF. We’ll note in the samples README that Windows editors should preserve LF.",
+    "ts": "2025-08-07T14:08:55Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "Agreed. I’ll configure the editor to keep LF.",
+    "ts": "2025-08-07T14:09:15Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "Samples README: include the naming rules, size ranges, per-message JSON shape (speaker/content/ts), and example filenames.",
+    "ts": "2025-08-07T14:09:45Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "Yes, a short README in /samples will be helpful for future me.",
+    "ts": "2025-08-07T14:10:05Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "Initial file list (English first):\n• notes: note_small_jarvis_scope_en.md, note_medium_vector_indexing_en.md\n• conv: conv_short_samples_spec_en.json, conv_medium_release_planning_en.json\nThen mirror small/short in French. Good?",
+    "ts": "2025-08-07T14:10:40Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "Works for me. For FR names we’ll use note_small_jarvis_scope_fr.md and conv_short_samples_spec_fr.json.",
+    "ts": "2025-08-07T14:11:05Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "For extraction tests, I’ll sprinkle explicit lines like “Decision: …” and “TODO: …” in both the note and the conversation. Any other markers you want?",
+    "ts": "2025-08-07T14:11:35Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "Add at least one 'Risk:' line with a brief mitigation, and maybe one 'Owner:' line linked to a TODO so we can see if ownership is captured or ignored.",
+    "ts": "2025-08-07T14:12:05Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "Decision: Two subfolders (/samples/notes, /samples/conversations); snake_case with language; sizes as discussed; MD for notes; JSON with {speaker, content, ts?} for conv; minimal metadata; UTF-8 LF; samples README with rules and examples.",
+    "ts": "2025-08-07T14:12:40Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "Acknowledged. Decision looks correct. Also, I’m fine with adding EN+FR for small/short now, medium EN first.",
+    "ts": "2025-08-07T14:13:05Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "TODO: I’ll draft the /samples/README.md and create empty stubs for the four initial English files plus the two French small/short ones. Timeline: today.",
+    "ts": "2025-08-07T14:13:30Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "TODO: I’ll fill in the content for note_small_jarvis_scope_en.md and conv_short_samples_spec_en.json first, then create the FR counterparts. Target today EOD for small/short.",
+    "ts": "2025-08-07T14:13:55Z"
+  },
+  {
+    "speaker": "Mr.GPT",
+    "content": "Perfect. Ping me if you want a quick review pass on tone/structure before we run the prompt-runner. Anything else to decide?",
+    "ts": "2025-08-07T14:14:20Z"
+  },
+  {
+    "speaker": "Thibaud",
+    "content": "That covers it. Let’s execute and circle back after the first summaries to see if we need to tweak the prompts.",
+    "ts": "2025-08-07T14:14:45Z"
+  }
+]
