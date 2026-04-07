@@ -17,11 +17,15 @@ Formats
 Notes: Markdown (.md)
 - Optional header comment:
 <!-- size: small | topic: jarvis_scope | lang: en | created: 2025-08-07 -->
-- Conversations: JSON array of messages:
-[
-  { "role": "user", "content": "...", "ts": "2025-08-07T10:03:00Z" },
-  { "role": "assistant", "content": "..." }
-]
+**Conversations** live in `/samples/conversations/` as JSON arrays.
+
+Per-message shape:
+```json
+{ "speaker": "pm_alex", "content": "…", "ts": "2025-08-07T09:00:00Z" }
+speaker: stable handle (e.g., pm_alex, eng_sam, assistant)
+content: message text
+ts (optional): ISO-8601 UTC (...Z)
+
 
 Encoding
 UTF-8, LF line endings.
