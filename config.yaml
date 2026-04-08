@@ -6,16 +6,16 @@ schema: "jarvis.summarization"
 schema_version: "1.0.0"
 
 defaults:
-  provider: "local"         # local | openai | benchmark
+  provider: "local"                     # local | openai | benchmark
 
   model:
-    openai: "gpt-4o-mini"   # cloud model name
-    local: null             # fill later (e.g., "llama-3-8b-q4")
+    openai: "gpt-4o-mini"               # cloud model name
+    local: "mistral:7b-instruct"        # fill later (e.g., "llama-3-8b-q4")
 
   outputs:
-    root: "OUTPUTS"         # base folder for artifacts
-    timestamped: true       # create subfolders per run
-    ts_format: "%Y%m%d_%H%M%S"  # e.g., OUTPUTS/20250807_142915/
+    root: "OUTPUTS"                     # base folder for artifacts
+    timestamped: true                   # create subfolders per run
+    ts_format: "%Y%m%d_%H%M%S"          # e.g., OUTPUTS/20250807_142915/
 
   paths:
     prompts_dir: "prompts"

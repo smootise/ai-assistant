@@ -66,14 +66,73 @@ This keeps CI green for soft issues while preserving artifacts for review.
 - openai — uses OPENAI_API_KEY and OPENAI_MODEL.
 - benchmark — runs local, then (if key present) cloud; saves both to compare latency/quality.
 
-## Quickstart (config)
-# create your .env from the template
-Copy-Item .env.example .env
-# then edit .env in your editor and fill required values
-Common toggles
-- Switch provider for a single run via CLI flag (preferred), or set JARVIS_PROVIDER in .env.
-- Change outputs root via JARVIS_OUTPUT_ROOT (timestamped subfolders are on by default).
+## Quickstart
+
+### 1. Install Dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Set Up Configuration
+```bash
+# Create your .env from the template
+cp .env.example .env  # or: Copy-Item .env.example .env (Windows)
+
+# Edit .env and set your local model
+# Example:
+LOCAL_MODEL_NAME=mistral:7b-instruct  # default
+# or:
+LOCAL_MODEL_NAME=llama3:8b            # alternative
+```
+
+### 3. Start Ollama
+Make sure Ollama is running with your chosen model:
+```bash
+ollama serve
+# In another terminal:
+ollama pull mistral:7b-instruct
+```
+
+### 4. Run Summarization
+
+**English short conversation:**
+```bash
+python -m jarvis.cli summarize --file samples/conversations/conv_short_samples_spec_en.json
+```
+
+**French short conversation:**
+```bash
+python -m jarvis.cli summarize --file samples/conversations/conv_short_samples_spec_fr_v2.json
+```
+
+**Test fixture (minimal 3-message conversation for CI):**
+```bash
+python -m jarvis.cli summarize --file tests/fixtures/conv_tiny_test.json
+```
+
+### 5. View Results
+Outputs are saved to `OUTPUTS/<timestamp>/`:
+- `<basename>.json` - Machine-readable artifact with full metadata
+- `<basename>.md` - Human-readable Markdown report
+
+### Switching Local Models
+Edit `.env` to change the model:
+```bash
+LOCAL_MODEL_NAME=mistral:7b-instruct  # Mistral 7B (default)
+LOCAL_MODEL_NAME=llama3:8b            # Llama 3 8B
+LOCAL_MODEL_NAME=phi3:medium          # Phi-3 Medium
+```
+
+Make sure the model is pulled in Ollama first:
+```bash
+ollama pull <model-name>
+```
+
+## Common Toggles
+- Switch provider for a single run via CLI flag (preferred), or set `JARVIS_PROVIDER` in `.env`.
+- Change outputs root via `JARVIS_OUTPUT_ROOT` (timestamped subfolders are on by default).
+- Adjust log level with `JARVIS_LOG_LEVEL` (DEBUG, INFO, WARNING, ERROR).
 
 ## House Rules for AI Edits
 See CLAUDE.md for project charter, guardrails, prompts convention, and the config precedence model (CLI > ENV > YAML). When asking an AI assistant to change code or docs, start with:
-“Follow CLAUDE.md. Task: …”
+"Follow CLAUDE.md. Task: …"
