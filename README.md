@@ -133,6 +133,90 @@ ollama pull <model-name>
 - Change outputs root via `JARVIS_OUTPUT_ROOT` (timestamped subfolders are on by default).
 - Adjust log level with `JARVIS_LOG_LEVEL` (DEBUG, INFO, WARNING, ERROR).
 
+---
+
+## Semantic Memory Layer
+
+### Architecture & Responsibility Split
+
+| Layer | Technology | Role |
+|---|---|---|
+| **OUTPUTS/** | JSON + Markdown files | Raw artifacts from each summarization run |
+| **SQLite** (`data/jarvis.db`) | SQLite | **Source of truth** for all structured summary records |
+| **Qdrant** | Qdrant (local) | **Vector retrieval index** — embeddings + payload metadata only |
+
+- SQLite owns the canonical record. Every field from the summarization output is stored there.
+- Qdrant stores only the vector and a minimal payload (IDs + filter fields). Full records are always fetched from SQLite.
+- OUTPUTS files are the raw artifacts. SQLite stores paths back to them.
+
+### Required Local Services
+
+**Ollama** (already running for summarization) — pull the embedding model:
+```bash
+ollama pull qwen3-embedding
+```
+
+**Qdrant** — run via Docker:
+```bash
+docker run -p 6333:6333 -v qdrant_storage:/qdrant/storage qdrant/qdrant
+```
+
+### Summarize + Persist
+
+Add `--persist` to any summarize command to store the result in SQLite and index it in Qdrant:
+
+```bash
+python -m jarvis.cli summarize \
+  --file samples/conversations/conv_short_samples_spec_en.json \
+  --persist
+```
+
+```bash
+python -m jarvis.cli summarize \
+  --file samples/conversations/conv_short_samples_spec_fr_v2.json \
+  --persist
+```
+
+### Semantic Retrieval
+
+Query across all persisted summaries using natural language:
+
+```bash
+python -m jarvis.cli retrieve --query "what did we decide about sample file naming?"
+```
+
+```bash
+python -m jarvis.cli retrieve --query "action items autour de la structure des fichiers" --top-k 3
+```
+
+Output format (stdout):
+```
+Top 2 result(s) for: "what did we decide about sample file naming?"
+
+────────────────────────────────────────────────────────────────────────
+#1  score=0.9231  id=1
+    source : conv_short_samples_spec_en.json
+    created: 2026-04-08T15:37:45Z
+    preview: The team locked in the full /samples spec for Sprint 0…
+
+#2  score=0.8107  id=2
+    source : conv_short_samples_spec_fr_v2.json
+    created: 2026-04-08T17:15:19Z
+    preview: L'équipe a finalisé les spécifications du répertoire /samples…
+```
+
+### Memory ENV vars
+
+| Variable | Default | Description |
+|---|---|---|
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Shared by inference and embedding clients |
+| `EMBEDDING_MODEL` | `qwen3-embedding` | Ollama embedding model name |
+| `JARVIS_DB_PATH` | `data/jarvis.db` | SQLite database path |
+| `QDRANT_HOST` | `localhost` | Qdrant server host |
+| `QDRANT_PORT` | `6333` | Qdrant server port |
+
+---
+
 ## House Rules for AI Edits
 See CLAUDE.md for project charter, guardrails, prompts convention, and the config precedence model (CLI > ENV > YAML). When asking an AI assistant to change code or docs, start with:
 "Follow CLAUDE.md. Task: …"

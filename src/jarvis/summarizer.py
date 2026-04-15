@@ -5,7 +5,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from jarvis.ollama import OllamaClient
 from jarvis.output_writer import OutputWriter
@@ -40,7 +40,9 @@ class ConversationSummarizer:
         self.schema = schema
         self.schema_version = schema_version
 
-    def summarize_file(self, file_path: str, run_id: str = None) -> Path:
+    def summarize_file(
+        self, file_path: str, run_id: str = None
+    ) -> Tuple[Path, Dict[str, Any]]:
         """Summarize a conversation JSON file.
 
         Args:
@@ -48,7 +50,9 @@ class ConversationSummarizer:
             run_id: Optional run identifier.
 
         Returns:
-            Path to output directory.
+            Tuple of (output_dir, output_data) where output_data is the full
+            summarization result dict (matches OUTPUTS.md schema). Callers that
+            only need the path can ignore the second element.
 
         Raises:
             FileNotFoundError: If input file doesn't exist.
@@ -107,7 +111,7 @@ class ConversationSummarizer:
         )
 
         logger.info(f"Summarization completed in {latency_ms}ms")
-        return output_dir
+        return output_dir, output_data
 
     def _load_conversation(self, file_path: Path) -> List[Dict[str, str]]:
         """Load and validate conversation JSON.

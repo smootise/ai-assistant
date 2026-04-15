@@ -1,6 +1,9 @@
 # Claude Code local memory (not for version control)
 .claude/
 
+# JARVIS local data (SQLite DB)
+data/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

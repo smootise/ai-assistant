@@ -1,0 +1,22 @@
+{
+  "summary": "The team agreed on API documentation standards before the upcoming release.",
+  "bullets": [
+    "Decision: Bob owns the docs update for all current API endpoints",
+    "Integration tests required for all new endpoints to catch edge cases",
+    "Risk: edge cases may be missed without thorough testing; mitigation is integration tests"
+  ],
+  "action_items": [
+    "Bob: Review current endpoints and add examples by Friday",
+    "Alice: Add integration tests for all new endpoints"
+  ],
+  "confidence": 0.9,
+  "schema": "jarvis.summarization",
+  "schema_version": "1.0.0",
+  "provider": "local",
+  "model": "gemma4:31b",
+  "created_at": "2026-04-09T00:00:00Z",
+  "source_file": "conv_tiny_test.json",
+  "latency_ms": 1234,
+  "source_kind": "conversation",
+  "status": "ok"
+}

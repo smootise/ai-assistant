@@ -36,6 +36,15 @@ defaults:
   logging:
     level: "INFO"           # DEBUG | INFO | WARNING | ERROR
 
+  ollama:
+    base_url: "http://localhost:11434"  # shared by inference + embedding clients
+
+  memory:
+    embedding_model: "qwen3-embedding"  # override with EMBEDDING_MODEL env var
+    db_path: "data/jarvis.db"           # override with JARVIS_DB_PATH env var
+    qdrant_host: "localhost"            # override with QDRANT_HOST env var
+    qdrant_port: 6333                   # override with QDRANT_PORT env var
+
   benchmark:
     # Activated by provider=benchmark via CLI/ENV; keep here for docs.
     metrics:

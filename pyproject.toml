@@ -10,6 +10,7 @@ dependencies = [
     "requests",
     "python-dotenv",
     "pyyaml",
+    "qdrant-client",
 ]
 
 [tool.setuptools.packages.find]

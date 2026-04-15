@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 class OllamaClient:
     """Simple HTTP client for Ollama API."""
 
-    def __init__(self, base_url: str = "http://localhost:11434", model: str = "mistral:7b-instruct"):
+    def __init__(
+        self, model: str = "mistral:7b-instruct", base_url: str = "http://localhost:11434"
+    ):
         """Initialize Ollama client.
 
         Args:

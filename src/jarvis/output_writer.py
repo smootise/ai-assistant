@@ -68,7 +68,7 @@ class OutputWriter:
         md_path = output_dir / f"{base_name}.md"
         self._write_markdown(md_path, summary_data)
 
-        logger.info(f"Outputs written successfully:")
+        logger.info("Outputs written successfully:")
         logger.info(f"  JSON: {json_path}")
         logger.info(f"  Markdown: {md_path}")
 

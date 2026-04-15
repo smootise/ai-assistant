@@ -81,17 +81,45 @@ def load_config() -> Dict[str, Any]:
         "schema_version": config_data.get("schema_version", "1.0.0"),
         # Repo root for path resolution
         "repo_root": repo_root,
+        # Ollama base URL (shared by inference and embedding clients)
+        "ollama_base_url": os.getenv(
+            "OLLAMA_BASE_URL",
+            defaults.get("ollama", {}).get("base_url", "http://localhost:11434"),
+        ),
+        # Memory / embedding
+        "embedding_model": os.getenv(
+            "EMBEDDING_MODEL",
+            defaults.get("memory", {}).get("embedding_model", "qwen3-embedding"),
+        ),
+        "db_path": os.getenv(
+            "JARVIS_DB_PATH",
+            defaults.get("memory", {}).get("db_path", "data/jarvis.db"),
+        ),
+        # Qdrant
+        "qdrant_host": os.getenv(
+            "QDRANT_HOST",
+            defaults.get("memory", {}).get("qdrant_host", "localhost"),
+        ),
+        "qdrant_port": int(
+            os.getenv(
+                "QDRANT_PORT",
+                str(defaults.get("memory", {}).get("qdrant_port", 6333)),
+            )
+        ),
     }
 
     # Log effective configuration (excluding secrets)
     logger.info("Effective configuration:")
     logger.info(f"  Provider: {config['provider']}")
     logger.info(f"  Local Model: {config['local_model_name']}")
+    logger.info(f"  Embedding Model: {config['embedding_model']}")
     logger.info(f"  Output Root: {config['output_root']}")
     logger.info(
         f"  Timestamped Outputs: {config['output_timestamp']} "
         f"(format: {config['output_ts_format']})"
     )
     logger.info(f"  Schema: {config['schema']} v{config['schema_version']}")
+    logger.info(f"  DB Path: {config['db_path']}")
+    logger.info(f"  Qdrant: {config['qdrant_host']}:{config['qdrant_port']}")
 
     return config

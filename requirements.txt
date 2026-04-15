@@ -3,3 +3,4 @@ pytest
 requests
 python-dotenv
 pyyaml
+qdrant-client
