@@ -74,24 +74,32 @@ def chunk_conversation(
         current = messages[i]
         role = current["speaker"]
 
-        # --- Ideal path: user -> assistant -> user (with overlap) -----------
+        # --- Ideal path: user -> assistant(s) -> user (with overlap) ---------
         if role == "user":
-            # Look ahead for assistant
+            # Look ahead for at least one assistant message
             if i + 1 < len(messages) and messages[i + 1]["speaker"] == "assistant":
-                assistant_msg = messages[i + 1]
-                # Look ahead for next user (overlap anchor)
-                if i + 2 < len(messages) and messages[i + 2]["speaker"] == "user":
-                    chunk_msgs = [current, assistant_msg, messages[i + 2]]
+                # Collect all consecutive assistant messages (thinking-mode preambles
+                # produce a short "I'm looking into this…" message immediately followed
+                # by the full answer — keep them together in one chunk).
+                j = i + 1
+                while j < len(messages) and messages[j]["speaker"] == "assistant":
+                    j += 1
+                # messages[i+1 .. j-1] are all assistant turns
+                assistant_msgs = messages[i + 1:j]
+
+                # Look ahead for the next user message (overlap anchor)
+                if j < len(messages) and messages[j]["speaker"] == "user":
+                    chunk_msgs = [current] + assistant_msgs + [messages[j]]
                     chunks.append(_make_chunk(chunk_msgs, conversation_id, chunk_index))
                     chunk_index += 1
-                    i += 2  # advance to the overlap user (it starts next chunk)
+                    i = j  # advance to the overlap user (it starts next chunk)
                     continue
                 else:
-                    # Conversation ends after assistant reply: 2-msg final chunk
-                    chunk_msgs = [current, assistant_msg]
+                    # Conversation ends after the assistant turn(s): final chunk
+                    chunk_msgs = [current] + assistant_msgs
                     chunks.append(_make_chunk(chunk_msgs, conversation_id, chunk_index))
                     chunk_index += 1
-                    i += 2
+                    i = j
                     continue
             else:
                 # User with no following assistant: trailing unmatched user
@@ -109,7 +117,7 @@ def chunk_conversation(
                     # chunk and advance, so no messages are dropped
                     logger.warning(
                         f"Pattern break at position {i}: user followed by "
-                        f"{messages[i+1]['speaker']} (expected assistant). "
+                        f"{messages[i + 1]['speaker']} (expected assistant). "
                         "Emitting fallback single-message chunk."
                     )
                     chunks.append(_make_chunk([current], conversation_id, chunk_index))
@@ -117,15 +125,20 @@ def chunk_conversation(
                     i += 1
                     continue
 
-        # --- Fallback: assistant leading (e.g. after pattern break) ---------
+        # --- Fallback: assistant leading (e.g. start of export or pattern break) ---
         else:
+            # Collect all consecutive assistant messages at this position
+            j = i
+            while j < len(messages) and messages[j]["speaker"] == "assistant":
+                j += 1
+            orphan_msgs = messages[i:j]
             logger.warning(
-                f"Pattern break at position {i}: assistant message without "
-                "preceding user in current window. Emitting fallback chunk."
+                f"Orphaned assistant message(s) at position {i} "
+                f"(no preceding user). Emitting fallback chunk of {len(orphan_msgs)} msg(s)."
             )
-            chunks.append(_make_chunk([current], conversation_id, chunk_index))
+            chunks.append(_make_chunk(orphan_msgs, conversation_id, chunk_index))
             chunk_index += 1
-            i += 1
+            i = j
             continue
 
     manifest_meta = {

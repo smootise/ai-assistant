@@ -367,3 +367,65 @@ class TestChunker:
             all_ids_in_chunks.add(result["pending_tail"]["message_id"])
         all_input_ids = {m["message_id"] for m in norm["messages"]}
         assert all_input_ids == all_ids_in_chunks
+
+    def test_consecutive_assistant_messages_kept_in_one_chunk(self):
+        """Thinking-mode preamble: user -> assistant1 -> assistant2 -> user stays together."""
+        norm = _make_normalized(
+            [
+                ("user", "Q1"),
+                ("assistant", "Thinking…"),
+                ("assistant", "Full answer"),
+                ("user", "Q2"),
+                ("assistant", "A2"),
+            ]
+        )
+        result = chunk_conversation(norm)
+        chunks = result["chunks"]
+        # chunk0: [Q1, Thinking, Full answer, Q2]
+        assert len(chunks[0]["message_ids"]) == 4
+        assert chunks[0]["start_position"] == 0
+        assert chunks[0]["end_position"] == 3
+        # chunk1: [Q2, A2] — 2-message final chunk
+        assert chunks[1]["start_position"] == 3
+        assert len(chunks[1]["message_ids"]) == 2
+
+    def test_consecutive_assistants_no_messages_dropped(self):
+        """No messages lost when consecutive assistant messages are present."""
+        norm = _make_normalized(
+            [
+                ("user", "Q"),
+                ("assistant", "Preamble"),
+                ("assistant", "Answer"),
+                ("user", "Follow-up"),
+            ]
+        )
+        result = chunk_conversation(norm)
+        all_ids_in_chunks = set()
+        for chunk in result["chunks"]:
+            all_ids_in_chunks.update(chunk["message_ids"])
+        if result["pending_tail"]:
+            all_ids_in_chunks.add(result["pending_tail"]["message_id"])
+        assert all_ids_in_chunks == {m["message_id"] for m in norm["messages"]}
+
+    def test_overlap_preserved_with_consecutive_assistants(self):
+        """Overlap rule still holds when assistant turns have multiple messages."""
+        norm = _make_normalized(
+            [
+                ("user", "Q1"),
+                ("assistant", "Preamble1"),
+                ("assistant", "Answer1"),
+                ("user", "Q2"),
+                ("assistant", "Preamble2"),
+                ("assistant", "Answer2"),
+                ("user", "Q3"),
+            ]
+        )
+        result = chunk_conversation(norm)
+        chunks = result["chunks"]
+        assert len(chunks) >= 2
+        for i in range(len(chunks) - 1):
+            last_id = chunks[i]["message_ids"][-1]
+            first_id = chunks[i + 1]["message_ids"][0]
+            assert last_id == first_id, (
+                f"Chunk {i} last id {last_id!r} != Chunk {i+1} first id {first_id!r}"
+            )
