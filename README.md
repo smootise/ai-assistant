@@ -80,9 +80,9 @@ cp .env.example .env  # or: Copy-Item .env.example .env (Windows)
 
 # Edit .env and set your local model
 # Example:
-LOCAL_MODEL_NAME=mistral:7b-instruct  # default
+LOCAL_MODEL_NAME=gemma4:31b  # default
 # or:
-LOCAL_MODEL_NAME=llama3:8b            # alternative
+LOCAL_MODEL_NAME=mistral:7b-instruct            # alternative
 ```
 
 ### 3. Start Ollama
@@ -214,6 +214,58 @@ Top 2 result(s) for: "what did we decide about sample file naming?"
 | `JARVIS_DB_PATH` | `data/jarvis.db` | SQLite database path |
 | `QDRANT_HOST` | `localhost` | Qdrant server host |
 | `QDRANT_PORT` | `6333` | Qdrant server port |
+
+---
+
+## ChatGPT Ingestion Pipeline
+
+Parse a raw ChatGPT conversation export, normalize it to a canonical schema, and chunk it into summarization-ready pieces.
+
+### How it works
+
+1. Reconstructs the active conversation branch via `current_node` backward walk
+2. Filters to visible `user`/`assistant` text messages (excludes system, bio/memory updates, hidden messages)
+3. Deduplicates adjacent identical user messages (retry collapses)
+4. Normalizes to a canonical JSON schema with stable message IDs
+5. Chunks with `user → assistant → user` overlap — chunk N ends with the user message that starts chunk N+1
+6. Trailing unmatched user messages (no reply yet) are recorded as `pending_tail` in the manifest
+
+### Ingest a ChatGPT export
+
+```bash
+python -m jarvis.cli ingest chatgpt --file inbox/ai_chat/chatgpt/raw/<export>.json
+```
+
+Custom output directory (default: `inbox/ai_chat/chatgpt`):
+
+```bash
+python -m jarvis.cli ingest chatgpt \
+  --file inbox/ai_chat/chatgpt/raw/<export>.json \
+  --output-dir inbox/ai_chat/chatgpt
+```
+
+Re-running the same command on an updated export is safe — new messages are merged in by ID; existing messages are never duplicated.
+
+### Output layout
+
+```
+inbox/ai_chat/chatgpt/<conversation_id>/
+  normalized.json          # canonical message list (deduped, ordered)
+  chunk_manifest.json      # metadata: chunk count, IDs, pending_tail
+  chunks/
+    chunk_000.json         # each chunk: message_ids, positions, chunk_text
+    chunk_001.json
+    ...
+    pending_tail.json      # present only if last message has no reply yet
+```
+
+### What gets written
+
+**`normalized.json`** — top-level fields: `conversation_id`, `title`, `source_platform`, `source_file`, `imported_at`, `message_count`, `messages[]` (each with `message_id`, `speaker`, `created_at`, `position`, `content`).
+
+**`chunk_manifest.json`** — `conversation_id`, `total_visible_messages`, `chunk_count`, `chunk_ids[]`, `pending_tail` (null or a preview), `chunked_at`.
+
+**`chunks/chunk_NNN.json`** — `chunk_id`, `chunk_index`, `start_position`, `end_position`, `message_ids[]`, `chunk_text` (formatted as `speaker: content` pairs).
 
 ---
 
