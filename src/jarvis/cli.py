@@ -247,7 +247,7 @@ def cmd_ingest(args: argparse.Namespace, config: dict) -> int:
         print(f"  Visible messages : {normalized['message_count']}")
         print(f"  Chunks written   : {len(result['chunks'])}")
         if result["pending_tail"]:
-            print(f"  Pending tail     : 1 unmatched trailing user message")
+            print("  Pending tail     : 1 unmatched trailing user message")
         print(f"  Normalized file  : {norm_path}")
         print(f"  Chunks directory : {chunks_dir}")
         return 0

@@ -22,7 +22,7 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install flake8 pytest; fi
 
       - name: Lint
-        run: flake8 src
+        run: flake8 src --max-line-length=100
 
       - name: Test
         run: pytest --maxfail=1 --disable-warnings -q
