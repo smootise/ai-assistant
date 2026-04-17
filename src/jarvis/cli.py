@@ -7,6 +7,14 @@ from pathlib import Path
 
 from jarvis.config import load_config
 from jarvis.embedder import EmbeddingClient
+from jarvis.ingest.chatgpt_parser import load_raw_export, parse_export
+from jarvis.ingest.chunker import chunk_conversation, save_chunks
+from jarvis.ingest.normalizer import (
+    build_normalized,
+    load_normalized,
+    merge_normalized,
+    save_normalized,
+)
 from jarvis.memory import MemoryLayer
 from jarvis.ollama import OllamaClient
 from jarvis.output_writer import OutputWriter
@@ -178,6 +186,83 @@ def cmd_retrieve(args: argparse.Namespace, config: dict) -> int:
         return 1
 
 
+def cmd_ingest(args: argparse.Namespace, config: dict) -> int:
+    """Execute the ingest command.
+
+    Parses a raw conversation export, normalizes it (merging on re-import),
+    chunks it, and writes outputs to the configured inbox directory.
+
+    Args:
+        args: Parsed command-line arguments.
+        config: Loaded configuration dictionary.
+
+    Returns:
+        Exit code (0 for success, 1 for failure).
+    """
+    logger = logging.getLogger(__name__)
+
+    if not hasattr(args, "source") or args.source != "chatgpt":
+        logger.error("Only 'chatgpt' source is supported currently.")
+        return 1
+
+    raw_path = Path(args.file)
+    if not raw_path.exists():
+        logger.error(f"Raw export file not found: {raw_path}")
+        return 1
+
+    try:
+        # Parse
+        logger.info(f"Loading raw export: {raw_path}")
+        raw = load_raw_export(str(raw_path))
+        messages = parse_export(raw)
+        logger.info(f"Parsed {len(messages)} visible messages")
+
+        # Normalize / merge
+        conversation_id = raw.get("conversation_id", raw_path.stem)
+        base_dir = Path(args.output_dir)
+        conv_dir = base_dir / conversation_id
+        norm_path = conv_dir / "normalized.json"
+
+        existing = load_normalized(norm_path)
+        if existing:
+            logger.info("Existing normalized file found — merging")
+            normalized = merge_normalized(existing, messages)
+        else:
+            logger.info("No existing normalized file — building fresh")
+            normalized = build_normalized(raw, messages, str(raw_path))
+
+        save_normalized(normalized, norm_path)
+
+        # Chunk
+        chunks_dir = conv_dir / "chunks"
+        result = chunk_conversation(normalized)
+        save_chunks(
+            chunks=result["chunks"],
+            pending_tail=result["pending_tail"],
+            manifest_meta=result["manifest_meta"],
+            output_dir=chunks_dir,
+        )
+
+        print(f"\nIngest complete for: {normalized.get('title', conversation_id)}")
+        print(f"  Visible messages : {normalized['message_count']}")
+        print(f"  Chunks written   : {len(result['chunks'])}")
+        if result["pending_tail"]:
+            print(f"  Pending tail     : 1 unmatched trailing user message")
+        print(f"  Normalized file  : {norm_path}")
+        print(f"  Chunks directory : {chunks_dir}")
+        return 0
+
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {e}")
+        return 1
+    except ValueError as e:
+        logger.error(f"Parse error: {e}")
+        return 1
+    except Exception as e:
+        logger.exception(f"Unexpected error during ingest: {e}")
+        return 1
+
+
 def main() -> int:
     """Main CLI entry point.
 
@@ -219,6 +304,24 @@ def main() -> int:
         help="Number of results to return (default: 5)",
     )
 
+    # -- ingest -----------------------------------------------------------
+    ingest_parser = subparsers.add_parser(
+        "ingest", help="Ingest and normalize a raw conversation export"
+    )
+    ingest_sub = ingest_parser.add_subparsers(dest="source", help="Source platform")
+
+    ingest_chatgpt = ingest_sub.add_parser(
+        "chatgpt", help="Ingest a raw ChatGPT conversation export"
+    )
+    ingest_chatgpt.add_argument(
+        "--file", "-f", required=True, help="Path to raw ChatGPT export JSON"
+    )
+    ingest_chatgpt.add_argument(
+        "--output-dir",
+        default="inbox/ai_chat/chatgpt",
+        help="Base output directory (default: inbox/ai_chat/chatgpt)",
+    )
+
     # -- parse & dispatch -------------------------------------------------
     args = parser.parse_args()
 
@@ -233,6 +336,8 @@ def main() -> int:
         return cmd_summarize(args, config)
     if args.command == "retrieve":
         return cmd_retrieve(args, config)
+    if args.command == "ingest":
+        return cmd_ingest(args, config)
 
     return 1
 

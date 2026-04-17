@@ -4,6 +4,9 @@
 # JARVIS local data (SQLite DB)
 data/
 
+# Ingested conversation data (raw exports + normalized/chunked outputs)
+inbox/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
