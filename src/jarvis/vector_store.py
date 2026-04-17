@@ -115,9 +115,9 @@ class VectorStore:
         self._validate_dimension(dim)
 
         try:
-            results = self._client.search(
+            results = self._client.query_points(
                 collection_name=COLLECTION_NAME,
-                query_vector=query_vector,
+                query=query_vector,
                 limit=top_k,
                 with_payload=True,
             )
@@ -125,7 +125,7 @@ class VectorStore:
             raise RuntimeError(f"Qdrant search failed: {e}") from e
 
         hits = []
-        for hit in results:
+        for hit in results.points:
             summary_id = hit.payload.get("summary_id")
             if summary_id is not None:
                 hits.append((int(summary_id), float(hit.score), str(hit.id)))

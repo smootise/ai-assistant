@@ -124,8 +124,6 @@ class TestBuildEmbeddingText:
     def test_contains_all_semantic_fields(self, sample_output: Dict[str, Any]):
         text = build_embedding_text(sample_output)
         assert sample_output["summary"] in text
-        assert sample_output["source_file"] in text
-        assert sample_output["source_kind"] in text
         for bullet in sample_output["bullets"]:
             assert bullet in text
         for action in sample_output["action_items"]:
@@ -161,6 +159,18 @@ class TestBuildEmbeddingText:
         assert "A summary." in text
         assert "Key points" not in text
         assert "Action items" not in text
+
+    def test_bullets_appear_before_summary(self):
+        """Bullets must lead the embedding text for higher retrieval signal."""
+        output = {
+            "source_kind": "conversation",
+            "source_file": "test.json",
+            "summary": "A high-level synthesis.",
+            "bullets": ["Decision: use snake_case filenames"],
+            "action_items": [],
+        }
+        text = build_embedding_text(output)
+        assert text.index("Key points") < text.index("A high-level synthesis.")
 
 
 # ---------------------------------------------------------------------------

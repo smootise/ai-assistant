@@ -78,11 +78,11 @@ def build_embedding_text(output_data: Dict[str, Any]) -> str:
     The text is built from the human-readable fields only — no raw JSON.
     Original language is preserved; no translation is applied.
 
+    Bullets and action items lead because they are the densest, most
+    keyword-rich fields and score highest in retrieval. The summary is
+    appended last so it contributes context without diluting signal.
+
     Layout:
-        [source_kind] [source_file]
-
-        [summary]
-
         Key points:
         - bullet 1
         ...
@@ -90,6 +90,8 @@ def build_embedding_text(output_data: Dict[str, Any]) -> str:
         Action items:
         - action 1
         ...
+
+        [summary]
 
     Args:
         output_data: Summarization output dict (matches OUTPUTS.md schema).
@@ -99,27 +101,21 @@ def build_embedding_text(output_data: Dict[str, Any]) -> str:
     """
     parts: List[str] = []
 
-    # Context header
-    source_kind = output_data.get("source_kind", "")
-    source_file = output_data.get("source_file", "")
-    if source_kind or source_file:
-        parts.append(f"{source_kind} {source_file}".strip())
-
-    # Summary
-    summary = (output_data.get("summary") or "").strip()
-    if summary:
-        parts.append(summary)
-
-    # Bullets
+    # Bullets first — highest retrieval signal
     bullets = output_data.get("bullets") or []
     if bullets:
         bullet_lines = "\n".join(f"- {b}" for b in bullets)
         parts.append(f"Key points:\n{bullet_lines}")
 
-    # Action items
+    # Action items second
     action_items = output_data.get("action_items") or []
     if action_items:
         action_lines = "\n".join(f"- {a}" for a in action_items)
         parts.append(f"Action items:\n{action_lines}")
+
+    # Summary last — lower signal density but useful context
+    summary = (output_data.get("summary") or "").strip()
+    if summary:
+        parts.append(summary)
 
     return "\n\n".join(parts)
