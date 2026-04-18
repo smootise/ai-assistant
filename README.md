@@ -269,6 +269,59 @@ inbox/ai_chat/chatgpt/<conversation_id>/
 
 ---
 
+## Chunk Summarization
+
+Summarize each chunk of an ingested conversation using a local LLM. The last N prior chunk summaries are passed as rolling context so the model understands continuity without re-summarizing earlier segments.
+
+### Summarize all chunks
+
+```bash
+python -m jarvis.cli summarize-chunks chatgpt \
+  --conversation-id <conversation_id>
+```
+
+### Summarize a range (useful for testing)
+
+```bash
+python -m jarvis.cli summarize-chunks chatgpt \
+  --conversation-id <conversation_id> \
+  --from-chunk 0 --to-chunk 4
+```
+
+### Summarize and persist to SQLite + Qdrant
+
+```bash
+python -m jarvis.cli summarize-chunks chatgpt \
+  --conversation-id <conversation_id> \
+  --persist
+```
+
+### Options
+
+| Flag | Default | Description |
+|---|---|---|
+| `--conversation-id` | *(required)* | Conversation ID (subfolder name under `--inbox-dir`) |
+| `--inbox-dir` | `inbox/ai_chat/chatgpt` | Base inbox directory |
+| `--from-chunk` | `0` | Start at this chunk index (inclusive) |
+| `--to-chunk` | last | Stop after this chunk index (inclusive) |
+| `--context-window` | `3` | Number of prior chunk summaries passed as context |
+| `--persist` | off | Save summaries to SQLite and index in Qdrant |
+
+### Output layout
+
+Summaries are written to `OUTPUTS/<conversation_id>/chunk_summaries/`:
+
+```
+OUTPUTS/<conversation_id>/chunk_summaries/
+  <chunk_id>.json    # summary, bullets, action_items, confidence + chunk metadata
+  <chunk_id>.md      # human-readable Markdown report
+  ...
+```
+
+Re-running is safe — files are overwritten. If using `--from-chunk`, context is pre-seeded from already-written summaries for earlier chunks.
+
+---
+
 ## House Rules for AI Edits
 See CLAUDE.md for project charter, guardrails, prompts convention, and the config precedence model (CLI > ENV > YAML). When asking an AI assistant to change code or docs, start with:
 "Follow CLAUDE.md. Task: …"
