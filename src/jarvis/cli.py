@@ -5,6 +5,7 @@ import logging
 import sys
 from pathlib import Path
 
+from jarvis.chunk_summarizer import ChunkSummarizer
 from jarvis.config import load_config
 from jarvis.embedder import EmbeddingClient
 from jarvis.ingest.chatgpt_parser import load_raw_export, parse_export
@@ -263,6 +264,101 @@ def cmd_ingest(args: argparse.Namespace, config: dict) -> int:
         return 1
 
 
+def cmd_summarize_chunks(args: argparse.Namespace, config: dict) -> int:
+    """Execute the summarize-chunks command.
+
+    Summarizes all (or a range of) chunks for an ingested conversation,
+    passing the last N prior chunk summaries as rolling context to the model.
+
+    Args:
+        args: Parsed command-line arguments.
+        config: Loaded configuration dictionary.
+
+    Returns:
+        Exit code (0 for success, 1 for failure).
+    """
+    logger = logging.getLogger(__name__)
+
+    if not hasattr(args, "source") or args.source != "chatgpt":
+        logger.error("Only 'chatgpt' source is supported currently.")
+        return 1
+
+    conv_dir = Path(args.inbox_dir) / args.conversation_id
+    chunks_dir = conv_dir / "chunks"
+
+    if not chunks_dir.exists():
+        logger.error(f"Chunks directory not found: {chunks_dir}. Run 'ingest' first.")
+        return 1
+
+    output_root = Path(config["output_root"])
+
+    try:
+        ollama_client = OllamaClient(
+            model=config["local_model_name"],
+            base_url=config["ollama_base_url"],
+        )
+        summarizer = ChunkSummarizer(
+            ollama_client=ollama_client,
+            prompts_dir=config["prompts_dir"],
+            schema=config["schema"],
+            schema_version=config["schema_version"],
+            context_window=args.context_window,
+        )
+
+        from_chunk = args.from_chunk if args.from_chunk is not None else 0
+        to_chunk = args.to_chunk  # None means "all"
+
+        logger.info(
+            f"Summarizing chunks [{from_chunk}, "
+            f"{'end' if to_chunk is None else to_chunk}] "
+            f"for conversation {args.conversation_id}"
+        )
+
+        results = summarizer.summarize_conversation_chunks(
+            chunks_dir=chunks_dir,
+            conversation_id=args.conversation_id,
+            output_root=output_root,
+            from_chunk=from_chunk,
+            to_chunk=to_chunk,
+        )
+
+        if not results:
+            print("No chunks to summarize in the specified range.")
+            return 0
+
+        total_latency = sum(d.get("latency_ms", 0) for _, d in results)
+
+        if args.persist:
+            logger.info("Persisting chunk summaries to SQLite + Qdrant...")
+            memory = _build_memory_layer(config)
+            for output_dir, output_data in results:
+                memory.persist(output_data=output_data, output_dir=output_dir)
+            logger.info(f"Persisted {len(results)} chunk summaries")
+
+        chunk_summaries_dir = output_root / args.conversation_id / "chunk_summaries"
+        print(f"\nChunk summarization complete for: {args.conversation_id}")
+        print(f"  Chunks summarized : {len(results)}")
+        print(f"  Total latency     : {total_latency}ms")
+        print(f"  Output directory  : {chunk_summaries_dir}")
+        return 0
+
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {e}")
+        return 1
+    except ConnectionError as e:
+        logger.error(f"Connection error: {e}")
+        return 1
+    except ValueError as e:
+        logger.error(f"Validation error: {e}")
+        return 1
+    except RuntimeError as e:
+        logger.error(f"Runtime error: {e}")
+        return 1
+    except Exception as e:
+        logger.exception(f"Unexpected error during chunk summarization: {e}")
+        return 1
+
+
 def main() -> int:
     """Main CLI entry point.
 
@@ -322,6 +418,53 @@ def main() -> int:
         help="Base output directory (default: inbox/ai_chat/chatgpt)",
     )
 
+    # -- summarize-chunks -------------------------------------------------
+    sc_parser = subparsers.add_parser(
+        "summarize-chunks", help="Summarize all chunks of an ingested conversation"
+    )
+    sc_sub = sc_parser.add_subparsers(dest="source", help="Source platform")
+
+    sc_chatgpt = sc_sub.add_parser(
+        "chatgpt", help="Summarize chunks from a ChatGPT ingested conversation"
+    )
+    sc_chatgpt.add_argument(
+        "--conversation-id", required=True, dest="conversation_id",
+        help="Conversation ID (subfolder name under --inbox-dir)",
+    )
+    sc_chatgpt.add_argument(
+        "--inbox-dir",
+        default="inbox/ai_chat/chatgpt",
+        dest="inbox_dir",
+        help="Base inbox directory (default: inbox/ai_chat/chatgpt)",
+    )
+    sc_chatgpt.add_argument(
+        "--from-chunk",
+        type=int,
+        default=None,
+        dest="from_chunk",
+        help="Start at this chunk index, inclusive (default: 0)",
+    )
+    sc_chatgpt.add_argument(
+        "--to-chunk",
+        type=int,
+        default=None,
+        dest="to_chunk",
+        help="Stop after this chunk index, inclusive (default: last)",
+    )
+    sc_chatgpt.add_argument(
+        "--context-window",
+        type=int,
+        default=3,
+        dest="context_window",
+        help="Number of prior chunk summaries to pass as context (default: 3)",
+    )
+    sc_chatgpt.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        help="Persist summaries to SQLite and index in Qdrant",
+    )
+
     # -- parse & dispatch -------------------------------------------------
     args = parser.parse_args()
 
@@ -338,6 +481,8 @@ def main() -> int:
         return cmd_retrieve(args, config)
     if args.command == "ingest":
         return cmd_ingest(args, config)
+    if args.command == "summarize-chunks":
+        return cmd_summarize_chunks(args, config)
 
     return 1
 

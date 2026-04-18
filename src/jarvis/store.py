@@ -15,38 +15,55 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # Current schema version — increment when adding columns.
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 _DDL = """
-CREATE TABLE IF NOT EXISTS summaries (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id            TEXT,
-    source_file       TEXT    NOT NULL,
-    source_kind       TEXT    NOT NULL,
-    provider          TEXT    NOT NULL,
-    model             TEXT    NOT NULL,
-    embedding_model   TEXT,
-    schema            TEXT    NOT NULL,
-    schema_version    TEXT    NOT NULL,
-    status            TEXT    NOT NULL,
-    lang              TEXT,
-    confidence        REAL    NOT NULL,
-    latency_ms        INTEGER,
-    summary           TEXT    NOT NULL,
-    bullets           TEXT    NOT NULL,
-    action_items      TEXT    NOT NULL,
-    warnings          TEXT,
-    created_at        TEXT    NOT NULL,
-    embedded_at       TEXT,
-    output_json_path  TEXT,
-    output_md_path    TEXT,
-    qdrant_point_id   TEXT
+CREATE TABLE IF NOT EXISTS _jarvis_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_summaries_source_file ON summaries (source_file);
-CREATE INDEX IF NOT EXISTS idx_summaries_created_at  ON summaries (created_at);
-CREATE INDEX IF NOT EXISTS idx_summaries_status      ON summaries (status);
+CREATE TABLE IF NOT EXISTS summaries (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id                  TEXT,
+    source_file             TEXT    NOT NULL,
+    source_kind             TEXT    NOT NULL,
+    provider                TEXT    NOT NULL,
+    model                   TEXT    NOT NULL,
+    embedding_model         TEXT,
+    schema                  TEXT    NOT NULL,
+    schema_version          TEXT    NOT NULL,
+    status                  TEXT    NOT NULL,
+    lang                    TEXT,
+    confidence              REAL    NOT NULL,
+    latency_ms              INTEGER,
+    summary                 TEXT    NOT NULL,
+    bullets                 TEXT    NOT NULL,
+    action_items            TEXT    NOT NULL,
+    warnings                TEXT,
+    created_at              TEXT    NOT NULL,
+    embedded_at             TEXT,
+    output_json_path        TEXT,
+    output_md_path          TEXT,
+    qdrant_point_id         TEXT,
+    chunk_id                TEXT,
+    chunk_index             INTEGER,
+    parent_conversation_id  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_summaries_source_file  ON summaries (source_file);
+CREATE INDEX IF NOT EXISTS idx_summaries_created_at   ON summaries (created_at);
+CREATE INDEX IF NOT EXISTS idx_summaries_status       ON summaries (status);
+CREATE INDEX IF NOT EXISTS idx_summaries_chunk_id     ON summaries (chunk_id);
+CREATE INDEX IF NOT EXISTS idx_summaries_parent_conv  ON summaries (parent_conversation_id);
 """
+
+# Migration DDL for existing v1 databases (ALTER TABLE is idempotent via try/except).
+_MIGRATION_V2 = [
+    "ALTER TABLE summaries ADD COLUMN chunk_id               TEXT",
+    "ALTER TABLE summaries ADD COLUMN chunk_index            INTEGER",
+    "ALTER TABLE summaries ADD COLUMN parent_conversation_id TEXT",
+]
 
 
 class SummaryStore:
@@ -109,6 +126,9 @@ class SummaryStore:
             "output_json_path": output_json_path,
             "output_md_path": output_md_path,
             "qdrant_point_id": None,
+            "chunk_id": output_data.get("chunk_id"),
+            "chunk_index": output_data.get("chunk_index"),
+            "parent_conversation_id": output_data.get("parent_conversation_id"),
         }
 
         sql = """
@@ -116,12 +136,14 @@ class SummaryStore:
                 run_id, source_file, source_kind, provider, model, embedding_model,
                 schema, schema_version, status, lang, confidence, latency_ms,
                 summary, bullets, action_items, warnings,
-                created_at, embedded_at, output_json_path, output_md_path, qdrant_point_id
+                created_at, embedded_at, output_json_path, output_md_path, qdrant_point_id,
+                chunk_id, chunk_index, parent_conversation_id
             ) VALUES (
                 :run_id, :source_file, :source_kind, :provider, :model, :embedding_model,
                 :schema, :schema_version, :status, :lang, :confidence, :latency_ms,
                 :summary, :bullets, :action_items, :warnings,
-                :created_at, :embedded_at, :output_json_path, :output_md_path, :qdrant_point_id
+                :created_at, :embedded_at, :output_json_path, :output_md_path, :qdrant_point_id,
+                :chunk_id, :chunk_index, :parent_conversation_id
             )
         """
         with self._connect() as conn:
@@ -157,6 +179,35 @@ class SummaryStore:
             f"Updated summary id={summary_id} with "
             f"qdrant_point_id={qdrant_point_id}, embedded_at={embedded_at}"
         )
+
+    def get_chunk_summaries_by_conversation(
+        self, conversation_id: str
+    ) -> List[Dict[str, Any]]:
+        """Fetch all chunk summaries for a conversation, ordered by chunk_index.
+
+        Args:
+            conversation_id: The parent conversation ID.
+
+        Returns:
+            List of row dicts ordered by chunk_index ASC.
+        """
+        sql = """
+            SELECT * FROM summaries
+            WHERE parent_conversation_id = ? AND chunk_id IS NOT NULL
+            ORDER BY chunk_index ASC
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (conversation_id,)).fetchall()
+
+        result = []
+        for row in rows:
+            r = dict(row)
+            r["bullets"] = json.loads(r["bullets"] or "[]")
+            r["action_items"] = json.loads(r["action_items"] or "[]")
+            r["warnings"] = json.loads(r["warnings"]) if r["warnings"] else []
+            result.append(r)
+        return result
 
     def get_by_ids(self, summary_ids: List[int]) -> List[Dict[str, Any]]:
         """Fetch summary rows by a list of IDs, preserving order.
@@ -201,7 +252,34 @@ class SummaryStore:
         return conn
 
     def _init_db(self) -> None:
-        """Create tables and indexes if they don't exist."""
+        """Create tables and indexes if they don't exist, then run migrations."""
         with self._connect() as conn:
             conn.executescript(_DDL)
+            self._migrate_db(conn)
         logger.debug(f"SQLite store ready at {self.db_path}")
+
+    def _migrate_db(self, conn: sqlite3.Connection) -> None:
+        """Apply incremental schema migrations to existing databases.
+
+        Reads the stored schema version from _jarvis_meta and runs any
+        migrations needed to reach _SCHEMA_VERSION.
+
+        Args:
+            conn: Open SQLite connection (within an active transaction context).
+        """
+        row = conn.execute(
+            "SELECT value FROM _jarvis_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        stored_version = int(row[0]) if row else 1
+
+        if stored_version < 2:
+            for ddl in _MIGRATION_V2:
+                try:
+                    conn.execute(ddl)
+                except sqlite3.OperationalError:
+                    pass  # Column already exists — idempotent
+            conn.execute(
+                "INSERT OR REPLACE INTO _jarvis_meta (key, value) VALUES ('schema_version', ?)",
+                (str(_SCHEMA_VERSION),),
+            )
+            logger.info(f"Migrated SQLite schema from v{stored_version} to v{_SCHEMA_VERSION}")
