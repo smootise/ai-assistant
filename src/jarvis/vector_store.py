@@ -137,6 +137,62 @@ class VectorStore:
     # Private helpers
     # ------------------------------------------------------------------
 
+    def get_by_conversation(
+        self, conversation_id: str
+    ) -> List[Tuple[int, List[float], Dict[str, Any]]]:
+        """Fetch all vectors for a conversation, ordered by chunk_index from payload.
+
+        Uses Qdrant scroll+filter API. Returns [] if the collection doesn't exist
+        or no points match.
+
+        Args:
+            conversation_id: The parent conversation ID to filter by.
+
+        Returns:
+            List of (summary_id, vector, payload) tuples ordered by chunk_index ASC.
+        """
+        if not self._collection_exists():
+            return []
+
+        results: List[Tuple[int, List[float], Dict[str, Any]]] = []
+        offset = None
+
+        try:
+            while True:
+                response, next_offset = self._client.scroll(
+                    collection_name=COLLECTION_NAME,
+                    scroll_filter=qmodels.Filter(
+                        must=[
+                            qmodels.FieldCondition(
+                                key="parent_conversation_id",
+                                match=qmodels.MatchValue(value=conversation_id),
+                            )
+                        ]
+                    ),
+                    limit=100,
+                    offset=offset,
+                    with_vectors=True,
+                    with_payload=True,
+                )
+                for point in response:
+                    summary_id = point.payload.get("summary_id")
+                    if summary_id is not None and point.vector is not None:
+                        results.append(
+                            (int(summary_id), list(point.vector), dict(point.payload))
+                        )
+                if next_offset is None:
+                    break
+                offset = next_offset
+        except Exception as e:
+            logger.warning(f"Qdrant scroll failed for conversation {conversation_id}: {e}")
+            return []
+
+        results.sort(key=lambda t: t[2].get("chunk_index", 0))
+        logger.info(
+            f"Fetched {len(results)} vectors from Qdrant for conversation {conversation_id}"
+        )
+        return results
+
     def _collection_exists(self) -> bool:
         """Check whether the collection exists in Qdrant."""
         collections = self._client.get_collections().collections

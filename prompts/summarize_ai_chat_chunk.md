@@ -38,6 +38,22 @@ Return a single JSON object — no extra text, no code fences:
 - Include the owner if named in the transcript.
 - One action per item. No "TODO:" prefix.
 - If no actions were discussed, return an empty array.
+- Action items for the assistant are valid **only** when the trailing user message is a continuation
+  of this chunk's topic (see trailing user message rule below).
+
+## Rule for the trailing user message
+
+Every chunk ends with a user message. That message also opens the next chunk. Apply this rule:
+
+- **If it is a continuation** — a clarification, follow-up question, or additional detail on the
+  same subject already discussed — include it fully in the summary and bullets. Action items for
+  the assistant (e.g. "Explain X", "Provide Y") are appropriate here since the exchange is
+  ongoing.
+- **If it opens a new subject** — a question or statement about something not yet addressed —
+  do not include it in the summary or bullets. It will be fully captured in the next chunk where
+  the assistant has responded. You may add one closing sentence to the summary such as:
+  "The user then raised a new question about [topic], which will be addressed in the next segment."
+  Do not create action items for it.
 
 ## Rules for confidence
 

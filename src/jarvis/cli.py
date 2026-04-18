@@ -4,9 +4,11 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Optional
 
 from jarvis.chunk_summarizer import ChunkSummarizer
 from jarvis.config import load_config
+from jarvis.segment_detector import SegmentDetector
 from jarvis.embedder import EmbeddingClient
 from jarvis.ingest.chatgpt_parser import load_raw_export, parse_export
 from jarvis.ingest.chunker import chunk_conversation, save_chunks
@@ -359,6 +361,111 @@ def cmd_summarize_chunks(args: argparse.Namespace, config: dict) -> int:
         return 1
 
 
+def cmd_detect_segments(args: argparse.Namespace, config: dict) -> int:
+    """Execute the detect-segments command.
+
+    Detects topic boundaries in chunk summaries using cosine similarity and
+    summarizes each detected segment with the LLM.
+
+    Args:
+        args: Parsed command-line arguments.
+        config: Loaded configuration dictionary.
+
+    Returns:
+        Exit code (0 for success, 1 for failure).
+    """
+    logger = logging.getLogger(__name__)
+
+    if not hasattr(args, "source") or args.source != "chatgpt":
+        logger.error("Only 'chatgpt' source is supported currently.")
+        return 1
+
+    output_root = Path(config["output_root"])
+    chunk_summaries_dir = output_root / args.conversation_id / "chunk_summaries"
+
+    if not chunk_summaries_dir.exists():
+        logger.error(
+            f"Chunk summaries not found: {chunk_summaries_dir}. "
+            "Run 'summarize-chunks' first."
+        )
+        return 1
+
+    try:
+        embedder = EmbeddingClient(
+            model=config["embedding_model"],
+            base_url=config["ollama_base_url"],
+        )
+        ollama_client = OllamaClient(
+            model=config["local_model_name"],
+            base_url=config["ollama_base_url"],
+        )
+
+        vector_store: Optional[VectorStore] = None
+        try:
+            vector_store = VectorStore(
+                host=config["qdrant_host"],
+                port=config["qdrant_port"],
+            )
+        except Exception:
+            logger.info("Qdrant not reachable — will embed on the fly")
+
+        detector = SegmentDetector(
+            embedder=embedder,
+            ollama_client=ollama_client,
+            prompts_dir=config["prompts_dir"],
+            schema=config["schema"],
+            schema_version=config["schema_version"],
+            threshold=args.threshold,
+            vector_store=vector_store,
+        )
+
+        results = detector.detect_and_summarize(
+            conversation_id=args.conversation_id,
+            output_root=output_root,
+            dry_run=args.dry_run,
+        )
+
+        if args.dry_run:
+            return 0
+
+        if not results:
+            print("No segments produced.")
+            return 0
+
+        if args.persist:
+            logger.info("Persisting segment summaries to SQLite + Qdrant...")
+            memory = _build_memory_layer(config)
+            for output_dir, output_data in results:
+                memory.persist(output_data=output_data, output_dir=output_dir)
+            logger.info(f"Persisted {len(results)} segment summaries")
+
+        segment_summaries_dir = output_root / args.conversation_id / "segment_summaries"
+        print(f"\nSegment detection complete for: {args.conversation_id}")
+        print(f"  Segments detected : {len(results)}")
+        for i, (_, data) in enumerate(results):
+            first_sentence = (data.get("summary") or "").split(".")[0]
+            chunk_range = data.get("segment_chunk_range", "?")
+            print(f"  Segment {i} ({chunk_range}): \"{first_sentence}.\"")
+        print(f"  Output directory  : {segment_summaries_dir}")
+        return 0
+
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {e}")
+        return 1
+    except ConnectionError as e:
+        logger.error(f"Connection error: {e}")
+        return 1
+    except ValueError as e:
+        logger.error(f"Validation error: {e}")
+        return 1
+    except RuntimeError as e:
+        logger.error(f"Runtime error: {e}")
+        return 1
+    except Exception as e:
+        logger.exception(f"Unexpected error during segment detection: {e}")
+        return 1
+
+
 def main() -> int:
     """Main CLI entry point.
 
@@ -465,6 +572,45 @@ def main() -> int:
         help="Persist summaries to SQLite and index in Qdrant",
     )
 
+    # -- detect-segments --------------------------------------------------
+    ds_parser = subparsers.add_parser(
+        "detect-segments", help="Detect topic segments and summarize each one"
+    )
+    ds_sub = ds_parser.add_subparsers(dest="source", help="Source platform")
+
+    ds_chatgpt = ds_sub.add_parser(
+        "chatgpt", help="Detect segments from a ChatGPT ingested conversation"
+    )
+    ds_chatgpt.add_argument(
+        "--conversation-id", required=True, dest="conversation_id",
+        help="Conversation ID (used to locate OUTPUTS/<id>/chunk_summaries/)",
+    )
+    ds_chatgpt.add_argument(
+        "--inbox-dir",
+        default="inbox/ai_chat/chatgpt",
+        dest="inbox_dir",
+        help="Base inbox directory (default: inbox/ai_chat/chatgpt)",
+    )
+    ds_chatgpt.add_argument(
+        "--threshold",
+        type=float,
+        default=0.65,
+        help="Cosine similarity drop threshold for segment boundaries (default: 0.65)",
+    )
+    ds_chatgpt.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        dest="dry_run",
+        help="Detect boundaries only — skip LLM summarization",
+    )
+    ds_chatgpt.add_argument(
+        "--persist",
+        action="store_true",
+        default=False,
+        help="Persist segment summaries to SQLite and index in Qdrant",
+    )
+
     # -- parse & dispatch -------------------------------------------------
     args = parser.parse_args()
 
@@ -483,6 +629,8 @@ def main() -> int:
         return cmd_ingest(args, config)
     if args.command == "summarize-chunks":
         return cmd_summarize_chunks(args, config)
+    if args.command == "detect-segments":
+        return cmd_detect_segments(args, config)
 
     return 1
 

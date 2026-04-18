@@ -322,6 +322,82 @@ Re-running is safe — files are overwritten. If using `--from-chunk`, context i
 
 ---
 
+## Topic Segment Detection
+
+Group consecutive chunk summaries into topic segments by measuring cosine similarity between adjacent embeddings. When similarity drops below the threshold a new segment begins, preserving the chronological narrative arc (topic re-entries produce new segments).
+
+### Detect and summarize segments
+
+```bash
+python -m jarvis.cli detect-segments chatgpt \
+  --conversation-id <conversation_id>
+```
+
+### Dry run — boundary detection only (no LLM calls)
+
+```bash
+python -m jarvis.cli detect-segments chatgpt \
+  --conversation-id <conversation_id> \
+  --dry-run
+```
+
+The dry-run prints which chunks would form which segments (with similarity scores) so you can tune `--threshold` before running inference.
+
+### Adjust the similarity threshold
+
+```bash
+python -m jarvis.cli detect-segments chatgpt \
+  --conversation-id <conversation_id> \
+  --threshold 0.60
+```
+
+Lower threshold → fewer segments (wider topics). Higher threshold → more segments (finer-grained).
+
+### Detect and persist to SQLite + Qdrant
+
+```bash
+python -m jarvis.cli detect-segments chatgpt \
+  --conversation-id <conversation_id> \
+  --persist
+```
+
+### Options
+
+| Flag | Default | Description |
+|---|---|---|
+| `--conversation-id` | *(required)* | Conversation ID (used to locate `OUTPUTS/<id>/chunk_summaries/`) |
+| `--threshold` | `0.65` | Cosine similarity drop threshold for segment boundaries |
+| `--dry-run` | off | Detect boundaries only — skip LLM summarization |
+| `--persist` | off | Save segment summaries to SQLite and index in Qdrant |
+
+After detection the command always prints a similarity distribution report:
+
+```
+Similarity distribution across 104 pairs:
+  min=0.41  max=0.94  mean=0.73
+  Boundaries (< 0.65): after 686c5e2b_c004 (0.51), after 686c5e2b_c018 (0.44), ...
+  Segments detected: 7
+```
+
+### Output layout
+
+Segment summaries are written to `OUTPUTS/<conversation_id>/segment_summaries/`:
+
+```
+OUTPUTS/<conversation_id>/segment_summaries/
+  segment_000.json    # summary, bullets, action_items, confidence + segment metadata
+  segment_000.md      # human-readable Markdown report
+  segment_001.json
+  segment_001.md
+  ...
+```
+
+Each segment file carries `segment_index`, `segment_chunk_range` (e.g. `"c000-c018"`), and `parent_conversation_id`.
+
+**Prerequisites:** chunk summaries must exist at `OUTPUTS/<id>/chunk_summaries/` — run `summarize-chunks` first. Ollama must be running for embedding (and for LLM inference when not using `--dry-run`). Qdrant is only required for `--persist` or to reuse existing embeddings.
+
+---
+
 ## House Rules for AI Edits
 See CLAUDE.md for project charter, guardrails, prompts convention, and the config precedence model (CLI > ENV > YAML). When asking an AI assistant to change code or docs, start with:
 "Follow CLAUDE.md. Task: …"

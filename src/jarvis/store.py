@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # Current schema version — increment when adding columns.
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS _jarvis_meta (
@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS summaries (
     qdrant_point_id         TEXT,
     chunk_id                TEXT,
     chunk_index             INTEGER,
-    parent_conversation_id  TEXT
+    parent_conversation_id  TEXT,
+    segment_index           INTEGER,
+    segment_chunk_range     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_summaries_source_file  ON summaries (source_file);
@@ -56,6 +58,7 @@ CREATE INDEX IF NOT EXISTS idx_summaries_created_at   ON summaries (created_at);
 CREATE INDEX IF NOT EXISTS idx_summaries_status       ON summaries (status);
 CREATE INDEX IF NOT EXISTS idx_summaries_chunk_id     ON summaries (chunk_id);
 CREATE INDEX IF NOT EXISTS idx_summaries_parent_conv  ON summaries (parent_conversation_id);
+CREATE INDEX IF NOT EXISTS idx_summaries_segment_index ON summaries (segment_index);
 """
 
 # Migration DDL for existing v1 databases (ALTER TABLE is idempotent via try/except).
@@ -63,6 +66,11 @@ _MIGRATION_V2 = [
     "ALTER TABLE summaries ADD COLUMN chunk_id               TEXT",
     "ALTER TABLE summaries ADD COLUMN chunk_index            INTEGER",
     "ALTER TABLE summaries ADD COLUMN parent_conversation_id TEXT",
+]
+
+_MIGRATION_V3 = [
+    "ALTER TABLE summaries ADD COLUMN segment_index       INTEGER",
+    "ALTER TABLE summaries ADD COLUMN segment_chunk_range TEXT",
 ]
 
 
@@ -129,6 +137,8 @@ class SummaryStore:
             "chunk_id": output_data.get("chunk_id"),
             "chunk_index": output_data.get("chunk_index"),
             "parent_conversation_id": output_data.get("parent_conversation_id"),
+            "segment_index": output_data.get("segment_index"),
+            "segment_chunk_range": output_data.get("segment_chunk_range"),
         }
 
         sql = """
@@ -137,13 +147,15 @@ class SummaryStore:
                 schema, schema_version, status, lang, confidence, latency_ms,
                 summary, bullets, action_items, warnings,
                 created_at, embedded_at, output_json_path, output_md_path, qdrant_point_id,
-                chunk_id, chunk_index, parent_conversation_id
+                chunk_id, chunk_index, parent_conversation_id,
+                segment_index, segment_chunk_range
             ) VALUES (
                 :run_id, :source_file, :source_kind, :provider, :model, :embedding_model,
                 :schema, :schema_version, :status, :lang, :confidence, :latency_ms,
                 :summary, :bullets, :action_items, :warnings,
                 :created_at, :embedded_at, :output_json_path, :output_md_path, :qdrant_point_id,
-                :chunk_id, :chunk_index, :parent_conversation_id
+                :chunk_id, :chunk_index, :parent_conversation_id,
+                :segment_index, :segment_chunk_range
             )
         """
         with self._connect() as conn:
@@ -195,6 +207,35 @@ class SummaryStore:
             SELECT * FROM summaries
             WHERE parent_conversation_id = ? AND chunk_id IS NOT NULL
             ORDER BY chunk_index ASC
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (conversation_id,)).fetchall()
+
+        result = []
+        for row in rows:
+            r = dict(row)
+            r["bullets"] = json.loads(r["bullets"] or "[]")
+            r["action_items"] = json.loads(r["action_items"] or "[]")
+            r["warnings"] = json.loads(r["warnings"]) if r["warnings"] else []
+            result.append(r)
+        return result
+
+    def get_segment_summaries_by_conversation(
+        self, conversation_id: str
+    ) -> List[Dict[str, Any]]:
+        """Fetch all segment summaries for a conversation, ordered by segment_index.
+
+        Args:
+            conversation_id: The parent conversation ID.
+
+        Returns:
+            List of row dicts ordered by segment_index ASC.
+        """
+        sql = """
+            SELECT * FROM summaries
+            WHERE parent_conversation_id = ? AND source_kind = 'ai_chat_segment'
+            ORDER BY segment_index ASC
         """
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
@@ -278,6 +319,15 @@ class SummaryStore:
                     conn.execute(ddl)
                 except sqlite3.OperationalError:
                     pass  # Column already exists — idempotent
+
+        if stored_version < 3:
+            for ddl in _MIGRATION_V3:
+                try:
+                    conn.execute(ddl)
+                except sqlite3.OperationalError:
+                    pass  # Column already exists — idempotent
+
+        if stored_version < _SCHEMA_VERSION:
             conn.execute(
                 "INSERT OR REPLACE INTO _jarvis_meta (key, value) VALUES ('schema_version', ?)",
                 (str(_SCHEMA_VERSION),),
