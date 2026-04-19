@@ -137,6 +137,23 @@ class VectorStore:
     # Private helpers
     # ------------------------------------------------------------------
 
+    def delete_points(self, point_ids: List[str]) -> None:
+        """Delete Qdrant points by their UUIDs.
+
+        Args:
+            point_ids: List of Qdrant point UUID strings to delete.
+        """
+        if not point_ids or not self._collection_exists():
+            return
+        try:
+            self._client.delete(
+                collection_name=COLLECTION_NAME,
+                points_selector=qmodels.PointIdsList(points=point_ids),
+            )
+            logger.info(f"Deleted {len(point_ids)} Qdrant points")
+        except Exception as e:
+            logger.warning(f"Qdrant delete failed: {e}")
+
     def get_by_conversation(
         self, conversation_id: str
     ) -> List[Tuple[int, List[float], Dict[str, Any]]]:

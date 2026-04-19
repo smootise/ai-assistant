@@ -113,6 +113,18 @@ class ChunkSummarizer:
 
         results: List[Tuple[Path, Dict[str, Any]]] = []
         for chunk in selected:
+            existing_path = chunk_summaries_dir / f"{chunk['chunk_id']}.json"
+            if existing_path.exists():
+                logger.info(
+                    f"Skipping chunk {chunk['chunk_index']} / {chunks[-1]['chunk_index']} "
+                    f"({chunk['chunk_id']}) — summary already exists"
+                )
+                with open(existing_path, encoding="utf-8") as f:
+                    output_data = json.load(f)
+                rolling_summaries.append(output_data.get("summary", ""))
+                results.append((chunk_summaries_dir, output_data))
+                continue
+
             logger.info(
                 f"Summarizing chunk {chunk['chunk_index']} / {chunks[-1]['chunk_index']} "
                 f"({chunk['chunk_id']})"

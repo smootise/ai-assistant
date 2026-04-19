@@ -56,21 +56,23 @@ CREATE TABLE IF NOT EXISTS summaries (
 CREATE INDEX IF NOT EXISTS idx_summaries_source_file  ON summaries (source_file);
 CREATE INDEX IF NOT EXISTS idx_summaries_created_at   ON summaries (created_at);
 CREATE INDEX IF NOT EXISTS idx_summaries_status       ON summaries (status);
-CREATE INDEX IF NOT EXISTS idx_summaries_chunk_id     ON summaries (chunk_id);
-CREATE INDEX IF NOT EXISTS idx_summaries_parent_conv  ON summaries (parent_conversation_id);
-CREATE INDEX IF NOT EXISTS idx_summaries_segment_index ON summaries (segment_index);
 """
 
-# Migration DDL for existing v1 databases (ALTER TABLE is idempotent via try/except).
+# Migration DDL (each list is idempotent via try/except on ALTER TABLE).
+# Indexes on new columns are added here, not in _DDL, so they only run after
+# the columns exist on old databases.
 _MIGRATION_V2 = [
     "ALTER TABLE summaries ADD COLUMN chunk_id               TEXT",
     "ALTER TABLE summaries ADD COLUMN chunk_index            INTEGER",
     "ALTER TABLE summaries ADD COLUMN parent_conversation_id TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_summaries_chunk_id    ON summaries (chunk_id)",
+    "CREATE INDEX IF NOT EXISTS idx_summaries_parent_conv ON summaries (parent_conversation_id)",
 ]
 
 _MIGRATION_V3 = [
     "ALTER TABLE summaries ADD COLUMN segment_index       INTEGER",
     "ALTER TABLE summaries ADD COLUMN segment_chunk_range TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_summaries_segment_index ON summaries (segment_index)",
 ]
 
 
@@ -249,6 +251,104 @@ class SummaryStore:
             r["warnings"] = json.loads(r["warnings"]) if r["warnings"] else []
             result.append(r)
         return result
+
+    def get_by_source_file(self, source_file: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single summary row by source_file.
+
+        Args:
+            source_file: The source_file value to look up.
+
+        Returns:
+            Row dict or None if not found.
+        """
+        sql = "SELECT * FROM summaries WHERE source_file = ? LIMIT 1"
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(sql, (source_file,)).fetchone()
+        if row is None:
+            return None
+        r = dict(row)
+        r["bullets"] = json.loads(r["bullets"] or "[]")
+        r["action_items"] = json.loads(r["action_items"] or "[]")
+        r["warnings"] = json.loads(r["warnings"]) if r["warnings"] else []
+        return r
+
+    def delete_by_source_file(self, source_file: str) -> Optional[str]:
+        """Delete a summary row by source_file and return its qdrant_point_id.
+
+        Args:
+            source_file: The source_file value to delete.
+
+        Returns:
+            qdrant_point_id if the row existed, else None.
+        """
+        row = self.get_by_source_file(source_file)
+        if row is None:
+            return None
+        qdrant_point_id = row.get("qdrant_point_id")
+        with self._connect() as conn:
+            conn.execute("DELETE FROM summaries WHERE source_file = ?", (source_file,))
+        logger.info(f"Deleted summary row for source_file={source_file}")
+        return qdrant_point_id
+
+    def get_chunk_rows_by_ids(
+        self, conversation_id: str, chunk_ids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """Fetch chunk summary rows for specific chunk_ids within a conversation.
+
+        Args:
+            conversation_id: The parent conversation ID.
+            chunk_ids: List of chunk_id values to fetch.
+
+        Returns:
+            List of row dicts.
+        """
+        if not chunk_ids:
+            return []
+        placeholders = ",".join("?" * len(chunk_ids))
+        sql = f"""
+            SELECT * FROM summaries
+            WHERE parent_conversation_id = ? AND chunk_id IN ({placeholders})
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, [conversation_id] + chunk_ids).fetchall()
+        result = []
+        for row in rows:
+            r = dict(row)
+            r["bullets"] = json.loads(r["bullets"] or "[]")
+            r["action_items"] = json.loads(r["action_items"] or "[]")
+            r["warnings"] = json.loads(r["warnings"]) if r["warnings"] else []
+            result.append(r)
+        return result
+
+    def delete_chunk_rows(
+        self, conversation_id: str, chunk_ids: List[str]
+    ) -> List[str]:
+        """Delete chunk summary rows and return their qdrant_point_ids.
+
+        Args:
+            conversation_id: The parent conversation ID.
+            chunk_ids: List of chunk_id values to delete.
+
+        Returns:
+            List of qdrant_point_id strings for the deleted rows (may include None values
+            filtered out).
+        """
+        rows = self.get_chunk_rows_by_ids(conversation_id, chunk_ids)
+        point_ids = [r["qdrant_point_id"] for r in rows if r.get("qdrant_point_id")]
+        if chunk_ids:
+            placeholders = ",".join("?" * len(chunk_ids))
+            sql = f"""
+                DELETE FROM summaries
+                WHERE parent_conversation_id = ? AND chunk_id IN ({placeholders})
+            """
+            with self._connect() as conn:
+                conn.execute(sql, [conversation_id] + chunk_ids)
+        logger.info(
+            f"Deleted {len(rows)} chunk rows for conversation {conversation_id}"
+        )
+        return point_ids
 
     def get_by_ids(self, summary_ids: List[int]) -> List[Dict[str, Any]]:
         """Fetch summary rows by a list of IDs, preserving order.

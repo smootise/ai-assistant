@@ -5,7 +5,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from jarvis.ollama import OllamaClient
 from jarvis.output_writer import OutputWriter
@@ -41,7 +41,7 @@ class ConversationSummarizer:
         self.schema_version = schema_version
 
     def summarize_file(
-        self, file_path: str, run_id: str = None
+        self, file_path: str, run_id: str = None, subfolder: Optional[str] = None
     ) -> Tuple[Path, Dict[str, Any]]:
         """Summarize a conversation JSON file.
 
@@ -108,6 +108,7 @@ class ConversationSummarizer:
             summary_data=output_data,
             source_file=file_path.name,
             run_id=run_id,
+            subfolder=subfolder,
         )
 
         logger.info(f"Summarization completed in {latency_ms}ms")

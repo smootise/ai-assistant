@@ -35,6 +35,7 @@ class OutputWriter:
         summary_data: Dict[str, Any],
         source_file: str,
         run_id: Optional[str] = None,
+        subfolder: Optional[str] = None,
     ) -> Path:
         """Write both JSON and Markdown outputs.
 
@@ -42,12 +43,16 @@ class OutputWriter:
             summary_data: The summarization result dictionary.
             source_file: Path to the source input file.
             run_id: Optional run identifier.
+            subfolder: If provided, output goes to output_root/subfolder/ instead of a
+                       timestamped folder. Takes precedence over use_timestamp.
 
         Returns:
             Path to the output directory.
         """
         # Create output directory
-        if self.use_timestamp:
+        if subfolder is not None:
+            output_dir = self.output_root / subfolder
+        elif self.use_timestamp:
             timestamp = datetime.now(timezone.utc).strftime(self.timestamp_format)
             output_dir = self.output_root / timestamp
         else:

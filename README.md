@@ -111,7 +111,7 @@ python -m jarvis.cli summarize --file tests/fixtures/conv_tiny_test.json
 ```
 
 ### 5. View Results
-Outputs are saved to `OUTPUTS/<timestamp>/`:
+Outputs are saved to `OUTPUTS/<source_basename>/`:
 - `<basename>.json` - Machine-readable artifact with full metadata
 - `<basename>.md` - Human-readable Markdown report
 
@@ -171,10 +171,14 @@ python -m jarvis.cli summarize \
   --persist
 ```
 
+Outputs go to `OUTPUTS/<source_basename>/` (stable path — re-running overwrites cleanly).
+
+**Re-run from scratch** (`--force` wipes existing output files and any SQLite/Qdrant record before re-summarizing):
+
 ```bash
 python -m jarvis.cli summarize \
-  --file samples/conversations/conv_short_samples_spec_fr_v2.json \
-  --persist
+  --file samples/conversations/conv_short_samples_spec_en.json \
+  --persist --force
 ```
 
 ### Semantic Retrieval
@@ -273,6 +277,8 @@ inbox/ai_chat/chatgpt/<conversation_id>/
 
 Summarize each chunk of an ingested conversation using a local LLM. The last N prior chunk summaries are passed as rolling context so the model understands continuity without re-summarizing earlier segments.
 
+**Resume-safe by default:** if a chunk's `.json` already exists on disk, the LLM call is skipped and the existing file is used. This means an interrupted run can be resumed by simply re-running the same command — only missing chunks will be summarized.
+
 ### Summarize all chunks
 
 ```bash
@@ -296,6 +302,24 @@ python -m jarvis.cli summarize-chunks chatgpt \
   --persist
 ```
 
+Existing chunks are loaded from disk; only new ones hit the LLM. All chunks (new + existing) are persisted at the end.
+
+### Re-run from scratch (`--force`)
+
+Wipes output files and SQLite/Qdrant records for the affected range, then re-summarizes:
+
+```bash
+# Force all chunks
+python -m jarvis.cli summarize-chunks chatgpt \
+  --conversation-id <conversation_id> \
+  --persist --force
+
+# Force only a specific range — chunks outside it are untouched
+python -m jarvis.cli summarize-chunks chatgpt \
+  --conversation-id <conversation_id> \
+  --from-chunk 50 --to-chunk 60 --persist --force
+```
+
 ### Options
 
 | Flag | Default | Description |
@@ -306,6 +330,7 @@ python -m jarvis.cli summarize-chunks chatgpt \
 | `--to-chunk` | last | Stop after this chunk index (inclusive) |
 | `--context-window` | `3` | Number of prior chunk summaries passed as context |
 | `--persist` | off | Save summaries to SQLite and index in Qdrant |
+| `--force` | off | Wipe existing files and DB/Qdrant records for the range before re-running |
 
 ### Output layout
 
@@ -318,7 +343,7 @@ OUTPUTS/<conversation_id>/chunk_summaries/
   ...
 ```
 
-Re-running is safe — files are overwritten. If using `--from-chunk`, context is pre-seeded from already-written summaries for earlier chunks.
+If using `--from-chunk`, rolling context is pre-seeded from already-written summaries for earlier chunks.
 
 ---
 
