@@ -157,7 +157,7 @@ class VectorStore:
     def get_by_conversation(
         self, conversation_id: str
     ) -> List[Tuple[int, List[float], Dict[str, Any]]]:
-        """Fetch all vectors for a conversation, ordered by chunk_index from payload.
+        """Fetch all vectors for a conversation, ordered by segment_index from payload.
 
         Uses Qdrant scroll+filter API. Returns [] if the collection doesn't exist
         or no points match.
@@ -166,7 +166,7 @@ class VectorStore:
             conversation_id: The parent conversation ID to filter by.
 
         Returns:
-            List of (summary_id, vector, payload) tuples ordered by chunk_index ASC.
+            List of (summary_id, vector, payload) tuples ordered by segment_index ASC.
         """
         if not self._collection_exists():
             return []
@@ -204,7 +204,7 @@ class VectorStore:
             logger.warning(f"Qdrant scroll failed for conversation {conversation_id}: {e}")
             return []
 
-        results.sort(key=lambda t: t[2].get("chunk_index", 0))
+        results.sort(key=lambda t: t[2].get("segment_index", 0))
         logger.info(
             f"Fetched {len(results)} vectors from Qdrant for conversation {conversation_id}"
         )

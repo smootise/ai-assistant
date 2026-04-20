@@ -17,7 +17,7 @@ from jarvis.ingest.chatgpt_parser import (
     parse_export,
     reconstruct_active_path,
 )
-from jarvis.ingest.chunker import chunk_conversation
+from jarvis.ingest.segmenter import segment_conversation
 from jarvis.ingest.normalizer import (
     build_normalized,
     merge_normalized,
@@ -233,7 +233,7 @@ class TestNormalizer:
 
 
 # ---------------------------------------------------------------------------
-# Chunker
+# Segmenter
 # ---------------------------------------------------------------------------
 
 
@@ -258,21 +258,21 @@ def _make_normalized(messages_spec) -> Dict[str, Any]:
     }
 
 
-class TestChunker:
-    def test_ideal_pattern_three_message_chunks(self):
-        # U A U A U A  -> chunks: [U0,A0,U1], [U1,A1,U2], [U2,A2,U3-missing]
+class TestSegmenter:
+    def test_ideal_pattern_three_message_segments(self):
+        # U A U A U A  -> segments: [U0,A0,U1], [U1,A1,U2], [U2,A2,U3-missing]
         norm = _make_normalized(
             [("user", "U1"), ("assistant", "A1"), ("user", "U2"), ("assistant", "A2")]
         )
-        result = chunk_conversation(norm)
-        # U0 A0 U1 → chunk0; U1 A1 (end) → chunk1
-        assert len(result["chunks"]) == 2
-        assert result["chunks"][0]["start_position"] == 0
-        assert result["chunks"][0]["end_position"] == 2
-        # Overlap: chunk1 starts at position 2
-        assert result["chunks"][1]["start_position"] == 2
+        result = segment_conversation(norm)
+        # U0 A0 U1 → segment0; U1 A1 (end) → segment1
+        assert len(result["segments"]) == 2
+        assert result["segments"][0]["start_position"] == 0
+        assert result["segments"][0]["end_position"] == 2
+        # Overlap: segment1 starts at position 2
+        assert result["segments"][1]["start_position"] == 2
 
-    def test_overlap_user_message_starts_next_chunk(self):
+    def test_overlap_user_message_starts_next_segment(self):
         norm = _make_normalized(
             [
                 ("user", "U1"),
@@ -283,73 +283,73 @@ class TestChunker:
                 ("assistant", "A3"),
             ]
         )
-        result = chunk_conversation(norm)
-        chunks = result["chunks"]
-        assert len(chunks) >= 2
-        # The last message_id of chunk N should equal the first of chunk N+1
-        for i in range(len(chunks) - 1):
-            last_id = chunks[i]["message_ids"][-1]
-            first_id = chunks[i + 1]["message_ids"][0]
+        result = segment_conversation(norm)
+        segments = result["segments"]
+        assert len(segments) >= 2
+        # The last message_id of segment N should equal the first of segment N+1
+        for i in range(len(segments) - 1):
+            last_id = segments[i]["message_ids"][-1]
+            first_id = segments[i + 1]["message_ids"][0]
             assert last_id == first_id, (
-                f"Chunk {i} last id {last_id!r} != Chunk {i+1} first id {first_id!r}"
+                f"Segment {i} last id {last_id!r} != Segment {i+1} first id {first_id!r}"
             )
 
     def test_trailing_user_becomes_pending_tail(self):
         norm = _make_normalized(
             [("user", "U1"), ("assistant", "A1"), ("user", "U2")]
         )
-        result = chunk_conversation(norm)
-        # chunk: [U1, A1, U2], then U2 is the overlap → next chunk starts with U2
+        result = segment_conversation(norm)
+        # segment: [U1, A1, U2], then U2 is the overlap → next segment starts with U2
         # U2 has no following assistant → pending tail
         assert result["pending_tail"] is not None
         assert result["pending_tail"]["speaker"] == "user"
         assert result["pending_tail"]["content"] == "U2"
 
-    def test_pending_tail_not_in_chunks(self):
+    def test_pending_tail_not_in_segments(self):
         norm = _make_normalized(
             [("user", "U1"), ("assistant", "A1"), ("user", "U2")]
         )
-        result = chunk_conversation(norm)
+        result = segment_conversation(norm)
         tail_id = result["pending_tail"]["message_id"] if result["pending_tail"] else None
         if tail_id:
-            for chunk in result["chunks"]:
-                # The tail should not be the ONLY message in any chunk
-                # (it IS allowed as the overlap end of a chunk)
-                if len(chunk["message_ids"]) == 1:
-                    assert chunk["message_ids"][0] != tail_id
+            for segment in result["segments"]:
+                # The tail should not be the ONLY message in any segment
+                # (it IS allowed as the overlap end of a segment)
+                if len(segment["message_ids"]) == 1:
+                    assert segment["message_ids"][0] != tail_id
 
-    def test_final_two_message_chunk_allowed(self):
-        """Conversation ending user->assistant emits a 2-message chunk."""
+    def test_final_two_message_segment_allowed(self):
+        """Conversation ending user->assistant emits a 2-message segment."""
         norm = _make_normalized([("user", "Q"), ("assistant", "A")])
-        result = chunk_conversation(norm)
-        assert len(result["chunks"]) == 1
-        assert len(result["chunks"][0]["message_ids"]) == 2
+        result = segment_conversation(norm)
+        assert len(result["segments"]) == 1
+        assert len(result["segments"][0]["message_ids"]) == 2
         assert result["pending_tail"] is None
 
     def test_manifest_has_required_fields(self, sample_raw):
         messages = parse_export(sample_raw)
         normalized = build_normalized(sample_raw, messages, "test.json")
-        result = chunk_conversation(normalized)
+        result = segment_conversation(normalized)
         meta = result["manifest_meta"]
         for field in (
             "conversation_id",
             "total_visible_messages",
-            "chunk_count",
-            "chunk_ids",
+            "segment_count",
+            "segment_ids",
             "pending_tail",
-            "chunked_at",
+            "segmented_at",
         ):
             assert field in meta, f"Missing manifest field: {field}"
 
-    def test_chunk_text_format(self):
+    def test_segment_text_format(self):
         norm = _make_normalized([("user", "Hello"), ("assistant", "World")])
-        result = chunk_conversation(norm)
-        text = result["chunks"][0]["chunk_text"]
+        result = segment_conversation(norm)
+        text = result["segments"][0]["segment_text"]
         assert "user: Hello" in text
         assert "assistant: World" in text
 
     def test_no_messages_dropped(self):
-        """All visible messages must appear in chunks or pending_tail."""
+        """All visible messages must appear in segments or pending_tail."""
         norm = _make_normalized(
             [
                 ("user", "U1"),
@@ -359,16 +359,16 @@ class TestChunker:
                 ("user", "U3"),
             ]
         )
-        result = chunk_conversation(norm)
-        all_ids_in_chunks = set()
-        for chunk in result["chunks"]:
-            all_ids_in_chunks.update(chunk["message_ids"])
+        result = segment_conversation(norm)
+        all_ids_in_segments = set()
+        for segment in result["segments"]:
+            all_ids_in_segments.update(segment["message_ids"])
         if result["pending_tail"]:
-            all_ids_in_chunks.add(result["pending_tail"]["message_id"])
+            all_ids_in_segments.add(result["pending_tail"]["message_id"])
         all_input_ids = {m["message_id"] for m in norm["messages"]}
-        assert all_input_ids == all_ids_in_chunks
+        assert all_input_ids == all_ids_in_segments
 
-    def test_consecutive_assistant_messages_kept_in_one_chunk(self):
+    def test_consecutive_assistant_messages_kept_in_one_segment(self):
         """Thinking-mode preamble: user -> assistant1 -> assistant2 -> user stays together."""
         norm = _make_normalized(
             [
@@ -379,15 +379,15 @@ class TestChunker:
                 ("assistant", "A2"),
             ]
         )
-        result = chunk_conversation(norm)
-        chunks = result["chunks"]
-        # chunk0: [Q1, Thinking, Full answer, Q2]
-        assert len(chunks[0]["message_ids"]) == 4
-        assert chunks[0]["start_position"] == 0
-        assert chunks[0]["end_position"] == 3
-        # chunk1: [Q2, A2] — 2-message final chunk
-        assert chunks[1]["start_position"] == 3
-        assert len(chunks[1]["message_ids"]) == 2
+        result = segment_conversation(norm)
+        segments = result["segments"]
+        # segment0: [Q1, Thinking, Full answer, Q2]
+        assert len(segments[0]["message_ids"]) == 4
+        assert segments[0]["start_position"] == 0
+        assert segments[0]["end_position"] == 3
+        # segment1: [Q2, A2] — 2-message final segment
+        assert segments[1]["start_position"] == 3
+        assert len(segments[1]["message_ids"]) == 2
 
     def test_consecutive_assistants_no_messages_dropped(self):
         """No messages lost when consecutive assistant messages are present."""
@@ -399,13 +399,13 @@ class TestChunker:
                 ("user", "Follow-up"),
             ]
         )
-        result = chunk_conversation(norm)
-        all_ids_in_chunks = set()
-        for chunk in result["chunks"]:
-            all_ids_in_chunks.update(chunk["message_ids"])
+        result = segment_conversation(norm)
+        all_ids_in_segments = set()
+        for segment in result["segments"]:
+            all_ids_in_segments.update(segment["message_ids"])
         if result["pending_tail"]:
-            all_ids_in_chunks.add(result["pending_tail"]["message_id"])
-        assert all_ids_in_chunks == {m["message_id"] for m in norm["messages"]}
+            all_ids_in_segments.add(result["pending_tail"]["message_id"])
+        assert all_ids_in_segments == {m["message_id"] for m in norm["messages"]}
 
     def test_overlap_preserved_with_consecutive_assistants(self):
         """Overlap rule still holds when assistant turns have multiple messages."""
@@ -420,12 +420,12 @@ class TestChunker:
                 ("user", "Q3"),
             ]
         )
-        result = chunk_conversation(norm)
-        chunks = result["chunks"]
-        assert len(chunks) >= 2
-        for i in range(len(chunks) - 1):
-            last_id = chunks[i]["message_ids"][-1]
-            first_id = chunks[i + 1]["message_ids"][0]
+        result = segment_conversation(norm)
+        segments = result["segments"]
+        assert len(segments) >= 2
+        for i in range(len(segments) - 1):
+            last_id = segments[i]["message_ids"][-1]
+            first_id = segments[i + 1]["message_ids"][0]
             assert last_id == first_id, (
-                f"Chunk {i} last id {last_id!r} != Chunk {i+1} first id {first_id!r}"
+                f"Segment {i} last id {last_id!r} != Segment {i+1} first id {first_id!r}"
             )

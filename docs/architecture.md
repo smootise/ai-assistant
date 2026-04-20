@@ -6,12 +6,12 @@ JARVIS processes raw data sources into a queryable semantic memory. The design i
 local-first: all inference, embeddings, and storage run on your own machine.
 
 ```
-Raw sources                     Ollama (inference + embedding)
-  ChatGPT exports   ──ingest──▶  Chunks ──summarize──▶  SQLite (source of truth)
-  Notion (planned)                                            │
-  Slack (planned)                                        Qdrant (vector index)
-                                                              │
-                                                         retrieve / ask
+Raw sources                       Ollama (inference + embedding)
+  ChatGPT exports   ──ingest──▶  Segments ──summarize──▶  SQLite (source of truth)
+  Notion (planned)                                              │
+  Slack (planned)                                          Qdrant (vector index)
+                                                                │
+                                                           retrieve / answer
 ```
 
 ---
@@ -36,26 +36,26 @@ Full records are always fetched from SQLite by ID. Never treat Qdrant as the sou
 ### Ingestion
 
 Raw source files are parsed, normalized to a canonical message schema, and split into
-overlapping chunks (`user → assistant(s) → user`). Each chunk has a stable ID so re-ingesting
-an updated export is safe — existing records are never duplicated.
+overlapping segments (`user → assistant(s) → user`). Each segment has a stable ID so
+re-ingesting an updated export is safe — existing records are never duplicated.
 
-### Chunk Summarization
+### Segment Summarization
 
-Each chunk is summarized individually by a local LLM (Ollama). The last N chunk summaries
+Each segment is summarized individually by a local LLM (Ollama). The last N segment summaries
 are passed as rolling context so the model understands conversational continuity without
 re-summarizing earlier content.
 
-Chunk summaries are the most granular retrieval unit — they score well for specific,
+Segment summaries are the most granular retrieval unit — they score well for specific,
 content-level queries.
 
-### Segment Detection
+### Topic Detection
 
-Consecutive chunk summaries are grouped into topic segments by measuring cosine similarity
-between adjacent summary embeddings. When similarity drops below a threshold, a new segment
-begins. Each segment is then summarized with a single LLM call.
+Consecutive segment summaries are grouped into topics by measuring cosine similarity
+between adjacent summary embeddings. When similarity drops below a threshold, a new topic
+begins. Each topic is then summarized with a single LLM call.
 
-Segment summaries are higher-level — they score well for broad thematic queries. Both chunk
-and segment summaries are indexed in Qdrant and retrieved together.
+Topic summaries are higher-level — they score well for broad thematic queries. Both segment
+and topic summaries are indexed in Qdrant and retrieved together.
 
 ### Retrieval
 
@@ -71,9 +71,9 @@ Two distinct embedding approaches are used — do not conflate them:
 | Use case | Text embedded | Why |
 |---|---|---|
 | **Retrieval indexing** | summary + bullets + action_items (multi-field) | Richer signal for semantic search |
-| **Segment boundary detection** | summary text only | Multi-field text flattens inter-chunk similarity, making boundary detection unreliable |
+| **Topic boundary detection** | summary text only | Multi-field text flattens inter-segment similarity, making boundary detection unreliable |
 
-Segment boundary detection always embeds on the fly from raw summary text. It never reuses
+Topic boundary detection always embeds on the fly from raw summary text. It never reuses
 the Qdrant retrieval vectors.
 
 ---
@@ -101,17 +101,17 @@ Ollama is required for every pipeline run. Qdrant is only required for `--persis
 ## SQLite Schema
 
 The database lives at `data/jarvis.db` (configurable via `JARVIS_DB_PATH`). Current schema
-version: **3**. Migrations are applied automatically on startup.
+version: **4**. Schema is applied fresh on startup — no migrations from prior versions.
 
 Key columns in the `summaries` table:
 
 | Column | Description |
 |---|---|
-| `source_kind` | `conversation` \| `ai_chat_chunk` \| `ai_chat_segment` |
-| `chunk_id` | Set for chunk summaries |
-| `chunk_index` | Ordering within a conversation |
-| `parent_conversation_id` | Links chunks and segments back to their conversation |
-| `segment_index` | Set for segment summaries |
-| `segment_chunk_range` | e.g. `"c000-c018"` — which chunks this segment covers |
+| `source_kind` | `conversation` \| `ai_chat_segment` \| `ai_chat_topic` |
+| `segment_id` | Set for segment summaries (e.g. `686c5e2b_s003`) |
+| `segment_index` | Ordering within a conversation (segment summaries) |
+| `parent_conversation_id` | Links segments and topics back to their conversation |
+| `topic_index` | Set for topic summaries |
+| `topic_segment_range` | e.g. `"s000-s018"` — which segments this topic covers |
 | `status` | `ok` \| `degraded` |
 | `qdrant_point_id` | UUID of the corresponding Qdrant point (null if not persisted) |

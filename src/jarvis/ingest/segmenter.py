@@ -1,15 +1,15 @@
-"""Chunker for normalized AI chat conversations.
+"""Segmenter for normalized AI chat conversations.
 
-Implements the source-specific `ai_chat` chunking strategy:
+Implements the source-specific `ai_chat` segmentation strategy:
   user -> assistant -> user (with overlap on the trailing user message)
 
-Chunk i:   [user_n, assistant_n, user_{n+1}]
-Chunk i+1: [user_{n+1}, assistant_{n+1}, user_{n+2}]
+Segment i:   [user_n, assistant_n, user_{n+1}]
+Segment i+1: [user_{n+1}, assistant_{n+1}, user_{n+2}]
 
 Special cases:
 - If the conversation ends after an assistant reply, emit a final
-  2-message chunk (user, assistant).
-- A trailing unmatched user message is NOT emitted as a normal chunk.
+  2-message segment (user, assistant).
+- A trailing unmatched user message is NOT emitted as a normal segment.
   It is recorded as a pending_tail in the manifest.
 - If the ideal pattern breaks (consecutive same-role messages), fall
   back gracefully: emit whatever contiguous messages are available
@@ -29,7 +29,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _format_chunk_text(messages: List[Dict[str, Any]]) -> str:
+def _format_segment_text(messages: List[Dict[str, Any]]) -> str:
     """Format a list of normalized messages as a readable transcript.
 
     Args:
@@ -48,27 +48,27 @@ def _format_chunk_text(messages: List[Dict[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
-def chunk_conversation(
+def segment_conversation(
     normalized: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Chunk a normalized conversation into summarization-ready chunks.
+    """Segment a normalized conversation into summarization-ready segments.
 
     Args:
         normalized: Normalized conversation dict (from normalizer.py).
 
     Returns:
         Dict with keys:
-            chunks: list of chunk dicts
+            segments: list of segment dicts
             pending_tail: optional single message dict (trailing unmatched user)
             manifest_meta: top-level metadata for the manifest
     """
     messages = normalized.get("messages", [])
     conversation_id = normalized.get("conversation_id", "")
-    chunks: List[Dict[str, Any]] = []
+    segments: List[Dict[str, Any]] = []
     pending_tail: Optional[Dict[str, Any]] = None
 
     i = 0
-    chunk_index = 0
+    segment_index = 0
 
     while i < len(messages):
         current = messages[i]
@@ -80,7 +80,7 @@ def chunk_conversation(
             if i + 1 < len(messages) and messages[i + 1]["speaker"] == "assistant":
                 # Collect all consecutive assistant messages (thinking-mode preambles
                 # produce a short "I'm looking into this…" message immediately followed
-                # by the full answer — keep them together in one chunk).
+                # by the full answer — keep them together in one segment).
                 j = i + 1
                 while j < len(messages) and messages[j]["speaker"] == "assistant":
                     j += 1
@@ -89,16 +89,16 @@ def chunk_conversation(
 
                 # Look ahead for the next user message (overlap anchor)
                 if j < len(messages) and messages[j]["speaker"] == "user":
-                    chunk_msgs = [current] + assistant_msgs + [messages[j]]
-                    chunks.append(_make_chunk(chunk_msgs, conversation_id, chunk_index))
-                    chunk_index += 1
-                    i = j  # advance to the overlap user (it starts next chunk)
+                    segment_msgs = [current] + assistant_msgs + [messages[j]]
+                    segments.append(_make_segment(segment_msgs, conversation_id, segment_index))
+                    segment_index += 1
+                    i = j  # advance to the overlap user (it starts next segment)
                     continue
                 else:
-                    # Conversation ends after the assistant turn(s): final chunk
-                    chunk_msgs = [current] + assistant_msgs
-                    chunks.append(_make_chunk(chunk_msgs, conversation_id, chunk_index))
-                    chunk_index += 1
+                    # Conversation ends after the assistant turn(s): final segment
+                    segment_msgs = [current] + assistant_msgs
+                    segments.append(_make_segment(segment_msgs, conversation_id, segment_index))
+                    segment_index += 1
                     i = j
                     continue
             else:
@@ -114,14 +114,14 @@ def chunk_conversation(
                     continue
                 else:
                     # Consecutive users or other break: emit as fallback 1-msg
-                    # chunk and advance, so no messages are dropped
+                    # segment and advance, so no messages are dropped
                     logger.warning(
                         f"Pattern break at position {i}: user followed by "
                         f"{messages[i + 1]['speaker']} (expected assistant). "
-                        "Emitting fallback single-message chunk."
+                        "Emitting fallback single-message segment."
                     )
-                    chunks.append(_make_chunk([current], conversation_id, chunk_index))
-                    chunk_index += 1
+                    segments.append(_make_segment([current], conversation_id, segment_index))
+                    segment_index += 1
                     i += 1
                     continue
 
@@ -134,10 +134,10 @@ def chunk_conversation(
             orphan_msgs = messages[i:j]
             logger.warning(
                 f"Orphaned assistant message(s) at position {i} "
-                f"(no preceding user). Emitting fallback chunk of {len(orphan_msgs)} msg(s)."
+                f"(no preceding user). Emitting fallback segment of {len(orphan_msgs)} msg(s)."
             )
-            chunks.append(_make_chunk(orphan_msgs, conversation_id, chunk_index))
-            chunk_index += 1
+            segments.append(_make_segment(orphan_msgs, conversation_id, segment_index))
+            segment_index += 1
             i = j
             continue
 
@@ -146,50 +146,50 @@ def chunk_conversation(
         "title": normalized.get("title", ""),
         "source_platform": normalized.get("source_platform", "chatgpt"),
         "total_visible_messages": len(messages),
-        "chunk_count": len(chunks),
-        "chunk_ids": [c["chunk_id"] for c in chunks],
+        "segment_count": len(segments),
+        "segment_ids": [s["segment_id"] for s in segments],
         "pending_tail": _pending_tail_summary(pending_tail),
-        "chunked_at": _now_iso(),
+        "segmented_at": _now_iso(),
     }
 
     logger.info(
-        f"Chunking complete: {len(chunks)} chunks, "
+        f"Segmentation complete: {len(segments)} segments, "
         f"pending_tail={'yes' if pending_tail else 'no'}"
     )
     return {
-        "chunks": chunks,
+        "segments": segments,
         "pending_tail": pending_tail,
         "manifest_meta": manifest_meta,
     }
 
 
-def _make_chunk(
+def _make_segment(
     messages: List[Dict[str, Any]],
     conversation_id: str,
-    chunk_index: int,
+    segment_index: int,
 ) -> Dict[str, Any]:
-    """Build a single chunk dict.
+    """Build a single segment dict.
 
     Args:
-        messages: Ordered list of normalized messages for this chunk.
+        messages: Ordered list of normalized messages for this segment.
         conversation_id: Parent conversation ID.
-        chunk_index: Zero-based index of this chunk.
+        segment_index: Zero-based index of this segment.
 
     Returns:
-        Chunk dict.
+        Segment dict.
     """
     positions = [m["position"] for m in messages]
     message_ids = [m["message_id"] for m in messages]
-    chunk_id = f"{conversation_id}_c{chunk_index:03d}"
+    segment_id = f"{conversation_id}_s{segment_index:03d}"
 
     return {
         "conversation_id": conversation_id,
-        "chunk_id": chunk_id,
-        "chunk_index": chunk_index,
+        "segment_id": segment_id,
+        "segment_index": segment_index,
         "start_position": positions[0],
         "end_position": positions[-1],
         "message_ids": message_ids,
-        "chunk_text": _format_chunk_text(messages),
+        "segment_text": _format_segment_text(messages),
     }
 
 
@@ -212,30 +212,30 @@ def _pending_tail_summary(msg: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
         "position": msg["position"],
         "speaker": msg["speaker"],
         "preview": preview,
-        "note": "Trailing unmatched user message. Will be chunked on next re-import.",
+        "note": "Trailing unmatched user message. Will be segmented on next re-import.",
     }
 
 
-def save_chunks(
-    chunks: List[Dict[str, Any]],
+def save_segments(
+    segments: List[Dict[str, Any]],
     pending_tail: Optional[Dict[str, Any]],
     manifest_meta: Dict[str, Any],
     output_dir: Path,
 ) -> None:
-    """Write per-chunk files and the manifest to disk.
+    """Write per-segment files and the manifest to disk.
 
     Args:
-        chunks: List of chunk dicts.
+        segments: List of segment dicts.
         pending_tail: Optional trailing unmatched message.
         manifest_meta: Top-level manifest metadata.
         output_dir: Directory to write into (created if absent).
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for chunk in chunks:
-        chunk_path = output_dir / f"chunk_{chunk['chunk_index']:03d}.json"
-        with open(chunk_path, "w", encoding="utf-8") as f:
-            json.dump(chunk, f, indent=2, ensure_ascii=False)
+    for segment in segments:
+        segment_path = output_dir / f"segment_{segment['segment_index']:03d}.json"
+        with open(segment_path, "w", encoding="utf-8") as f:
+            json.dump(segment, f, indent=2, ensure_ascii=False)
 
     # Write pending tail if present
     if pending_tail:
@@ -243,16 +243,16 @@ def save_chunks(
         tail_doc = {
             **pending_tail,
             "partial": True,
-            "note": "Trailing unmatched user message. Will be chunked on next re-import.",
+            "note": "Trailing unmatched user message. Will be segmented on next re-import.",
         }
         with open(tail_path, "w", encoding="utf-8") as f:
             json.dump(tail_doc, f, indent=2, ensure_ascii=False)
 
     # Write manifest
-    manifest_path = output_dir.parent / "chunk_manifest.json"
+    manifest_path = output_dir.parent / "segment_manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest_meta, f, indent=2, ensure_ascii=False)
 
     logger.info(
-        f"Wrote {len(chunks)} chunk files + manifest to {output_dir.parent}"
+        f"Wrote {len(segments)} segment files + manifest to {output_dir.parent}"
     )

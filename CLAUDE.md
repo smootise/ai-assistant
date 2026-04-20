@@ -22,19 +22,22 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 
 ### Done
 - Repo, CI/CD setup
-- ChatGPT export ingestion (normalize → chunk)
-- Chunk summarization with rolling context window (resume-safe, `--force` support)
-- Topic segment detection via cosine similarity + LLM segment summarization
-- SQLite persistence layer (source of truth, schema v3)
+- ChatGPT export ingestion (normalize → segment)
+- Segment summarization with rolling context window (resume-safe, `--force` support)
+- Topic detection via cosine similarity + LLM topic summarization
+- SQLite persistence layer (source of truth, schema v4)
 - Qdrant vector index (retrieval embeddings)
 - Semantic retrieval CLI (`retrieve` command)
 - RAG answer generation (`answer` command — pipes retrieved summaries as context into local LLM)
+- Rename refactor: chunk→segment (ingestion unit), segment→topic (thematic grouping)
 
 ### Planned
+- Extract pipeline: clean attributed bullet statements from each segment (`extract-segments` command)
+- Fragment pipeline: topically coherent sub-units of an extract, the retrieval unit (`fragment-extracts` command)
+- Token-budget retrieval: replace flat `--top-k` with `--max-context-tokens` to handle variable fragment sizes
 - Web UI: browser-based interface to query JARVIS and view results
 - TrueNAS deployment: migrate JARVIS services (Ollama, Qdrant, backend) to run on TrueNAS
 - API integrations: Notion, Slack, and other data sources as ingestion adapters
-- README reorganization: split into quickstart + per-domain docs pages (`docs/pipeline.md`, `docs/retrieval.md`, etc.)
 
 ---
 

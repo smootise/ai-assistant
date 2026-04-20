@@ -1,6 +1,6 @@
 # JARVIS — Pipeline Reference
 
-Full reference for the ingestion → summarization → segmentation pipeline.
+Full reference for the ingestion → summarization → topic detection pipeline.
 For command flags and quickstart examples, see [README.md](../README.md).
 For system design, see [architecture.md](architecture.md).
 
@@ -23,8 +23,8 @@ What happens:
 2. Filters to visible `user` / `assistant` text messages (excludes system messages, memory updates, hidden messages)
 3. Deduplicates adjacent identical user messages (retry collapses)
 4. Normalizes to a canonical schema with stable message IDs
-5. Splits into overlapping chunks: `user → assistant(s) → user`  
-   Chunk N ends with the user message that opens chunk N+1
+5. Splits into overlapping segments: `user → assistant(s) → user`  
+   Segment N ends with the user message that opens segment N+1
 6. Trailing unmatched user messages (no reply yet) are saved as `pending_tail`
 
 Re-running on an updated export is safe — messages are merged by ID, never duplicated.
@@ -33,138 +33,138 @@ Re-running on an updated export is safe — messages are merged by ID, never dup
 
 ```
 inbox/ai_chat/chatgpt/<conversation_id>/
-  normalized.json          # canonical message list
-  chunk_manifest.json      # chunk count, IDs, pending_tail flag
-  chunks/
-    chunk_000.json         # chunk_id, chunk_index, chunk_text, message_ids
-    chunk_001.json
+  normalized.json            # canonical message list
+  segment_manifest.json      # segment count, IDs, pending_tail flag
+  segments/
+    segment_000.json         # segment_id, segment_index, segment_text, message_ids
+    segment_001.json
     ...
-    pending_tail.json      # only present if last message has no reply
+    pending_tail.json        # only present if last message has no reply
 ```
 
 `pending_tail.json` is informational only — it is skipped during summarization.
 
 ---
 
-## Step 2 — Summarize Chunks
+## Step 2 — Summarize Segments
 
 ```bash
-python -m jarvis.cli summarize-chunks chatgpt \
+python -m jarvis.cli summarize-segments chatgpt \
   --conversation-id <id> \
   --persist
 ```
 
-Each chunk is summarized individually. The last 3 chunk summaries (configurable via
+Each segment is summarized individually. The last 3 segment summaries (configurable via
 `--context-window`) are passed as rolling context so the model understands continuity.
 
-**Resume behavior:** if a chunk's `.json` already exists in
-`OUTPUTS/<id>/chunk_summaries/`, the LLM call is skipped and the file is loaded from disk.
-Re-run the same command after an interruption — only missing chunks are processed.
+**Resume behavior:** if a segment's `.json` already exists in
+`OUTPUTS/<id>/segment_summaries/`, the LLM call is skipped and the file is loaded from disk.
+Re-run the same command after an interruption — only missing segments are processed.
 
-**Partial runs:** use `--from-chunk` / `--to-chunk` to summarize a specific range.
+**Partial runs:** use `--from-segment` / `--to-segment` to summarize a specific range.
 Rolling context is pre-seeded from existing summaries before the range start.
 
 **Force re-run:** `--force` wipes output files and SQLite/Qdrant records for the specified
-range (or all chunks if no range given), then re-summarizes. Chunks outside the range are
+range (or all segments if no range given), then re-summarizes. Segments outside the range are
 never touched.
 
 ### Output layout
 
 ```
-OUTPUTS/<conversation_id>/chunk_summaries/
-  <chunk_id>.json    # summary, bullets, action_items, confidence, metadata
-  <chunk_id>.md      # human-readable report
+OUTPUTS/<conversation_id>/segment_summaries/
+  <segment_id>.json    # summary, bullets, action_items, confidence, metadata
+  <segment_id>.md      # human-readable report
   ...
 ```
 
-### What each chunk summary contains
+### What each segment summary contains
 
 | Field | Description |
 |---|---|
-| `summary` | Paragraph summary of the chunk |
+| `summary` | Paragraph summary of the segment |
 | `bullets` | Key decisions and insights as bullet points |
-| `action_items` | Tasks identified in the chunk |
+| `action_items` | Tasks identified in the segment |
 | `confidence` | Model's self-reported confidence (0.0–1.0) |
-| `chunk_id` | Stable ID linking back to the source chunk |
-| `chunk_index` | Position in the conversation |
+| `segment_id` | Stable ID linking back to the source segment |
+| `segment_index` | Position in the conversation |
 | `parent_conversation_id` | Links to the parent conversation |
 | `status` | `ok` or `degraded` |
-| `lang` | Detected language |
+| `source_kind` | Always `ai_chat_segment` |
 
 ---
 
-## Step 3 — Detect Segments
+## Step 3 — Detect Topics
 
 ```bash
-python -m jarvis.cli detect-segments chatgpt \
+python -m jarvis.cli detect-topics chatgpt \
   --conversation-id <id> \
   --persist
 ```
 
-Groups consecutive chunk summaries into topic segments. A new segment begins when the
-cosine similarity between adjacent chunk summary embeddings drops below `--threshold` (default: 0.55).
+Groups consecutive segment summaries into topics. A new topic begins when the
+cosine similarity between adjacent segment summary embeddings drops below `--threshold` (default: 0.55).
 
 **Tuning the threshold:**
 - Use `--dry-run` first to see the similarity distribution and proposed boundaries without
   running any LLM inference
-- Lower threshold → fewer, broader segments
-- Higher threshold → more, finer-grained segments
+- Lower threshold → fewer, broader topics
+- Higher threshold → more, finer-grained topics
 - Typical healthy distribution: mean ~0.70, genuine topic shifts cluster below 0.55
 
 ```bash
 # Preview boundaries before committing
-python -m jarvis.cli detect-segments chatgpt \
+python -m jarvis.cli detect-topics chatgpt \
   --conversation-id <id> \
   --dry-run
 
 # Example output:
 # Similarity distribution across 104 pairs:
 #   min=0.41  max=0.94  mean=0.73
-#   Boundaries (< 0.55): after c004 (0.44), after c018 (0.51), ...
-#   Segments detected: 12
+#   Boundaries (< 0.55): after s004 (0.44), after s018 (0.51), ...
+#   Topics detected: 12
 ```
 
-**Force re-run:** `--force` wipes all existing segment files and records for the conversation,
+**Force re-run:** `--force` wipes all existing topic files and records for the conversation,
 then re-detects and re-summarizes from scratch.
 
-**Prerequisites:** chunk summaries must exist in `OUTPUTS/<id>/chunk_summaries/`.
-Run `summarize-chunks` first.
+**Prerequisites:** segment summaries must exist in `OUTPUTS/<id>/segment_summaries/`.
+Run `summarize-segments` first.
 
 ### Output layout
 
 ```
-OUTPUTS/<conversation_id>/segment_summaries/
-  segment_000.json    # summary, bullets, action_items + segment metadata
-  segment_000.md
-  segment_001.json
-  segment_001.md
+OUTPUTS/<conversation_id>/topic_summaries/
+  topic_000.json    # summary, bullets, action_items + topic metadata
+  topic_000.md
+  topic_001.json
+  topic_001.md
   ...
 ```
 
-### What each segment summary contains
+### What each topic summary contains
 
-All chunk summary fields, plus:
+All segment summary fields, plus:
 
 | Field | Description |
 |---|---|
-| `segment_index` | Position in the conversation |
-| `segment_chunk_range` | e.g. `"c000-c018"` — chunks covered by this segment |
-| `source_kind` | Always `ai_chat_segment` |
+| `topic_index` | Position in the conversation |
+| `topic_segment_range` | e.g. `"s000-s018"` — segments covered by this topic |
+| `source_kind` | Always `ai_chat_topic` |
 
 ---
 
 ## Retrieval
 
-After persisting chunk and segment summaries, query across all data:
+After persisting segment and topic summaries, query across all data:
 
 ```bash
 python -m jarvis.cli retrieve --query "why did we choose SQLite over Postgres?" --top-k 5
 ```
 
 **Tips:**
-- Specific content queries (implementation details, exact decisions) → chunks score highest
-- Broad thematic queries (overall topic, high-level decisions) → segments score highest
-- Use `--top-k 10` to surface both chunk and segment results in the same query
+- Specific content queries (implementation details, exact decisions) → segments score highest
+- Broad thematic queries (overall topic, high-level decisions) → topics score highest
+- Use `--top-k 10` to surface both segment and topic results in the same query
 - Queries work in any language — the embedding model is multilingual
 
 ---
@@ -189,5 +189,5 @@ What happens:
 The LLM is instructed to cite sources and to say so clearly if the context is insufficient —
 it will not fabricate information not present in the retrieved excerpts.
 
-**Prerequisites:** summaries must be persisted (`--persist` on `summarize-chunks` or
-`detect-segments`). Ollama and Qdrant must both be running.
+**Prerequisites:** summaries must be persisted (`--persist` on `summarize-segments` or
+`detect-topics`). Ollama and Qdrant must both be running.

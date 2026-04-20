@@ -8,7 +8,7 @@ As a Product Manager, you accumulate a constant stream of information — Notion
 
 - *"Why did we decide to use Qdrant over Pinecone?"*
 - *"What action items were assigned to me in the last sprint planning?"*
-- *"What was the reasoning behind the chunking strategy?"*
+- *"What was the reasoning behind the segmentation strategy?"*
 
 Everything runs on your own machine. No data leaves your environment.
 
@@ -19,12 +19,12 @@ Everything runs on your own machine. No data leaves your environment.
 ```
 Raw data (ChatGPT export, Notion, Slack, ...)
     ↓  ingest
-Normalized chunks
-    ↓  summarize-chunks
-Chunk summaries (SQLite + Qdrant)
-    ↓  detect-segments
-Topic segment summaries (SQLite + Qdrant)
-    ↓  retrieve / ask
+Normalized segments
+    ↓  summarize-segments
+Segment summaries (SQLite + Qdrant)
+    ↓  detect-topics
+Topic summaries (SQLite + Qdrant)
+    ↓  retrieve / answer
 Answers grounded in your own data
 ```
 
@@ -69,14 +69,14 @@ docker run -p 6333:6333 -v qdrant_storage:/qdrant/storage qdrant/qdrant
 ### 4. Run the full pipeline on a ChatGPT export
 
 ```bash
-# Step 1 — ingest and chunk
+# Step 1 — ingest and segment
 python -m jarvis.cli ingest chatgpt --file inbox/ai_chat/chatgpt/raw/<export>.json
 
-# Step 2 — summarize each chunk
-python -m jarvis.cli summarize-chunks chatgpt --conversation-id <id> --persist
+# Step 2 — summarize each segment
+python -m jarvis.cli summarize-segments chatgpt --conversation-id <id> --persist
 
-# Step 3 — detect topic segments and summarize them
-python -m jarvis.cli detect-segments chatgpt --conversation-id <id> --persist
+# Step 3 — detect topics and summarize them
+python -m jarvis.cli detect-topics chatgpt --conversation-id <id> --persist
 
 # Step 4 — query your data
 python -m jarvis.cli retrieve --query "why did we choose Qdrant?"
@@ -91,7 +91,7 @@ python -m jarvis.cli answer "Why did we choose Qdrant over Pinecone?"
 
 ### `ingest chatgpt`
 
-Parse a raw ChatGPT export JSON, normalize it, and split it into chunks.
+Parse a raw ChatGPT export JSON, normalize it, and split it into segments.
 
 ```bash
 python -m jarvis.cli ingest chatgpt --file <path-to-export.json>
@@ -108,55 +108,55 @@ See [docs/pipeline.md](docs/pipeline.md) for output layout details.
 
 ---
 
-### `summarize-chunks chatgpt`
+### `summarize-segments chatgpt`
 
-Summarize each chunk of an ingested conversation using a local LLM, with a rolling context window for continuity.
+Summarize each segment of an ingested conversation using a local LLM, with a rolling context window for continuity.
 
-**Resume-safe:** if a chunk summary already exists on disk, the LLM call is skipped. Re-run after an interruption to pick up where you left off.
+**Resume-safe:** if a segment summary already exists on disk, the LLM call is skipped. Re-run after an interruption to pick up where you left off.
 
 ```bash
-python -m jarvis.cli summarize-chunks chatgpt --conversation-id <id> --persist
+python -m jarvis.cli summarize-segments chatgpt --conversation-id <id> --persist
 ```
 
 | Flag | Default | Description |
 |---|---|---|
 | `--conversation-id` | *(required)* | Conversation ID (subfolder under `--inbox-dir`) |
 | `--inbox-dir` | `inbox/ai_chat/chatgpt` | Base inbox directory |
-| `--from-chunk` | `0` | Start chunk index (inclusive) |
-| `--to-chunk` | last | End chunk index (inclusive) |
-| `--context-window` | `3` | Prior chunk summaries passed as rolling context |
+| `--from-segment` | `0` | Start segment index (inclusive) |
+| `--to-segment` | last | End segment index (inclusive) |
+| `--context-window` | `3` | Prior segment summaries passed as rolling context |
 | `--persist` | off | Save to SQLite and index in Qdrant |
 | `--force` | off | Wipe existing files and records for the range, then re-run |
 
-`--force` with a range only affects that range — other chunks are untouched.
+`--force` with a range only affects that range — other segments are untouched.
 
 ---
 
-### `detect-segments chatgpt`
+### `detect-topics chatgpt`
 
-Group chunk summaries into topic segments by measuring cosine similarity between adjacent embeddings. When similarity drops below the threshold, a new segment begins.
+Group segment summaries into topics by measuring cosine similarity between adjacent embeddings. When similarity drops below the threshold, a new topic begins.
 
 ```bash
-python -m jarvis.cli detect-segments chatgpt --conversation-id <id> --persist
+python -m jarvis.cli detect-topics chatgpt --conversation-id <id> --persist
 ```
 
-Use `--dry-run` to preview segment boundaries without running LLM inference:
+Use `--dry-run` to preview topic boundaries without running LLM inference:
 
 ```bash
-python -m jarvis.cli detect-segments chatgpt --conversation-id <id> --dry-run
+python -m jarvis.cli detect-topics chatgpt --conversation-id <id> --dry-run
 ```
 
 | Flag | Default | Description |
 |---|---|---|
 | `--conversation-id` | *(required)* | Conversation ID |
-| `--threshold` | `0.55` | Cosine similarity threshold for segment boundaries |
+| `--threshold` | `0.55` | Cosine similarity threshold for topic boundaries |
 | `--dry-run` | off | Boundary detection only — no LLM calls |
 | `--persist` | off | Save to SQLite and index in Qdrant |
-| `--force` | off | Wipe existing segment files and records, then re-run |
+| `--force` | off | Wipe existing topic files and records, then re-run |
 
-Lower threshold → fewer, broader segments. Higher → more, finer-grained segments.
+Lower threshold → fewer, broader topics. Higher → more, finer-grained topics.
 
-**Prerequisites:** chunk summaries must exist (`summarize-chunks` must have run first).
+**Prerequisites:** segment summaries must exist (`summarize-segments` must have run first).
 
 ---
 
@@ -189,7 +189,7 @@ python -m jarvis.cli retrieve --query "what did we decide about the data model?"
 | `--query` | *(required)* | Natural language query |
 | `--top-k` | `5` | Number of results to return |
 
-Chunks score higher for specific content; segments score higher for broad thematic queries. Use `--top-k 10` to surface both.
+Segments score higher for specific content; topics score higher for broad thematic queries. Use `--top-k 10` to surface both.
 
 ---
 
@@ -209,7 +209,7 @@ python -m jarvis.cli answer "Why did we choose Qdrant over Pinecone?" --top-k 5
 
 The answer is grounded in the retrieved summaries — the LLM cites sources where possible. If no relevant context is found, it says so instead of hallucinating.
 
-**Prerequisites:** summaries must be persisted (`--persist` flag on `summarize-chunks` or `detect-segments`). Both Ollama and Qdrant must be running.
+**Prerequisites:** summaries must be persisted (`--persist` flag on `summarize-segments` or `detect-topics`). Both Ollama and Qdrant must be running.
 
 ---
 
@@ -239,19 +239,19 @@ Precedence: **CLI flag > ENV (`.env`) > `config.yaml`**
 OUTPUTS/
   <source_basename>/               # single-file summarization
   <conversation_id>/
-    chunk_summaries/
-      <chunk_id>.json|.md
     segment_summaries/
-      segment_000.json|.md
-      segment_001.json|.md
+      <segment_id>.json|.md
+    topic_summaries/
+      topic_000.json|.md
+      topic_001.json|.md
       ...
 
 inbox/ai_chat/chatgpt/
   <conversation_id>/
     normalized.json
-    chunk_manifest.json
-    chunks/
-      chunk_000.json
+    segment_manifest.json
+    segments/
+      segment_000.json
       ...
 
 data/
@@ -270,6 +270,6 @@ data/
 ## Further Reading
 
 - [docs/architecture.md](docs/architecture.md) — system design, storage layers, embedding strategy
-- [docs/pipeline.md](docs/pipeline.md) — full ingestion → summarization → segmentation reference
+- [docs/pipeline.md](docs/pipeline.md) — full ingestion → summarization → topic detection reference
 - [docs/OUTPUTS.md](docs/OUTPUTS.md) — output schema spec and field definitions
 - [CLAUDE.md](CLAUDE.md) — guidelines for AI-assisted development on this repo
