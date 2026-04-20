@@ -1,103 +1,89 @@
 # CLAUDE.md — Project Charter & Coding Guardrails
 
 ## Purpose
-This document gives Claude Code the **context** and **rules** to follow when generating or editing code in this repository.
+Primary context file for Claude Code. Loaded on every session. Keep it lean — project-wide rules only.
+Sub-files carry task-specific detail and are auto-loaded when working in their subtree:
+- `src/jarvis/CLAUDE.md` — backend pipeline, modules, design decisions
+- `tests/CLAUDE.md` — mock contracts, fixture conventions
 
 ---
 
 ## Project Summary
-- **Name:** JARVIS
-- **Mission:** Local-first, privacy-friendly AI assistant for PM workflows. Ingest work data (Slack/Email/Notion), store embeddings, and enable retrieval → summarization → action items. Hybrid local/OpenAI stack.
-- **3–6 Month Goals (roadmap):**
-  - Sprint 0: Repo, CI/CD, PWA shell
-  - Sprint 1: Dummy ingestion
-  - Sprint 2: Data model & persistence
-  - Sprint 3: Tagging layer
-  - Sprint 4: Retrieval & vector indexing
-  - Sprint 5: Summaries & action items
-  - Sprint 6+: Chat UI and integrations (Slack, Email, Notion, Calendar)
-- **Non-Goals (for now):** Fine-tuning, heavy automation workflows, mobile app.
 
-> If a task conflicts with these goals, ask for clarification before proceeding.
+**Name:** JARVIS
+**Mission:** Local-first, privacy-friendly AI assistant for PM workflows. Ingest work data, store embeddings, enable retrieval → summarization → action items. Hybrid local/OpenAI stack, local-first in practice.
+**Non-Goals (for now):** Fine-tuning, heavy automation workflows, mobile app.
 
 ---
 
-## Architecture (initial)
-- **Frontend:** PWA (Next.js or SvelteKit) — to be decided in Sprint 0.
-- **Services (backend/ops):** Python for ingestion, embeddings, simple APIs.
-- **Vector DB:** Local Qdrant initially; may evaluate Pinecone/Weaviate later.
-- **Models:** Local-first (embeddings & small LLMs); OpenAI fallback for “hard” tasks.
-- **Data sources:** Dummy → Slack, Email, Notion, Calendar (incrementally).
-- **Repo layout (target):**.
-├─ src/ # Python modules
-├─ tests/ # Pytest
-├─ web/ # (future) PWA app
-├─ scripts/ # one-off utilities
-├─ prompts/ # prompt templates
-├─ docs/ # design notes & ADRs
-└─ .github/workflows/ # CI
+## Roadmap
 
+> Update this section at the end of any session where meaningful progress is made.
+
+### Done
+- Repo, CI/CD setup
+- ChatGPT export ingestion (normalize → chunk)
+- Chunk summarization with rolling context window (resume-safe, `--force` support)
+- Topic segment detection via cosine similarity + LLM segment summarization
+- SQLite persistence layer (source of truth, schema v3)
+- Qdrant vector index (retrieval embeddings)
+- Semantic retrieval CLI (`retrieve` command)
+
+### Currently Working On
+- **RAG answer generation:** pipe retrieved segment/chunk summaries as context into a local LLM (gemma4:31b via Ollama) so JARVIS can answer natural-language questions grounded in the indexed data
+
+### Planned
+- Web UI: browser-based interface to query JARVIS and view results
+- TrueNAS deployment: migrate JARVIS services (Ollama, Qdrant, backend) to run on TrueNAS
+- API integrations: Notion, Slack, and other data sources as ingestion adapters
+- README reorganization: split into quickstart + per-domain docs pages (`docs/pipeline.md`, `docs/retrieval.md`, etc.)
 
 ---
 
 ## Coding Standards (Python)
-- **PEP8** compliant; **Black-style** formatting with **line length 100**.
-- Avoid **flake8 E/F** errors (top-level defs separated by **2 blank lines**).
-- Use **type hints** for new/modified functions. Prefer small, pure functions.
-- **Docstrings:** Google-style or numpydoc.
-- **Logging:** `logging` module (no stray `print` except in `__main__`).
-- **Tests:** Pytest for new functions/modules; keep a fast test loop.
-- **Dependencies:** add to `requirements.txt`; pin when stable.
 
-> Golden prompt for code generation:  
-> **“Write PEP8-compliant Python, formatted for Black (line length 100). Avoid flake8 errors E/F.”**
+- **PEP8** compliant; **Black-style** line length **100**.
+- Avoid **flake8 E/F** errors. Top-level definitions separated by 2 blank lines.
+- **Type hints** on all new/modified functions.
+- **Logging:** use `logging` module for diagnostic output. Use `print` only for intentional CLI-facing output (result tables, progress reports, dry-run plans).
+- **Tests:** Pytest. Add tests for new modules and non-trivial logic.
+- **Dependencies:** add to `requirements.txt`; pin when stable.
+- No comments unless the *why* is non-obvious. No docstrings restating what the name says.
 
 ---
 
 ## Git & CI
-- **Conventional Commits:** `feat: …`, `fix: …`, `chore: …`, `docs: …`.
-- **Branching:** `feat/<area>-<short-desc>`, `chore/…`, `fix/…`.
-- **CI expectations:** All PRs must pass lint/tests via GitHub Actions.
-- Optional local hooks later: pre-commit with Black/Ruff.
+
+- **Conventional Commits:** `feat:`, `fix:`, `chore:`, `docs:`.
+- **CI:** lint + tests run on every push/PR via GitHub Actions. All PRs must pass.
 
 ---
 
-## How to Work With This Repo (for Claude)
-When asked to make changes:
-1. **Read** relevant files (and `CLAUDE.md`) and restate the plan.
-2. **Propose a diff** with minimal changes to meet acceptance criteria.
-3. Ensure code **passes flake8 & pytest** (assume CI enforces).
-4. Update **README** or `docs/` if you introduce new commands or configs.
-5. If uncertain, **ask a clarification question** before large edits.
+## Configuration
 
----
-## Configuration & Variables
+Precedence: **CLI flag > ENV / `.env` > `config.yaml`**
 
-We use a hybrid config: ENV for secrets/toggles, config.yaml for structured defaults.
-Precedence: CLI > ENV (.env) > config.yaml. Always print effective values at start of a run.
+| Variable | Default | Notes |
+|---|---|---|
+| `JARVIS_PROVIDER` | `local` | `local` \| `openai` \| `benchmark` |
+| `LOCAL_MODEL_NAME` | `mistral:7b-instruct` | Ollama model for inference |
+| `OPENAI_API_KEY` | — | Required only for `openai`/`benchmark`. Never commit. |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Cloud model name |
+| `JARVIS_OUTPUT_ROOT` | `OUTPUTS` | Root for all output artifacts |
+| `JARVIS_LOG_LEVEL` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` |
+| `JARVIS_PROMPTS_DIR` | `prompts` | Prompt template directory |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Shared by inference and embedding clients |
+| `EMBEDDING_MODEL` | `qwen3-embedding` | Ollama embedding model |
+| `JARVIS_DB_PATH` | `data/jarvis.db` | SQLite database path |
+| `QDRANT_HOST` | `localhost` | Qdrant server host |
+| `QDRANT_PORT` | `6333` | Qdrant server port |
 
-Primary ENV vars:
-JARVIS_PROVIDER — local | openai | benchmark. Default local.
-OPENAI_API_KEY — required only for openai/benchmark. Keep in .env (never commit).
-OPENAI_MODEL — cloud model (default gpt-4o-mini).
-LOCAL_MODEL_NAME — name/alias for local model (e.g., llama-3-8b-q4).
-JARVIS_OUTPUT_ROOT — default OUTPUTS.
-JARVIS_OUTPUT_TIMESTAMP — true|false (default true).
-JARVIS_OUTPUT_TS_FORMAT — default %Y%m%d_%H%M%S → subfolders like OUTPUTS/20250807_142915/.
-JARVIS_LOG_LEVEL — INFO by default.
-JARVIS_PROMPTS_DIR — prompts; JARVIS_SAMPLES_DIR — samples.
-
-Examples
-1. Local run to default timestamped folder:
-JARVIS_PROVIDER=local python -m jarvis.cli summarize --file samples/notes/note_small.md
-2. Benchmark (if key present), custom root:
-JARVIS_PROVIDER=benchmark JARVIS_OUTPUT_ROOT=OUTPUTS python -m jarvis.cli summarize --file samples/conversations/conv_short.json
-
-Security
-.env is ignored by Git. Use .env.example for placeholders. Never commit real keys.
+`.env` is gitignored. Use `.env.example` for placeholders.
 
 ---
 
-## Notes for Later
-- Move scope/roadmap from Notion into `/docs/` as an ADR or `SCOPE.md`.
-- When ready, add Black/Ruff + pre-commit and update CI accordingly.
+## Documentation Rules
+
+- **Update `README.md`** whenever a new CLI command, ENV var, flag, or output path is added or changed. README is the user-facing reference; keep it in sync.
+- CLAUDE.md files are for Claude. README is for humans.
+- Update the **Roadmap** section above at the end of sessions where meaningful progress is made.
