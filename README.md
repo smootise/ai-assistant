@@ -391,7 +391,7 @@ python -m jarvis.cli detect-segments chatgpt \
 | Flag | Default | Description |
 |---|---|---|
 | `--conversation-id` | *(required)* | Conversation ID (used to locate `OUTPUTS/<id>/chunk_summaries/`) |
-| `--threshold` | `0.65` | Cosine similarity drop threshold for segment boundaries |
+| `--threshold` | `0.55` | Cosine similarity drop threshold for segment boundaries |
 | `--dry-run` | off | Detect boundaries only — skip LLM summarization |
 | `--persist` | off | Save segment summaries to SQLite and index in Qdrant |
 

@@ -8,6 +8,8 @@ with a single LLM call.
 
 import json
 import logging
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -29,11 +31,14 @@ def _cosine_similarity(a: List[float], b: List[float]) -> float:
 
 
 def _build_embedding_text(chunk_summary: Dict[str, Any]) -> str:
-    """Build the text to embed from a chunk summary dict."""
-    parts = [chunk_summary.get("summary", "")]
-    for bullet in chunk_summary.get("bullets", []):
-        parts.append(bullet)
-    return " ".join(p for p in parts if p)
+    """Build the text to embed for segment boundary detection.
+
+    Uses summary text only (not bullets/action_items) so consecutive chunks on
+    the same topic score high and genuine topic shifts score low. The richer
+    retrieval embedding stored in Qdrant is not suitable here because its
+    multi-field construction flattens inter-chunk similarity across the board.
+    """
+    return chunk_summary.get("summary", "")
 
 
 class SegmentDetector:
@@ -46,7 +51,7 @@ class SegmentDetector:
         prompts_dir: str,
         schema: str,
         schema_version: str,
-        threshold: float = 0.65,
+        threshold: float = 0.55,
         vector_store: Optional[VectorStore] = None,
     ):
         self._embedder = embedder
@@ -205,9 +210,18 @@ class SegmentDetector:
         Returns:
             Tuple of (output_dir, output_data).
         """
+        start_time = time.time()
         prompt = self._build_segment_prompt(segment_chunks)
-        raw = self._ollama.generate(prompt)
-        parsed = self._ollama.parse_json_response(raw)
+        raw, is_degraded, warning = self._ollama.generate(prompt)
+        try:
+            parsed, parse_degraded, parse_warning = self._ollama.parse_json_response(raw)
+            if parse_degraded:
+                is_degraded = True
+                warning = parse_warning
+        except ValueError as e:
+            logger.error(f"Failed to parse response for segment {segment_index}: {e}")
+            raise RuntimeError(f"Model did not return valid JSON: {e}") from e
+        latency_ms = int((time.time() - start_time) * 1000)
 
         first_chunk_id = segment_chunks[0].get("chunk_id", "c000")
         last_chunk_id = segment_chunks[-1].get("chunk_id", f"c{len(segment_chunks) - 1:03d}")
@@ -224,7 +238,14 @@ class SegmentDetector:
             "model": self._ollama.model,
             "schema": self._schema,
             "schema_version": self._schema_version,
+            "latency_ms": latency_ms,
+            "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
+        if is_degraded:
+            output_data["status"] = "degraded"
+            output_data.setdefault("warnings", [])
+            if warning:
+                output_data["warnings"].append(warning)
         if run_id:
             output_data["run_id"] = run_id
 
@@ -251,32 +272,21 @@ class SegmentDetector:
         conversation_id: str,
         chunk_summaries: List[Dict[str, Any]],
     ) -> List[List[float]]:
-        """Return vectors for all chunk summaries.
+        """Embed each chunk summary for boundary detection.
 
-        Fetches from Qdrant if available and count matches; otherwise embeds
-        on the fly.
+        Always embeds on the fly from summary text only. Qdrant vectors are
+        intentionally not reused here — they are built from a multi-field
+        retrieval payload that suppresses inter-chunk similarity and produces
+        a flat distribution unsuitable for boundary detection.
 
         Args:
-            conversation_id: Used to query Qdrant.
-            chunk_summaries: Chunk summary dicts (used for on-the-fly embedding).
+            conversation_id: Unused; kept for API consistency.
+            chunk_summaries: Chunk summary dicts to embed.
 
         Returns:
             List of float vectors in the same order as chunk_summaries.
         """
-        if self._vector_store is not None:
-            qdrant_results = self._vector_store.get_by_conversation(conversation_id)
-            if len(qdrant_results) == len(chunk_summaries):
-                logger.info(
-                    f"Reusing {len(qdrant_results)} vectors from Qdrant"
-                )
-                return [vec for _, vec, _ in qdrant_results]
-            elif qdrant_results:
-                logger.warning(
-                    f"Qdrant returned {len(qdrant_results)} vectors but expected "
-                    f"{len(chunk_summaries)} — falling back to on-the-fly embedding"
-                )
-
-        logger.info(f"Embedding {len(chunk_summaries)} chunk summaries on the fly")
+        logger.info(f"Embedding {len(chunk_summaries)} chunk summaries for segment detection")
         return [
             self._embedder.embed(_build_embedding_text(cs))
             for cs in chunk_summaries

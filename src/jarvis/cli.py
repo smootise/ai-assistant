@@ -687,8 +687,8 @@ def main() -> int:
     ds_chatgpt.add_argument(
         "--threshold",
         type=float,
-        default=0.65,
-        help="Cosine similarity drop threshold for segment boundaries (default: 0.65)",
+        default=0.55,
+        help="Cosine similarity drop threshold for segment boundaries (default: 0.55)",
     )
     ds_chatgpt.add_argument(
         "--dry-run",

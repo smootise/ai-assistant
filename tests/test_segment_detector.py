@@ -48,17 +48,23 @@ def _make_detector(
     ollama = MagicMock()
     ollama.model = "gemma4:31b"
     ollama.generate.return_value = (
-        '{"summary": "seg summary", "bullets": [], "action_items": [], "confidence": 0.8}'
+        '{"summary": "seg summary", "bullets": [], "action_items": [], "confidence": 0.8}',
+        False,
+        "",
     )
-    ollama.parse_json_response.return_value = {
-        "summary": "seg summary",
-        "bullets": [],
-        "action_items": [],
-        "confidence": 0.8,
-        "status": "ok",
-        "created_at": "2026-04-17T00:00:00Z",
-        "latency_ms": 500,
-    }
+    ollama.parse_json_response.return_value = (
+        {
+            "summary": "seg summary",
+            "bullets": [],
+            "action_items": [],
+            "confidence": 0.8,
+            "status": "ok",
+            "created_at": "2026-04-17T00:00:00Z",
+            "latency_ms": 500,
+        },
+        False,
+        "",
+    )
     return SegmentDetector(
         embedder=embedder,
         ollama_client=ollama,
@@ -153,30 +159,25 @@ class TestDetectSegments:
 # ---------------------------------------------------------------------------
 
 class TestLoadEmbeddings:
-    def test_uses_qdrant_when_available(self):
-        vector_store = MagicMock()
-        vector_store.get_by_conversation.return_value = [
-            (1, [0.1, 0.2], {"chunk_index": 0}),
-            (2, [0.3, 0.4], {"chunk_index": 1}),
-        ]
-        detector = _make_detector(vector_store=vector_store)
-        chunks = [_make_chunk_summary(i) for i in range(2)]
-        vectors = detector._load_embeddings("conv-id", chunks)
-        assert vectors == [[0.1, 0.2], [0.3, 0.4]]
-        detector._embedder.embed.assert_not_called()
-
-    def test_falls_back_to_disk_when_qdrant_empty(self):
-        vector_store = MagicMock()
-        vector_store.get_by_conversation.return_value = []
-        detector = _make_detector(vector_store=vector_store)
-        chunks = [_make_chunk_summary(0)]
-        detector._load_embeddings("conv-id", chunks)
-        detector._embedder.embed.assert_called_once()
-
-    def test_falls_back_to_disk_when_no_vector_store(self):
+    def test_always_embeds_on_the_fly(self):
         detector = _make_detector(vector_store=None)
+        chunks = [_make_chunk_summary(i) for i in range(3)]
+        detector._load_embeddings("conv-id", chunks)
+        assert detector._embedder.embed.call_count == 3
+
+    def test_embeds_summary_text_only(self):
+        detector = _make_detector(vector_store=None)
+        chunk = _make_chunk_summary(0, summary="my summary text")
+        detector._load_embeddings("conv-id", [chunk])
+        call_arg = detector._embedder.embed.call_args[0][0]
+        assert call_arg == "my summary text"
+
+    def test_qdrant_not_queried_even_when_available(self):
+        vector_store = MagicMock()
+        detector = _make_detector(vector_store=vector_store)
         chunks = [_make_chunk_summary(0)]
         detector._load_embeddings("conv-id", chunks)
+        vector_store.get_by_conversation.assert_not_called()
         detector._embedder.embed.assert_called_once()
 
 
@@ -224,15 +225,19 @@ class TestSummarizeSegment:
     def test_degraded_json_handled(self, tmp_path):
         detector = _make_detector(prompts_dir=str(tmp_path))
         (tmp_path / "summarize_segment.md").write_text("TEMPLATE", encoding="utf-8")
-        detector._ollama.parse_json_response.return_value = {
-            "summary": "fallback",
-            "bullets": [],
-            "action_items": [],
-            "confidence": 0.3,
-            "status": "degraded",
-            "created_at": "2026-04-17T00:00:00Z",
-            "latency_ms": 100,
-        }
+        detector._ollama.parse_json_response.return_value = (
+            {
+                "summary": "fallback",
+                "bullets": [],
+                "action_items": [],
+                "confidence": 0.3,
+                "status": "degraded",
+                "created_at": "2026-04-17T00:00:00Z",
+                "latency_ms": 100,
+            },
+            True,
+            "Model output required cleanup",
+        )
         seg_dir = tmp_path / "segs"
         _, output_data = detector.summarize_segment(
             segment_chunks=[_make_chunk_summary(0)],
