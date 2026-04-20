@@ -252,6 +252,46 @@ class SummaryStore:
             result.append(r)
         return result
 
+    def get_segment_rows(self, conversation_id: str) -> List[Dict[str, Any]]:
+        """Fetch all segment summary rows for a conversation.
+
+        Args:
+            conversation_id: The parent conversation ID.
+
+        Returns:
+            List of row dicts.
+        """
+        sql = """
+            SELECT * FROM summaries
+            WHERE parent_conversation_id = ? AND source_kind = 'ai_chat_segment'
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (conversation_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def delete_segment_rows(self, conversation_id: str) -> List[str]:
+        """Delete all segment summary rows and return their qdrant_point_ids.
+
+        Args:
+            conversation_id: The parent conversation ID.
+
+        Returns:
+            List of qdrant_point_id strings for the deleted rows.
+        """
+        rows = self.get_segment_rows(conversation_id)
+        point_ids = [r["qdrant_point_id"] for r in rows if r.get("qdrant_point_id")]
+        with self._connect() as conn:
+            conn.execute(
+                """
+                DELETE FROM summaries
+                WHERE parent_conversation_id = ? AND source_kind = 'ai_chat_segment'
+                """,
+                (conversation_id,),
+            )
+        logger.info(f"Deleted {len(rows)} segment rows for conversation {conversation_id}")
+        return point_ids
+
     def get_by_source_file(self, source_file: str) -> Optional[Dict[str, Any]]:
         """Fetch a single summary row by source_file.
 

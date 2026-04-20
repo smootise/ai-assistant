@@ -471,7 +471,28 @@ def cmd_detect_segments(args: argparse.Namespace, config: dict) -> int:
         )
         return 1
 
+    segment_summaries_dir = output_root / args.conversation_id / "segment_summaries"
+
     try:
+        # --force: wipe existing segment files and DB/Qdrant records
+        if args.force:
+            store = SummaryStore(db_path=config["db_path"])
+            point_ids = store.delete_segment_rows(args.conversation_id)
+            if point_ids:
+                try:
+                    vs = VectorStore(
+                        host=config["qdrant_host"], port=config["qdrant_port"]
+                    )
+                    vs.delete_points(point_ids)
+                except Exception:
+                    pass
+            if segment_summaries_dir.exists():
+                for f in segment_summaries_dir.glob("segment_*"):
+                    f.unlink()
+            logger.info(
+                f"--force: wiped existing segment summaries for {args.conversation_id}"
+            )
+
         embedder = EmbeddingClient(
             model=config["embedding_model"],
             base_url=config["ollama_base_url"],
@@ -520,7 +541,6 @@ def cmd_detect_segments(args: argparse.Namespace, config: dict) -> int:
                 memory.persist(output_data=output_data, output_dir=output_dir)
             logger.info(f"Persisted {len(results)} segment summaries")
 
-        segment_summaries_dir = output_root / args.conversation_id / "segment_summaries"
         print(f"\nSegment detection complete for: {args.conversation_id}")
         print(f"  Segments detected : {len(results)}")
         for i, (_, data) in enumerate(results):
@@ -702,6 +722,12 @@ def main() -> int:
         action="store_true",
         default=False,
         help="Persist segment summaries to SQLite and index in Qdrant",
+    )
+    ds_chatgpt.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Wipe existing segment files and DB/Qdrant records before re-running",
     )
 
     # -- parse & dispatch -------------------------------------------------
