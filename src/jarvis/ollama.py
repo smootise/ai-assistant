@@ -15,16 +15,22 @@ class OllamaClient:
     """Simple HTTP client for Ollama API."""
 
     def __init__(
-        self, model: str = "mistral:7b-instruct", base_url: str = "http://localhost:11434"
+        self,
+        model: str = "mistral:7b-instruct",
+        base_url: str = "http://localhost:11434",
+        timeout: int = 600,
     ):
         """Initialize Ollama client.
 
         Args:
             base_url: Ollama server URL.
             model: Model name to use for inference.
+            timeout: HTTP request timeout in seconds. Default 600s (10 min) to
+                     accommodate large models and long prompts.
         """
         self.base_url = base_url
         self.model = model
+        self.timeout = timeout
         self.generate_url = f"{base_url}/api/generate"
 
     def generate(self, prompt: str, temperature: float = 0.3) -> Tuple[str, bool, str]:
@@ -53,7 +59,7 @@ class OllamaClient:
         logger.debug(f"Prompt length: {len(prompt)} chars")
 
         try:
-            response = requests.post(self.generate_url, json=payload, timeout=120)
+            response = requests.post(self.generate_url, json=payload, timeout=self.timeout)
             response.raise_for_status()
         except requests.exceptions.ConnectionError as e:
             logger.error(f"Cannot connect to Ollama at {self.base_url}")
@@ -62,8 +68,8 @@ class OllamaClient:
                 "Is Ollama running? (Try: ollama serve)"
             ) from e
         except requests.exceptions.Timeout as e:
-            logger.error("Ollama request timed out after 120s")
-            raise RuntimeError("Ollama inference timed out") from e
+            logger.error(f"Ollama request timed out after {self.timeout}s")
+            raise RuntimeError(f"Ollama inference timed out after {self.timeout}s") from e
         except requests.exceptions.RequestException as e:
             logger.error(f"Ollama request failed: {e}")
             raise RuntimeError(f"Ollama request failed: {e}") from e

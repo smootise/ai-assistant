@@ -106,6 +106,13 @@ def load_config() -> Dict[str, Any]:
                 str(defaults.get("memory", {}).get("qdrant_port", 6333)),
             )
         ),
+        # Ollama inference timeout (seconds). 600s default for large models + long prompts.
+        "ollama_timeout": int(
+            os.getenv(
+                "OLLAMA_TIMEOUT",
+                str(defaults.get("ollama", {}).get("timeout", 600)),
+            )
+        ),
     }
 
     # Log effective configuration (excluding secrets)

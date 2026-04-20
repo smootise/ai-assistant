@@ -101,6 +101,7 @@ def cmd_summarize(args: argparse.Namespace, config: dict) -> int:
         ollama_client = OllamaClient(
             model=config["local_model_name"],
             base_url=config["ollama_base_url"],
+            timeout=config["ollama_timeout"],
         )
         output_writer = OutputWriter(output_root=str(output_root))
         summarizer = ConversationSummarizer(
@@ -211,6 +212,7 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
         ollama = OllamaClient(
             base_url=config["ollama_base_url"],
             model=config["local_model_name"],
+            timeout=config["ollama_timeout"],
         )
 
         logger.info(f"Embedding query with model={config['embedding_model']}...")
@@ -380,6 +382,7 @@ def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
         ollama_client = OllamaClient(
             model=config["local_model_name"],
             base_url=config["ollama_base_url"],
+            timeout=config["ollama_timeout"],
         )
         summarizer = SegmentSummarizer(
             ollama_client=ollama_client,
@@ -487,6 +490,7 @@ def cmd_detect_topics(args: argparse.Namespace, config: dict) -> int:
         ollama_client = OllamaClient(
             model=config["local_model_name"],
             base_url=config["ollama_base_url"],
+            timeout=config["ollama_timeout"],
         )
 
         vector_store: Optional[VectorStore] = None
@@ -594,6 +598,7 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
         ollama_client = OllamaClient(
             model=config["local_model_name"],
             base_url=config["ollama_base_url"],
+            timeout=config["ollama_timeout"],
         )
         extractor = SegmentExtractor(
             ollama_client=ollama_client,
@@ -684,6 +689,7 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
         ollama_client = OllamaClient(
             model=config["local_model_name"],
             base_url=config["ollama_base_url"],
+            timeout=config["ollama_timeout"],
         )
         fragmenter = Fragmenter(
             ollama_client=ollama_client,
@@ -692,9 +698,14 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
             schema_version=config["schema_version"],
         )
 
+        from_segment = args.from_segment if args.from_segment is not None else 0
+        to_segment = args.to_segment
+
         results = fragmenter.fragment_conversation_extracts(
             conversation_id=args.conversation_id,
             output_root=output_root,
+            from_segment=from_segment,
+            to_segment=to_segment,
             force=args.force,
         )
 
@@ -912,6 +923,14 @@ def main() -> int:
     fe_chatgpt.add_argument(
         "--conversation-id", required=True, dest="conversation_id",
         help="Conversation ID",
+    )
+    fe_chatgpt.add_argument(
+        "--from-segment", type=int, default=None, dest="from_segment",
+        help="Start at this segment index, inclusive (default: 0)",
+    )
+    fe_chatgpt.add_argument(
+        "--to-segment", type=int, default=None, dest="to_segment",
+        help="Stop after this segment index, inclusive (default: last)",
     )
     fe_chatgpt.add_argument(
         "--persist", action="store_true", default=False,

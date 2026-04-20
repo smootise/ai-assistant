@@ -18,6 +18,7 @@ FAKE_CONFIG = {
     "qdrant_port": 6333,
     "db_path": "data/jarvis.db",
     "prompts_dir": "prompts",
+    "ollama_timeout": 600,
 }
 
 FAKE_ROWS = [
