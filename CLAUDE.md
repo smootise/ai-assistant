@@ -28,9 +28,7 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 - SQLite persistence layer (source of truth, schema v3)
 - Qdrant vector index (retrieval embeddings)
 - Semantic retrieval CLI (`retrieve` command)
-
-### Currently Working On
-- **RAG answer generation:** pipe retrieved segment/chunk summaries as context into a local LLM (gemma4:31b via Ollama) so JARVIS can answer natural-language questions grounded in the indexed data
+- RAG answer generation (`answer` command — pipes retrieved summaries as context into local LLM)
 
 ### Planned
 - Web UI: browser-based interface to query JARVIS and view results

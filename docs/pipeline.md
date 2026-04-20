@@ -166,3 +166,28 @@ python -m jarvis.cli retrieve --query "why did we choose SQLite over Postgres?" 
 - Broad thematic queries (overall topic, high-level decisions) → segments score highest
 - Use `--top-k 10` to surface both chunk and segment results in the same query
 - Queries work in any language — the embedding model is multilingual
+
+---
+
+## Answer Generation (RAG)
+
+`answer` is a retrieval-layer command — it works across all persisted data regardless of source.
+It does not re-run any part of the ingestion pipeline.
+
+```bash
+python -m jarvis.cli answer "Why did we choose SQLite over Postgres?" --top-k 5
+```
+
+What happens:
+1. Embeds the question with the embedding model
+2. Retrieves the top-k most relevant summaries from Qdrant
+3. Fetches full summary records (text + bullets) from SQLite
+4. Builds a numbered context block with source citations
+5. Renders the `prompts/answer_question.md` template and calls the local LLM
+6. Prints the generated answer to stdout
+
+The LLM is instructed to cite sources and to say so clearly if the context is insufficient —
+it will not fabricate information not present in the retrieved excerpts.
+
+**Prerequisites:** summaries must be persisted (`--persist` on `summarize-chunks` or
+`detect-segments`). Ollama and Qdrant must both be running.

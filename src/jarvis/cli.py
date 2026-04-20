@@ -226,6 +226,72 @@ def cmd_retrieve(args: argparse.Namespace, config: dict) -> int:
         return 1
 
 
+def _build_context_block(rows: list[dict]) -> str:
+    parts = []
+    for i, row in enumerate(rows, start=1):
+        bullets = row.get("bullets") or []
+        bullet_text = "\n".join(f"• {b}" for b in bullets) if bullets else ""
+        header = f"--- Excerpt {i} (source: {row['source_file']}, date: {row['created_at']}) ---"
+        body = row.get("summary") or ""
+        if bullet_text:
+            body += f"\nKey points:\n{bullet_text}"
+        parts.append(f"{header}\n{body}")
+    return "\n\n".join(parts)
+
+
+def cmd_answer(args: argparse.Namespace, config: dict) -> int:
+    logger = logging.getLogger(__name__)
+    try:
+        memory = _build_memory_layer(config)
+        ollama = OllamaClient(
+            base_url=config["ollama_base_url"],
+            model=config["local_model_name"],
+        )
+
+        logger.info(f"Embedding query with model={config['embedding_model']}...")
+        query_vector = memory.embedder.embed(args.query)
+        hits = memory.vector_store.search(query_vector=query_vector, top_k=args.top_k)
+
+        if not hits:
+            print("No relevant context found for your question.")
+            return 0
+
+        summary_ids = [sid for sid, _, _ in hits]
+        rows = memory.store.get_by_ids(summary_ids)
+
+        context_block = _build_context_block(rows)
+
+        prompt_path = Path(config["prompts_dir"]) / "answer_question.md"
+        template = prompt_path.read_text(encoding="utf-8")
+        prompt = template.replace("{question}", args.query).replace("{context_block}", context_block)
+
+        logger.info(f"Generating answer with model={config['local_model_name']}...")
+        raw, is_degraded, warning = ollama.generate(prompt, temperature=args.temperature)
+
+        if is_degraded:
+            logger.warning(f"Degraded response: {warning}")
+
+        answer = raw.strip()
+        if "## Answer" in answer:
+            answer = answer.split("## Answer", 1)[-1].strip()
+
+        print(f"\nAnswer to: \"{args.query}\"\n")
+        print("─" * 72)
+        print(answer)
+        print()
+        return 0
+
+    except ConnectionError as e:
+        logger.error(f"Connection error: {e}")
+        return 1
+    except RuntimeError as e:
+        logger.error(f"Runtime error: {e}")
+        return 1
+    except Exception as e:
+        logger.exception(f"Unexpected error: {e}")
+        return 1
+
+
 def cmd_ingest(args: argparse.Namespace, config: dict) -> int:
     """Execute the ingest command.
 
@@ -614,6 +680,25 @@ def main() -> int:
         help="Number of results to return (default: 5)",
     )
 
+    # -- answer -----------------------------------------------------------
+    answer_parser = subparsers.add_parser(
+        "answer", help="Answer a question using indexed data"
+    )
+    answer_parser.add_argument("query", help="Natural-language question")
+    answer_parser.add_argument(
+        "--top-k",
+        type=int,
+        default=5,
+        dest="top_k",
+        help="Number of context excerpts to retrieve (default: 5)",
+    )
+    answer_parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.3,
+        help="LLM sampling temperature (default: 0.3)",
+    )
+
     # -- ingest -----------------------------------------------------------
     ingest_parser = subparsers.add_parser(
         "ingest", help="Ingest and normalize a raw conversation export"
@@ -744,6 +829,8 @@ def main() -> int:
         return cmd_summarize(args, config)
     if args.command == "retrieve":
         return cmd_retrieve(args, config)
+    if args.command == "answer":
+        return cmd_answer(args, config)
     if args.command == "ingest":
         return cmd_ingest(args, config)
     if args.command == "summarize-chunks":
