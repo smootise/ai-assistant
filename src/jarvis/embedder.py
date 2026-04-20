@@ -73,25 +73,13 @@ class EmbeddingClient:
 
 
 def build_embedding_text(output_data: Dict[str, Any]) -> str:
-    """Build a clean canonical text blob from summary semantic fields.
+    """Build canonical embedding text from output_data.
 
-    The text is built from the human-readable fields only — no raw JSON.
-    Original language is preserved; no translation is applied.
+    For fragments (source_kind='ai_chat_fragment'), embeds the raw statement
+    text directly — no multi-field construction needed.
 
-    Bullets and action items lead because they are the densest, most
-    keyword-rich fields and score highest in retrieval. The summary is
-    appended last so it contributes context without diluting signal.
-
-    Layout:
-        Key points:
-        - bullet 1
-        ...
-
-        Action items:
-        - action 1
-        ...
-
-        [summary]
+    For all other kinds, combines bullets + action_items + summary. Bullets
+    lead because they are the densest, keyword-rich fields; summary trails.
 
     Args:
         output_data: Summarization output dict (matches OUTPUTS.md schema).
@@ -99,21 +87,21 @@ def build_embedding_text(output_data: Dict[str, Any]) -> str:
     Returns:
         A single UTF-8 string ready to be embedded.
     """
+    if output_data.get("source_kind") == "ai_chat_fragment":
+        return (output_data.get("text") or "").strip()
+
     parts: List[str] = []
 
-    # Bullets first — highest retrieval signal
     bullets = output_data.get("bullets") or []
     if bullets:
         bullet_lines = "\n".join(f"- {b}" for b in bullets)
         parts.append(f"Key points:\n{bullet_lines}")
 
-    # Action items second
     action_items = output_data.get("action_items") or []
     if action_items:
         action_lines = "\n".join(f"- {a}" for a in action_items)
         parts.append(f"Action items:\n{action_lines}")
 
-    # Summary last — lower signal density but useful context
     summary = (output_data.get("summary") or "").strip()
     if summary:
         parts.append(summary)

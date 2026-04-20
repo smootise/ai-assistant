@@ -372,7 +372,7 @@ class TestSummaryStoreSegmentColumns:
         results = store.get_segment_summaries_by_conversation("conv")
         assert results == []
 
-    def test_schema_version_is_four(self, tmp_path):
+    def test_schema_version_is_five(self, tmp_path):
         db_path = str(tmp_path / "test.db")
         SummaryStore(db_path)
         conn = sqlite3.connect(db_path)
@@ -381,4 +381,4 @@ class TestSummaryStoreSegmentColumns:
         ).fetchone()
         conn.close()
         assert row is not None
-        assert int(row[0]) == 4
+        assert int(row[0]) == 5

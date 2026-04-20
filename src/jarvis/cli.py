@@ -8,6 +8,8 @@ from typing import Optional
 
 from jarvis.segment_summarizer import SegmentSummarizer
 from jarvis.config import load_config
+from jarvis.extractor import SegmentExtractor
+from jarvis.fragmenter import Fragmenter
 from jarvis.topic_detector import TopicDetector
 from jarvis.embedder import EmbeddingClient
 from jarvis.ingest.chatgpt_parser import load_raw_export, parse_export
@@ -552,6 +554,180 @@ def cmd_detect_topics(args: argparse.Namespace, config: dict) -> int:
         return 1
 
 
+def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
+    """Execute the extract-segments command."""
+    logger = logging.getLogger(__name__)
+
+    if not hasattr(args, "source") or args.source != "chatgpt":
+        logger.error("Only 'chatgpt' source is supported currently.")
+        return 1
+
+    conv_dir = Path(args.inbox_dir) / args.conversation_id
+    segments_dir = conv_dir / "segments"
+
+    if not segments_dir.exists():
+        logger.error(f"Segments directory not found: {segments_dir}. Run 'ingest' first.")
+        return 1
+
+    output_root = Path(config["output_root"])
+    extract_dir = output_root / args.conversation_id / "extracts"
+    from_segment = args.from_segment if args.from_segment is not None else 0
+    to_segment = args.to_segment
+
+    try:
+        if args.force:
+            store = SummaryStore(db_path=config["db_path"])
+            point_ids = store.delete_extract_rows(args.conversation_id)
+            if point_ids:
+                try:
+                    vs = VectorStore(host=config["qdrant_host"], port=config["qdrant_port"])
+                    vs.delete_points(point_ids)
+                except Exception:
+                    pass
+            if extract_dir.exists():
+                for f in extract_dir.glob("extract_*"):
+                    f.unlink()
+            logger.info(
+                f"--force: wiped existing extracts for {args.conversation_id}"
+            )
+
+        ollama_client = OllamaClient(
+            model=config["local_model_name"],
+            base_url=config["ollama_base_url"],
+        )
+        extractor = SegmentExtractor(
+            ollama_client=ollama_client,
+            prompts_dir=config["prompts_dir"],
+            schema=config["schema"],
+            schema_version=config["schema_version"],
+        )
+
+        results = extractor.extract_conversation_segments(
+            segments_dir=segments_dir,
+            conversation_id=args.conversation_id,
+            output_root=output_root,
+            from_segment=from_segment,
+            to_segment=to_segment,
+            force=args.force,
+        )
+
+        if not results:
+            print("No segments to extract in the specified range.")
+            return 0
+
+        new_count = sum(1 for _, d in results if d.get("latency_ms", 0) > 0)
+
+        if args.persist:
+            logger.info("Persisting extracts to SQLite + Qdrant...")
+            memory = _build_memory_layer(config)
+            for output_dir, output_data in results:
+                memory.persist(output_data=output_data, output_dir=output_dir)
+            logger.info(f"Persisted {len(results)} extracts")
+
+        print(f"\nExtraction complete for: {args.conversation_id}")
+        print(f"  Segments processed: {len(results)} ({new_count} new, "
+              f"{len(results) - new_count} from disk)")
+        print(f"  Output directory  : {extract_dir}")
+        return 0
+
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {e}")
+        return 1
+    except ConnectionError as e:
+        logger.error(f"Connection error: {e}")
+        return 1
+    except RuntimeError as e:
+        logger.error(f"Runtime error: {e}")
+        return 1
+    except Exception as e:
+        logger.exception(f"Unexpected error during extraction: {e}")
+        return 1
+
+
+def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
+    """Execute the fragment-extracts command."""
+    logger = logging.getLogger(__name__)
+
+    if not hasattr(args, "source") or args.source != "chatgpt":
+        logger.error("Only 'chatgpt' source is supported currently.")
+        return 1
+
+    output_root = Path(config["output_root"])
+    extract_dir = output_root / args.conversation_id / "extracts"
+
+    if not extract_dir.exists():
+        logger.error(
+            f"Extracts directory not found: {extract_dir}. "
+            "Run 'extract-segments' first."
+        )
+        return 1
+
+    fragment_dir = output_root / args.conversation_id / "fragments"
+
+    try:
+        if args.force:
+            store = SummaryStore(db_path=config["db_path"])
+            point_ids = store.delete_fragment_rows(args.conversation_id)
+            if point_ids:
+                try:
+                    vs = VectorStore(host=config["qdrant_host"], port=config["qdrant_port"])
+                    vs.delete_points(point_ids)
+                except Exception:
+                    pass
+            if fragment_dir.exists():
+                for f in fragment_dir.glob("fragment_*"):
+                    f.unlink()
+            logger.info(
+                f"--force: wiped existing fragments for {args.conversation_id}"
+            )
+
+        ollama_client = OllamaClient(
+            model=config["local_model_name"],
+            base_url=config["ollama_base_url"],
+        )
+        fragmenter = Fragmenter(
+            ollama_client=ollama_client,
+            prompts_dir=config["prompts_dir"],
+            schema=config["schema"],
+            schema_version=config["schema_version"],
+        )
+
+        results = fragmenter.fragment_conversation_extracts(
+            conversation_id=args.conversation_id,
+            output_root=output_root,
+            force=args.force,
+        )
+
+        if not results:
+            print("No fragments produced.")
+            return 0
+
+        if args.persist:
+            logger.info("Persisting fragments to SQLite + Qdrant...")
+            memory = _build_memory_layer(config)
+            for output_dir, output_data in results:
+                memory.persist(output_data=output_data, output_dir=output_dir)
+            logger.info(f"Persisted {len(results)} fragments")
+
+        print(f"\nFragmentation complete for: {args.conversation_id}")
+        print(f"  Fragments produced: {len(results)}")
+        print(f"  Output directory  : {fragment_dir}")
+        return 0
+
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {e}")
+        return 1
+    except ConnectionError as e:
+        logger.error(f"Connection error: {e}")
+        return 1
+    except RuntimeError as e:
+        logger.error(f"Runtime error: {e}")
+        return 1
+    except Exception as e:
+        logger.exception(f"Unexpected error during fragmentation: {e}")
+        return 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="JARVIS - Local-first AI assistant for PM workflows",
@@ -690,6 +866,62 @@ def main() -> int:
         help="Wipe existing topic files and DB/Qdrant records before re-running",
     )
 
+    # -- extract-segments -------------------------------------------------
+    es_parser = subparsers.add_parser(
+        "extract-segments", help="Extract attributed statements from each segment"
+    )
+    es_sub = es_parser.add_subparsers(dest="source", help="Source platform")
+
+    es_chatgpt = es_sub.add_parser(
+        "chatgpt", help="Extract from a ChatGPT ingested conversation"
+    )
+    es_chatgpt.add_argument(
+        "--conversation-id", required=True, dest="conversation_id",
+        help="Conversation ID (subfolder under --inbox-dir)",
+    )
+    es_chatgpt.add_argument(
+        "--inbox-dir", default="inbox/ai_chat/chatgpt", dest="inbox_dir",
+        help="Base inbox directory (default: inbox/ai_chat/chatgpt)",
+    )
+    es_chatgpt.add_argument(
+        "--from-segment", type=int, default=None, dest="from_segment",
+        help="Start at this segment index, inclusive (default: 0)",
+    )
+    es_chatgpt.add_argument(
+        "--to-segment", type=int, default=None, dest="to_segment",
+        help="Stop after this segment index, inclusive (default: last)",
+    )
+    es_chatgpt.add_argument(
+        "--persist", action="store_true", default=False,
+        help="Persist extracts to SQLite and index in Qdrant",
+    )
+    es_chatgpt.add_argument(
+        "--force", action="store_true", default=False,
+        help="Wipe existing extract files and records before re-running",
+    )
+
+    # -- fragment-extracts ------------------------------------------------
+    fe_parser = subparsers.add_parser(
+        "fragment-extracts", help="Fragment extracted statements into retrieval units"
+    )
+    fe_sub = fe_parser.add_subparsers(dest="source", help="Source platform")
+
+    fe_chatgpt = fe_sub.add_parser(
+        "chatgpt", help="Fragment extracts from a ChatGPT ingested conversation"
+    )
+    fe_chatgpt.add_argument(
+        "--conversation-id", required=True, dest="conversation_id",
+        help="Conversation ID",
+    )
+    fe_chatgpt.add_argument(
+        "--persist", action="store_true", default=False,
+        help="Persist fragments to SQLite and index in Qdrant",
+    )
+    fe_chatgpt.add_argument(
+        "--force", action="store_true", default=False,
+        help="Wipe existing fragment files and records before re-running",
+    )
+
     # -- parse & dispatch -------------------------------------------------
     args = parser.parse_args()
 
@@ -712,6 +944,10 @@ def main() -> int:
         return cmd_summarize_segments(args, config)
     if args.command == "detect-topics":
         return cmd_detect_topics(args, config)
+    if args.command == "extract-segments":
+        return cmd_extract_segments(args, config)
+    if args.command == "fragment-extracts":
+        return cmd_fragment_extracts(args, config)
 
     return 1
 

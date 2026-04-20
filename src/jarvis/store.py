@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # Current schema version — increment when adding columns.
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS _jarvis_meta (
@@ -35,11 +35,11 @@ CREATE TABLE IF NOT EXISTS summaries (
     schema_version          TEXT    NOT NULL,
     status                  TEXT    NOT NULL,
     lang                    TEXT,
-    confidence              REAL    NOT NULL,
+    confidence              REAL    NOT NULL DEFAULT 0.0,
     latency_ms              INTEGER,
-    summary                 TEXT    NOT NULL,
-    bullets                 TEXT    NOT NULL,
-    action_items            TEXT    NOT NULL,
+    summary                 TEXT    NOT NULL DEFAULT '',
+    bullets                 TEXT    NOT NULL DEFAULT '[]',
+    action_items            TEXT    NOT NULL DEFAULT '[]',
     warnings                TEXT,
     created_at              TEXT    NOT NULL,
     embedded_at             TEXT,
@@ -50,7 +50,10 @@ CREATE TABLE IF NOT EXISTS summaries (
     segment_index           INTEGER,
     parent_conversation_id  TEXT,
     topic_index             INTEGER,
-    topic_segment_range     TEXT
+    topic_segment_range     TEXT,
+    fragment_index          INTEGER,
+    fragment_title          TEXT,
+    statements              TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_summaries_source_file  ON summaries (source_file);
@@ -62,7 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_summaries_topic_index  ON summaries (topic_index)
 """
 
 # No legacy migrations needed — DB is always fresh (user empties before schema changes).
-# _SCHEMA_VERSION = 4 is the baseline. Old _MIGRATION_V2/V3 blocks are removed.
+# _SCHEMA_VERSION = 5 is the baseline.
 
 
 class SummaryStore:
@@ -110,9 +113,9 @@ class SummaryStore:
             "schema_version": output_data.get("schema_version", "1.0.0"),
             "status": output_data.get("status", "ok"),
             "lang": output_data.get("lang"),
-            "confidence": output_data["confidence"],
+            "confidence": output_data.get("confidence", 0.0),
             "latency_ms": output_data.get("latency_ms"),
-            "summary": output_data["summary"],
+            "summary": output_data.get("summary", ""),
             "bullets": json.dumps(output_data.get("bullets", []), ensure_ascii=False),
             "action_items": json.dumps(
                 output_data.get("action_items", []), ensure_ascii=False
@@ -130,6 +133,13 @@ class SummaryStore:
             "parent_conversation_id": output_data.get("parent_conversation_id"),
             "topic_index": output_data.get("topic_index"),
             "topic_segment_range": output_data.get("topic_segment_range"),
+            "fragment_index": output_data.get("fragment_index"),
+            "fragment_title": output_data.get("title"),
+            "statements": json.dumps(
+                output_data.get("statements", []), ensure_ascii=False
+            )
+            if output_data.get("statements") is not None
+            else None,
         }
 
         sql = """
@@ -139,14 +149,16 @@ class SummaryStore:
                 summary, bullets, action_items, warnings,
                 created_at, embedded_at, output_json_path, output_md_path, qdrant_point_id,
                 segment_id, segment_index, parent_conversation_id,
-                topic_index, topic_segment_range
+                topic_index, topic_segment_range,
+                fragment_index, fragment_title, statements
             ) VALUES (
                 :run_id, :source_file, :source_kind, :provider, :model, :embedding_model,
                 :schema, :schema_version, :status, :lang, :confidence, :latency_ms,
                 :summary, :bullets, :action_items, :warnings,
                 :created_at, :embedded_at, :output_json_path, :output_md_path, :qdrant_point_id,
                 :segment_id, :segment_index, :parent_conversation_id,
-                :topic_index, :topic_segment_range
+                :topic_index, :topic_segment_range,
+                :fragment_index, :fragment_title, :statements
             )
         """
         with self._connect() as conn:
@@ -334,6 +346,44 @@ class SummaryStore:
         )
         return point_ids
 
+    def delete_extract_rows(self, conversation_id: str) -> List[str]:
+        """Delete all extract rows for a conversation and return qdrant_point_ids."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM summaries WHERE parent_conversation_id = ? "
+                "AND source_kind = 'ai_chat_extract'",
+                (conversation_id,),
+            ).fetchall()
+            point_ids = [r["qdrant_point_id"] for r in rows if r["qdrant_point_id"]]
+            conn.execute(
+                "DELETE FROM summaries WHERE parent_conversation_id = ? "
+                "AND source_kind = 'ai_chat_extract'",
+                (conversation_id,),
+            )
+        logger.info(f"Deleted {len(rows)} extract rows for conversation {conversation_id}")
+        return point_ids
+
+    def delete_fragment_rows(self, conversation_id: str) -> List[str]:
+        """Delete all fragment rows for a conversation and return qdrant_point_ids."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM summaries WHERE parent_conversation_id = ? "
+                "AND source_kind = 'ai_chat_fragment'",
+                (conversation_id,),
+            ).fetchall()
+            point_ids = [r["qdrant_point_id"] for r in rows if r["qdrant_point_id"]]
+            conn.execute(
+                "DELETE FROM summaries WHERE parent_conversation_id = ? "
+                "AND source_kind = 'ai_chat_fragment'",
+                (conversation_id,),
+            )
+        logger.info(
+            f"Deleted {len(rows)} fragment rows for conversation {conversation_id}"
+        )
+        return point_ids
+
     def get_by_ids(self, summary_ids: List[int]) -> List[Dict[str, Any]]:
         """Fetch summary rows by a list of IDs, preserving order."""
         if not summary_ids:
@@ -353,6 +403,7 @@ class SummaryStore:
             row["bullets"] = json.loads(row["bullets"] or "[]")
             row["action_items"] = json.loads(row["action_items"] or "[]")
             row["warnings"] = json.loads(row["warnings"]) if row["warnings"] else []
+            row["statements"] = json.loads(row["statements"]) if row.get("statements") else []
 
         return ordered
 
