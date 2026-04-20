@@ -240,6 +240,7 @@ class SegmentDetector:
             "schema_version": self._schema_version,
             "latency_ms": latency_ms,
             "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "status": "ok",
         }
         if is_degraded:
             output_data["status"] = "degraded"
