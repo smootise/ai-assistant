@@ -45,7 +45,7 @@ def load_config() -> Dict[str, Any]:
         # Local model name
         "local_model_name": os.getenv(
             "LOCAL_MODEL_NAME",
-            defaults.get("model", {}).get("local") or "mistral:7b-instruct",
+            defaults.get("model", {}).get("local") or "gemma4:31b",
         ),
         # OpenAI model (not used in Sprint 0)
         "openai_model": os.getenv(

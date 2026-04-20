@@ -10,7 +10,7 @@ defaults:
 
   model:
     openai: "gpt-4o-mini"               # cloud model name
-    local: "mistral:7b-instruct"        # fill later (e.g., "llama-3-8b-q4")
+    local: "gemma4:31b"
 
   outputs:
     root: "OUTPUTS"                     # base folder for artifacts

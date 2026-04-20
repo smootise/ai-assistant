@@ -67,7 +67,7 @@ Precedence: **CLI flag > ENV / `.env` > `config.yaml`**
 | Variable | Default | Notes |
 |---|---|---|
 | `JARVIS_PROVIDER` | `local` | `local` \| `openai` \| `benchmark` |
-| `LOCAL_MODEL_NAME` | `mistral:7b-instruct` | Ollama model for inference |
+| `LOCAL_MODEL_NAME` | `gemma4:31b` | Ollama model for inference |
 | `OPENAI_API_KEY` | — | Required only for `openai`/`benchmark`. Never commit. |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Cloud model name |
 | `JARVIS_OUTPUT_ROOT` | `OUTPUTS` | Root for all output artifacts |
