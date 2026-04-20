@@ -85,5 +85,8 @@ Precedence: **CLI flag > ENV / `.env` > `config.yaml`**
 ## Documentation Rules
 
 - **Update `README.md`** whenever a new CLI command, ENV var, flag, or output path is added or changed. README is the user-facing reference; keep it in sync.
-- CLAUDE.md files are for Claude. README is for humans.
+- **Update `docs/pipeline.md`** when the ingestion, summarization, or segmentation pipeline changes (new steps, flags, output fields, resume/force behavior).
+- **Update `docs/architecture.md`** when storage layers, embedding strategy, models, or data flow change.
+- Do not add per-command deep-dives or pipeline detail back into README — those belong in `docs/`.
+- CLAUDE.md files are for Claude. README and `docs/` are for humans.
 - Update the **Roadmap** section above at the end of sessions where meaningful progress is made.
