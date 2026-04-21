@@ -92,14 +92,24 @@ class Fragmenter:
             sentinel = segment_fragment_dir / "fragment_000.json"
 
             if sentinel.exists() and not force:
-                logger.info(
-                    f"Skipping segment {seg_idx} ({extract_data['segment_id']}) "
-                    f"— fragments already exist"
-                )
-                for frag_path in sorted(segment_fragment_dir.glob("fragment_*.json")):
-                    with open(frag_path, encoding="utf-8") as f:
-                        results.append((segment_fragment_dir, json.load(f)))
-                continue
+                with open(sentinel, encoding="utf-8") as f:
+                    sentinel_data = json.load(f)
+                if sentinel_data.get("status") in ("skipped", "degraded"):
+                    logger.info(
+                        f"Re-processing segment {seg_idx} ({extract_data['segment_id']}) "
+                        f"— previous fragments have status '{sentinel_data['status']}'"
+                    )
+                    for frag_file in segment_fragment_dir.iterdir():
+                        frag_file.unlink()
+                else:
+                    logger.info(
+                        f"Skipping segment {seg_idx} ({extract_data['segment_id']}) "
+                        f"— fragments already exist"
+                    )
+                    for frag_path in sorted(segment_fragment_dir.glob("fragment_*.json")):
+                        with open(frag_path, encoding="utf-8") as f:
+                            results.append((segment_fragment_dir, json.load(f)))
+                    continue
 
             if force and segment_fragment_dir.exists():
                 for f in segment_fragment_dir.iterdir():

@@ -93,14 +93,20 @@ class SegmentExtractor:
             existing_path = extract_dir / f"extract_{seg_idx:03d}.json"
 
             if existing_path.exists() and not force:
-                logger.info(
-                    f"Skipping segment {seg_idx} ({segment['segment_id']}) "
-                    f"— extract already exists"
-                )
                 with open(existing_path, encoding="utf-8") as f:
                     output_data = json.load(f)
-                results.append((extract_dir, output_data))
-                continue
+                if output_data.get("status") in ("skipped", "degraded"):
+                    logger.info(
+                        f"Re-processing segment {seg_idx} ({segment['segment_id']}) "
+                        f"— previous extract has status '{output_data['status']}'"
+                    )
+                else:
+                    logger.info(
+                        f"Skipping segment {seg_idx} ({segment['segment_id']}) "
+                        f"— extract already exists"
+                    )
+                    results.append((extract_dir, output_data))
+                    continue
 
             logger.info(
                 f"Extracting segment {seg_idx} / {segments[-1]['segment_index']} "
