@@ -41,6 +41,7 @@ class SegmentExtractor:
         from_segment: int = 0,
         to_segment: Optional[int] = None,
         force: bool = False,
+        retries: int = 1,
     ) -> List[Tuple[Path, Dict[str, Any]]]:
         """Extract all segments for a conversation.
 
@@ -115,6 +116,7 @@ class SegmentExtractor:
             _, output_data = self.extract_segment(
                 segment=segment,
                 extract_dir=extract_dir,
+                retries=retries,
             )
             results.append((extract_dir, output_data))
 
@@ -127,6 +129,7 @@ class SegmentExtractor:
         self,
         segment: Dict[str, Any],
         extract_dir: Path,
+        retries: int = 1,
     ) -> Tuple[Path, Dict[str, Any]]:
         """Extract statements from a single segment.
 
@@ -145,7 +148,7 @@ class SegmentExtractor:
         warning = ""
 
         skip_reason: Optional[str] = None
-        for attempt in range(2):
+        for attempt in range(retries + 1):
             try:
                 raw_response, gen_degraded, gen_warning = self._ollama.generate(prompt)
             except RuntimeError as e:
@@ -165,16 +168,16 @@ class SegmentExtractor:
                 logger.debug(
                     f"Segment {segment['segment_id']} raw model output (attempt {attempt + 1}):\n{raw_response}"
                 )
-                if attempt == 0:
+                if attempt < retries:
                     logger.warning(
-                        f"Segment {segment['segment_id']} parse failed on attempt 1 — retrying..."
+                        f"Segment {segment['segment_id']} parse failed on attempt {attempt + 1} — retrying..."
                     )
                 else:
                     logger.error(
-                        f"Segment {segment['segment_id']} parse failed after 2 attempts — skipping"
+                        f"Segment {segment['segment_id']} parse failed after {attempt + 1} attempt(s) — skipping"
                     )
                     is_degraded = True
-                    warning = f"JSON parse failed after 2 attempts: {e}"
+                    warning = f"JSON parse failed after {attempt + 1} attempt(s): {e}"
 
         latency_ms = int((time.time() - start_time) * 1000)
 

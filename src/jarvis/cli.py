@@ -686,6 +686,7 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
             from_segment=from_segment,
             to_segment=to_segment,
             force=args.force,
+            retries=args.retries,
         )
 
         if not results:
@@ -778,6 +779,7 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
             from_segment=from_segment,
             to_segment=to_segment,
             force=args.force,
+            retries=args.retries,
         )
 
         if not results and not skipped_segments:
@@ -827,6 +829,10 @@ def main() -> int:
     parser.add_argument(
         "--debug", action="store_true", default=False,
         help="Set log level to DEBUG for this run",
+    )
+    parser.add_argument(
+        "--retries", type=int, default=1, metavar="N",
+        help="Number of retries on LLM parse failure (default: 1, use 0 to fail fast)",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
