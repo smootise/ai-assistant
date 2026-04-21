@@ -24,7 +24,10 @@ Normalized segments
 Segment summaries (SQLite + Qdrant)
     ↓  detect-topics
 Topic summaries (SQLite + Qdrant)
-    ↓  retrieve / answer
+    ↓  extract-segments
+Attributed statements per segment
+    ↓  fragment-extracts
+Fragments (SQLite + Qdrant) ──▶ retrieve / answer
 Answers grounded in your own data
 ```
 
@@ -78,10 +81,16 @@ python -m jarvis.cli summarize-segments chatgpt --conversation-id <id> --persist
 # Step 3 — detect topics and summarize them
 python -m jarvis.cli detect-topics chatgpt --conversation-id <id> --persist
 
-# Step 4 — query your data
+# Step 4 — extract attributed statements from each segment
+python -m jarvis.cli extract-segments chatgpt --conversation-id <id> --persist
+
+# Step 5 — fragment extracts into retrieval units
+python -m jarvis.cli fragment-extracts chatgpt --conversation-id <id> --persist
+
+# Step 6 — query your data
 python -m jarvis.cli retrieve --query "why did we choose Qdrant?"
 
-# Step 5 — ask a question and get a grounded answer
+# Step 7 — ask a question and get a grounded answer
 python -m jarvis.cli answer "Why did we choose Qdrant over Pinecone?"
 ```
 
@@ -157,6 +166,51 @@ python -m jarvis.cli detect-topics chatgpt --conversation-id <id> --dry-run
 Lower threshold → fewer, broader topics. Higher → more, finer-grained topics.
 
 **Prerequisites:** segment summaries must exist (`summarize-segments` must have run first).
+
+---
+
+### `extract-segments chatgpt`
+
+Extract all informational content from each segment as a clean list of attributed statements (speaker + text). This is the first step of the extract→fragment retrieval pipeline.
+
+**Resume-safe:** if an extract already exists for a segment, the LLM call is skipped. Re-run after an interruption to pick up where you left off.
+
+```bash
+python -m jarvis.cli extract-segments chatgpt --conversation-id <id> --persist
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--conversation-id` | *(required)* | Conversation ID |
+| `--inbox-dir` | `inbox/ai_chat/chatgpt` | Base inbox directory |
+| `--from-segment` | `0` | Start at this segment index, inclusive |
+| `--to-segment` | last | Stop after this segment index, inclusive |
+| `--persist` | off | Save to SQLite and index in Qdrant |
+| `--force` | off | Wipe existing extract files and records, then re-run |
+
+**Prerequisites:** segments must exist (`ingest` must have run first).
+
+---
+
+### `fragment-extracts chatgpt`
+
+Group extracted statements into topically coherent sub-units for semantic retrieval. Each fragment is stored independently and embedded by its raw statement text.
+
+**Resume-safe:** if fragments already exist for a segment, it is skipped unless `--force` is set.
+
+```bash
+python -m jarvis.cli fragment-extracts chatgpt --conversation-id <id> --persist
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--conversation-id` | *(required)* | Conversation ID |
+| `--from-segment` | `0` | Start at this segment index, inclusive |
+| `--to-segment` | last | Stop after this segment index, inclusive |
+| `--persist` | off | Save to SQLite and index in Qdrant |
+| `--force` | off | Wipe existing fragment files and records, then re-run |
+
+**Prerequisites:** extracts must exist (`extract-segments` must have run first).
 
 ---
 
@@ -244,6 +298,14 @@ OUTPUTS/
     topic_summaries/
       topic_000.json|.md
       topic_001.json|.md
+      ...
+    extracts/
+      extract_000.json|.md
+      extract_001.json|.md
+      ...
+    fragments/
+      fragment_000_000.json|.md    # segment 0, fragment 0
+      fragment_000_001.json|.md    # segment 0, fragment 1
       ...
 
 inbox/ai_chat/chatgpt/
