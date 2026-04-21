@@ -165,7 +165,11 @@ class Fragmenter:
 
         latency_ms = int((time.time() - start_time) * 1000)
 
-        raw_fragments = parsed_data.get("fragments", [])
+        # Model sometimes returns a bare list instead of {"fragments": [...]}
+        if isinstance(parsed_data, list):
+            raw_fragments = parsed_data
+        else:
+            raw_fragments = parsed_data.get("fragments", [])
         if not raw_fragments:
             logger.warning(
                 f"Model returned no fragments for segment {extract_data.get('segment_id')}"

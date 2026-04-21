@@ -202,15 +202,20 @@ class SegmentExtractor:
 
     def _build_output_document(
         self,
-        parsed_data: Dict[str, Any],
+        parsed_data: Any,
         segment: Dict[str, Any],
         latency_ms: int,
         is_degraded: bool,
         warning: str,
     ) -> Dict[str, Any]:
+        # Model sometimes returns a bare list instead of {"statements": [...]}
+        if isinstance(parsed_data, list):
+            statements = parsed_data
+        else:
+            statements = parsed_data.get("statements", [])
         seg_idx = segment["segment_index"]
         output: Dict[str, Any] = {
-            "statements": parsed_data.get("statements", []),
+            "statements": statements,
             "source_file": f"extract_{seg_idx:03d}.json",
             "source_kind": "ai_chat_extract",
             "segment_id": segment["segment_id"],
