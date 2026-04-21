@@ -162,6 +162,9 @@ class SegmentExtractor:
                 warning = parse_warning if parse_degraded else gen_warning
                 break
             except ValueError as e:
+                logger.debug(
+                    f"Segment {segment['segment_id']} raw model output (attempt {attempt + 1}):\n{raw_response}"
+                )
                 if attempt == 0:
                     logger.warning(
                         f"Segment {segment['segment_id']} parse failed on attempt 1 — retrying..."
