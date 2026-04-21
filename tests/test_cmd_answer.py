@@ -19,6 +19,7 @@ FAKE_CONFIG = {
     "db_path": "data/jarvis.db",
     "prompts_dir": "prompts",
     "ollama_timeout": 600,
+    "user_name": "",
 }
 
 FAKE_ROWS = [
@@ -39,8 +40,14 @@ FAKE_ROWS = [
 ]
 
 
-def _make_args(query: str, top_k: int = 5, temperature: float = 0.3) -> argparse.Namespace:
-    return argparse.Namespace(query=query, top_k=top_k, temperature=temperature)
+def _make_args(
+    query: str, top_k: int = 10, temperature: float = 0.3,
+    min_results: int = 3, min_score: float = 0.50, verbose: bool = False,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        query=query, top_k=top_k, temperature=temperature,
+        min_results=min_results, min_score=min_score, verbose=verbose,
+    )
 
 
 def _mock_memory(hits, rows):
@@ -63,7 +70,7 @@ def test_answer_happy_path(mock_build_memory, mock_ollama_cls, tmp_path, capsys)
 
     prompt_file = tmp_path / "answer_question.md"
     prompt_file.write_text(
-        "## Question\n{question}\n## Context excerpts\n{context_block}\n## Answer\n",
+        "## Question\n{question}\n## Context excerpts\n{context_block}\n{user_context}\n## Answer\n",
         encoding="utf-8",
     )
     config = {**FAKE_CONFIG, "prompts_dir": str(tmp_path)}
@@ -101,7 +108,7 @@ def test_answer_degraded_response(mock_build_memory, mock_ollama_cls, tmp_path, 
     mock_ollama_cls.return_value = mock_ollama
 
     prompt_file = tmp_path / "answer_question.md"
-    prompt_file.write_text("{question}\n{context_block}", encoding="utf-8")
+    prompt_file.write_text("{question}\n{context_block}\n{user_context}", encoding="utf-8")
     config = {**FAKE_CONFIG, "prompts_dir": str(tmp_path)}
 
     with caplog.at_level(logging.WARNING):

@@ -142,6 +142,20 @@ def cmd_summarize(args: argparse.Namespace, config: dict) -> int:
         return 1
 
 
+def _apply_hybrid_cutoff(
+    hits: list, min_results: int, min_score: float
+) -> list:
+    """Return at least min_results hits, then continue while score >= min_score."""
+    result = []
+    for i, hit in enumerate(hits):
+        _, score, _ = hit
+        if i < min_results or score >= min_score:
+            result.append(hit)
+        else:
+            break
+    return result
+
+
 def cmd_retrieve(args: argparse.Namespace, config: dict) -> int:
     """Execute the retrieve command."""
     logger = logging.getLogger(__name__)
@@ -153,6 +167,7 @@ def cmd_retrieve(args: argparse.Namespace, config: dict) -> int:
         query_vector = memory.embedder.embed(args.query)
 
         hits = memory.vector_store.search(query_vector=query_vector, top_k=args.top_k)
+        hits = _apply_hybrid_cutoff(hits, args.min_results, args.min_score)
 
         if not hits:
             print("No results found.")
@@ -163,19 +178,32 @@ def cmd_retrieve(args: argparse.Namespace, config: dict) -> int:
         rows = memory.store.get_by_ids(summary_ids)
 
         print(f"\nTop {len(rows)} result(s) for: \"{args.query}\"\n")
-        print("─" * 72)
+        print("-" * 72)
 
         for rank, row in enumerate(rows, start=1):
             sid = row["id"]
             score = scores.get(sid, 0.0)
-            summary_preview = (row["summary"] or "")[:120].replace("\n", " ")
-            if len(row["summary"] or "") > 120:
-                summary_preview += "…"
+
+            if row.get("summary"):
+                raw_preview = row["summary"]
+            elif row.get("statements"):
+                stmts = row["statements"]
+                title = row.get("fragment_title") or ""
+                body = " / ".join(
+                    f"{s['speaker']}: {s['text']}" for s in stmts[:2]
+                )
+                raw_preview = f"[{title}] {body}" if title else body
+            else:
+                raw_preview = ""
+
+            preview = raw_preview[:160].replace("\n", " ")
+            if len(raw_preview) > 160:
+                preview += "..."
 
             print(f"#{rank}  score={score:.4f}  id={sid}")
             print(f"    source : {row['source_file']}")
             print(f"    created: {row['created_at']}")
-            print(f"    preview: {summary_preview}")
+            print(f"    preview: {preview}")
             print()
 
         return 0
@@ -194,12 +222,20 @@ def cmd_retrieve(args: argparse.Namespace, config: dict) -> int:
 def _build_context_block(rows: list[dict]) -> str:
     parts = []
     for i, row in enumerate(rows, start=1):
-        bullets = row.get("bullets") or []
-        bullet_text = "\n".join(f"• {b}" for b in bullets) if bullets else ""
         header = f"--- Excerpt {i} (source: {row['source_file']}, date: {row['created_at']}) ---"
-        body = row.get("summary") or ""
-        if bullet_text:
-            body += f"\nKey points:\n{bullet_text}"
+        if row.get("statements"):
+            title = row.get("fragment_title") or ""
+            lines = []
+            if title:
+                lines.append(f"Topic: {title}")
+            for s in row["statements"]:
+                lines.append(f"{s['speaker']}: {s['text']}")
+            body = "\n".join(lines)
+        else:
+            body = row.get("summary") or ""
+            bullets = row.get("bullets") or []
+            if bullets:
+                body += "\nKey points:\n" + "\n".join(f"- {b}" for b in bullets)
         parts.append(f"{header}\n{body}")
     return "\n\n".join(parts)
 
@@ -218,6 +254,7 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
         logger.info(f"Embedding query with model={config['embedding_model']}...")
         query_vector = memory.embedder.embed(args.query)
         hits = memory.vector_store.search(query_vector=query_vector, top_k=args.top_k)
+        hits = _apply_hybrid_cutoff(hits, args.min_results, args.min_score)
 
         if not hits:
             print("No relevant context found for your question.")
@@ -228,9 +265,33 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
 
         context_block = _build_context_block(rows)
 
+        user_name = config.get("user_name", "").strip()
+        if user_name:
+            user_context = (
+                f"The person who owns this assistant is {user_name}. "
+                f"In the context excerpts, 'user' and '{user_name}' refer to the same person — "
+                f"the one speaking or being spoken about."
+            )
+        else:
+            user_context = (
+                "In the context excerpts, 'user' refers to the person who owns this assistant."
+            )
+
         prompt_path = Path(config["prompts_dir"]) / "answer_question.md"
         template = prompt_path.read_text(encoding="utf-8")
-        prompt = template.replace("{question}", args.query).replace("{context_block}", context_block)
+        prompt = (
+            template
+            .replace("{question}", args.query)
+            .replace("{context_block}", context_block)
+            .replace("{user_context}", user_context)
+        )
+
+        if args.verbose:
+            print(f"\nContext excerpts for: \"{args.query}\"\n")
+            print("-" * 72)
+            print(context_block)
+            print("-" * 72)
+            print()
 
         logger.info(f"Generating answer with model={config['local_model_name']}...")
         raw, is_degraded, warning = ollama.generate(prompt, temperature=args.temperature)
@@ -243,7 +304,7 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
             answer = answer.split("## Answer", 1)[-1].strip()
 
         print(f"\nAnswer to: \"{args.query}\"\n")
-        print("─" * 72)
+        print("-" * 72)
         print(answer)
         print()
         return 0
@@ -416,9 +477,14 @@ def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
         if args.persist:
             logger.info("Persisting segment summaries to SQLite + Qdrant...")
             memory = _build_memory_layer(config)
+            persisted = 0
             for output_dir, output_data in results:
+                if memory.store.get_by_source_file(output_data["source_file"]):
+                    logger.debug(f"Skipping already-persisted: {output_data['source_file']}")
+                    continue
                 memory.persist(output_data=output_data, output_dir=output_dir)
-            logger.info(f"Persisted {len(results)} segment summaries")
+                persisted += 1
+            logger.info(f"Persisted {persisted} segment summaries ({len(results) - persisted} already existed)")
 
         print(f"\nSegment summarization complete for: {args.conversation_id}")
         print(f"  Segments processed: {len(results)} ({new_count} new, "
@@ -528,9 +594,14 @@ def cmd_detect_topics(args: argparse.Namespace, config: dict) -> int:
         if args.persist:
             logger.info("Persisting topic summaries to SQLite + Qdrant...")
             memory = _build_memory_layer(config)
+            persisted = 0
             for output_dir, output_data in results:
+                if memory.store.get_by_source_file(output_data["source_file"]):
+                    logger.debug(f"Skipping already-persisted: {output_data['source_file']}")
+                    continue
                 memory.persist(output_data=output_data, output_dir=output_dir)
-            logger.info(f"Persisted {len(results)} topic summaries")
+                persisted += 1
+            logger.info(f"Persisted {persisted} topic summaries ({len(results) - persisted} already existed)")
 
         print(f"\nTopic detection complete for: {args.conversation_id}")
         print(f"  Topics detected   : {len(results)}")
@@ -622,13 +693,6 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
 
         new_count = sum(1 for _, d in results if d.get("latency_ms", 0) > 0)
 
-        if args.persist:
-            logger.info("Persisting extracts to SQLite + Qdrant...")
-            memory = _build_memory_layer(config)
-            for output_dir, output_data in results:
-                memory.persist(output_data=output_data, output_dir=output_dir)
-            logger.info(f"Persisted {len(results)} extracts")
-
         print(f"\nExtraction complete for: {args.conversation_id}")
         print(f"  Segments processed: {len(results)} ({new_count} new, "
               f"{len(results) - new_count} from disk)")
@@ -716,9 +780,14 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
         if args.persist:
             logger.info("Persisting fragments to SQLite + Qdrant...")
             memory = _build_memory_layer(config)
+            persisted = 0
             for output_dir, output_data in results:
+                if memory.store.get_by_source_file(output_data["source_file"]):
+                    logger.debug(f"Skipping already-persisted: {output_data['source_file']}")
+                    continue
                 memory.persist(output_data=output_data, output_dir=output_dir)
-            logger.info(f"Persisted {len(results)} fragments")
+                persisted += 1
+            logger.info(f"Persisted {persisted} fragments ({len(results) - persisted} already existed)")
 
         print(f"\nFragmentation complete for: {args.conversation_id}")
         print(f"  Fragments produced: {len(results)}")
@@ -770,8 +839,16 @@ def main() -> int:
         "--query", "-q", required=True, help="Natural-language search query"
     )
     retrieve_parser.add_argument(
-        "--top-k", type=int, default=5, dest="top_k",
-        help="Number of results to return (default: 5)",
+        "--top-k", type=int, default=10, dest="top_k",
+        help="Maximum number of results to return (default: 10)",
+    )
+    retrieve_parser.add_argument(
+        "--min-results", type=int, default=3, dest="min_results",
+        help="Minimum results to return regardless of score (default: 3)",
+    )
+    retrieve_parser.add_argument(
+        "--min-score", type=float, default=0.50, dest="min_score",
+        help="Score threshold — results above this are always included up to --top-k (default: 0.50)",
     )
 
     # -- answer -----------------------------------------------------------
@@ -780,12 +857,24 @@ def main() -> int:
     )
     answer_parser.add_argument("query", help="Natural-language question")
     answer_parser.add_argument(
-        "--top-k", type=int, default=5, dest="top_k",
-        help="Number of context excerpts to retrieve (default: 5)",
+        "--top-k", type=int, default=10, dest="top_k",
+        help="Maximum number of context excerpts to retrieve (default: 10)",
+    )
+    answer_parser.add_argument(
+        "--min-results", type=int, default=3, dest="min_results",
+        help="Minimum excerpts to include regardless of score (default: 3)",
+    )
+    answer_parser.add_argument(
+        "--min-score", type=float, default=0.50, dest="min_score",
+        help="Score threshold for including additional excerpts (default: 0.50)",
     )
     answer_parser.add_argument(
         "--temperature", type=float, default=0.3,
         help="LLM sampling temperature (default: 0.3)",
+    )
+    answer_parser.add_argument(
+        "--verbose", action="store_true", default=False,
+        help="Print context excerpts before the answer",
     )
 
     # -- ingest -----------------------------------------------------------
@@ -903,12 +992,8 @@ def main() -> int:
         help="Stop after this segment index, inclusive (default: last)",
     )
     es_chatgpt.add_argument(
-        "--persist", action="store_true", default=False,
-        help="Persist extracts to SQLite and index in Qdrant",
-    )
-    es_chatgpt.add_argument(
         "--force", action="store_true", default=False,
-        help="Wipe existing extract files and records before re-running",
+        help="Wipe existing extract files before re-running",
     )
 
     # -- fragment-extracts ------------------------------------------------

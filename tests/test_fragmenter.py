@@ -117,9 +117,9 @@ class TestFragmentExtract:
         fragmenter = _make_fragmenter(prompts_dir)
         fragment_dir = tmp_path / "fragments"
         fragmenter.fragment_extract(extract_data=_make_extract(2), fragment_dir=fragment_dir)
-        assert (fragment_dir / "fragment_002_000.json").exists()
-        assert (fragment_dir / "fragment_002_001.json").exists()
-        assert (fragment_dir / "fragment_002_000.md").exists()
+        assert (fragment_dir / "fragment_000.json").exists()
+        assert (fragment_dir / "fragment_001.json").exists()
+        assert (fragment_dir / "fragment_000.md").exists()
 
     def test_text_field_built_from_statements(self, prompts_dir, tmp_path):
         fragmenter = _make_fragmenter(prompts_dir)
@@ -211,15 +211,15 @@ class TestFragmentConversationExtracts:
         output_root = tmp_path / "OUTPUTS"
         self._write_extracts(output_root / "conv" / "extracts", 2)
 
-        fragment_dir = output_root / "conv" / "fragments"
-        fragment_dir.mkdir(parents=True)
+        seg0_dir = output_root / "conv" / "fragments" / "segment_000"
+        seg0_dir.mkdir(parents=True)
         existing_frag = {
             "source_kind": "ai_chat_fragment", "fragment_index": 0, "segment_index": 0,
             "segment_id": "test-conv_s000", "parent_conversation_id": "test-conv",
             "text": "t", "title": "t", "statements": [], "status": "ok",
             "model": "m", "latency_ms": 0, "created_at": "2026-04-21T00:00:00Z",
         }
-        (fragment_dir / "fragment_000_000.json").write_text(
+        (seg0_dir / "fragment_000.json").write_text(
             json.dumps(existing_frag), encoding="utf-8"
         )
 
@@ -235,15 +235,15 @@ class TestFragmentConversationExtracts:
         output_root = tmp_path / "OUTPUTS"
         self._write_extracts(output_root / "conv" / "extracts", 2)
 
-        fragment_dir = output_root / "conv" / "fragments"
-        fragment_dir.mkdir(parents=True)
+        seg0_dir = output_root / "conv" / "fragments" / "segment_000"
+        seg0_dir.mkdir(parents=True)
         existing_frag = {
             "source_kind": "ai_chat_fragment", "fragment_index": 0, "segment_index": 0,
             "segment_id": "test-conv_s000", "parent_conversation_id": "test-conv",
             "text": "t", "title": "t", "statements": [], "status": "ok",
             "model": "m", "latency_ms": 0, "created_at": "2026-04-21T00:00:00Z",
         }
-        (fragment_dir / "fragment_000_000.json").write_text(
+        (seg0_dir / "fragment_000.json").write_text(
             json.dumps(existing_frag), encoding="utf-8"
         )
 

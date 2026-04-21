@@ -82,7 +82,7 @@ python -m jarvis.cli summarize-segments chatgpt --conversation-id <id> --persist
 python -m jarvis.cli detect-topics chatgpt --conversation-id <id> --persist
 
 # Step 4 — extract attributed statements from each segment
-python -m jarvis.cli extract-segments chatgpt --conversation-id <id> --persist
+python -m jarvis.cli extract-segments chatgpt --conversation-id <id>
 
 # Step 5 — fragment extracts into retrieval units
 python -m jarvis.cli fragment-extracts chatgpt --conversation-id <id> --persist
@@ -176,7 +176,7 @@ Extract all informational content from each segment as a clean list of attribute
 **Resume-safe:** if an extract already exists for a segment, the LLM call is skipped. Re-run after an interruption to pick up where you left off.
 
 ```bash
-python -m jarvis.cli extract-segments chatgpt --conversation-id <id> --persist
+python -m jarvis.cli extract-segments chatgpt --conversation-id <id>
 ```
 
 | Flag | Default | Description |
@@ -185,8 +185,7 @@ python -m jarvis.cli extract-segments chatgpt --conversation-id <id> --persist
 | `--inbox-dir` | `inbox/ai_chat/chatgpt` | Base inbox directory |
 | `--from-segment` | `0` | Start at this segment index, inclusive |
 | `--to-segment` | last | Stop after this segment index, inclusive |
-| `--persist` | off | Save to SQLite and index in Qdrant |
-| `--force` | off | Wipe existing extract files and records, then re-run |
+| `--force` | off | Wipe existing extract files and re-run |
 
 **Prerequisites:** segments must exist (`ingest` must have run first).
 
@@ -304,9 +303,13 @@ OUTPUTS/
       extract_001.json|.md
       ...
     fragments/
-      fragment_000_000.json|.md    # segment 0, fragment 0
-      fragment_000_001.json|.md    # segment 0, fragment 1
-      ...
+      segment_000/
+        fragment_000.json|.md      # segment 0, fragment 0
+        fragment_001.json|.md      # segment 0, fragment 1
+        ...
+      segment_001/
+        fragment_000.json|.md
+        ...
 
 inbox/ai_chat/chatgpt/
   <conversation_id>/

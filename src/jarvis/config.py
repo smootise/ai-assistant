@@ -113,6 +113,8 @@ def load_config() -> Dict[str, Any]:
                 str(defaults.get("ollama", {}).get("timeout", 600)),
             )
         ),
+        # User identity — injected into the answer prompt so JARVIS knows who it belongs to.
+        "user_name": os.getenv("JARVIS_USER_NAME", defaults.get("user_name", "")),
     }
 
     # Log effective configuration (excluding secrets)

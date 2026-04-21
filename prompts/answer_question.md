@@ -6,6 +6,10 @@ If the context does not contain enough information to answer, say so clearly.
 Do not fabricate information not present in the excerpts.
 Respond in the same language as the question.
 
+## Identity context
+
+{user_context}
+
 ## Question
 
 {question}

@@ -36,9 +36,11 @@ class Fragmenter:
         self,
         conversation_id: str,
         output_root: Path,
+        from_segment: int = 0,
+        to_segment: Optional[int] = None,
         force: bool = False,
     ) -> List[Tuple[Path, Dict[str, Any]]]:
-        """Fragment all extracts for a conversation.
+        """Fragment extracts for a conversation, optionally within a segment range.
 
         Resume-safe: skips segments whose fragment files already exist unless
         force=True (detected by presence of fragment_{seg_idx:03d}_000.json).
@@ -46,6 +48,8 @@ class Fragmenter:
         Args:
             conversation_id: Parent conversation ID.
             output_root: Root output directory (e.g. OUTPUTS/).
+            from_segment: First segment index to process (inclusive).
+            to_segment: Last segment index to process (inclusive). None = last.
             force: If True, overwrite existing fragment files.
 
         Returns:
@@ -58,7 +62,7 @@ class Fragmenter:
         if not extract_dir.exists():
             raise FileNotFoundError(f"Extracts directory not found: {extract_dir}")
 
-        fragment_dir = output_root / conversation_id / "fragments"
+        fragments_root = output_root / conversation_id / "fragments"
 
         extract_files = sorted(extract_dir.glob("extract_*.json"))
         if not extract_files:
@@ -71,26 +75,34 @@ class Fragmenter:
                 extract_data = json.load(f)
 
             seg_idx = extract_data["segment_index"]
-            sentinel = fragment_dir / f"fragment_{seg_idx:03d}_000.json"
+            effective_to = to_segment if to_segment is not None else float("inf")
+            if not (from_segment <= seg_idx <= effective_to):
+                continue
+
+            segment_fragment_dir = fragments_root / f"segment_{seg_idx:03d}"
+            sentinel = segment_fragment_dir / "fragment_000.json"
 
             if sentinel.exists() and not force:
                 logger.info(
                     f"Skipping segment {seg_idx} ({extract_data['segment_id']}) "
                     f"— fragments already exist"
                 )
-                for frag_path in sorted(
-                    fragment_dir.glob(f"fragment_{seg_idx:03d}_*.json")
-                ):
+                for frag_path in sorted(segment_fragment_dir.glob("fragment_*.json")):
                     with open(frag_path, encoding="utf-8") as f:
-                        results.append((fragment_dir, json.load(f)))
+                        results.append((segment_fragment_dir, json.load(f)))
                 continue
+
+            if force and segment_fragment_dir.exists():
+                for f in segment_fragment_dir.iterdir():
+                    f.unlink()
+                logger.info(f"--force: cleared {segment_fragment_dir}")
 
             logger.info(
                 f"Fragmenting segment {seg_idx} ({extract_data['segment_id']})"
             )
             fragments = self.fragment_extract(
                 extract_data=extract_data,
-                fragment_dir=fragment_dir,
+                fragment_dir=segment_fragment_dir,
             )
             results.extend(fragments)
 
@@ -164,8 +176,8 @@ class Fragmenter:
                 warning=warning,
             )
 
-            json_path = fragment_dir / f"fragment_{seg_idx:03d}_{frag_idx:03d}.json"
-            md_path = fragment_dir / f"fragment_{seg_idx:03d}_{frag_idx:03d}.md"
+            json_path = fragment_dir / f"fragment_{frag_idx:03d}.json"
+            md_path = fragment_dir / f"fragment_{frag_idx:03d}.md"
 
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(output_data, f, ensure_ascii=False, indent=2)
@@ -217,7 +229,7 @@ class Fragmenter:
             "text": text,
             "title": raw_fragment.get("title", ""),
             "statements": frag_statements,
-            "source_file": f"fragment_{seg_idx:03d}_{frag_idx:03d}.json",
+            "source_file": f"segment_{seg_idx:03d}/fragment_{frag_idx:03d}.json",
             "source_kind": "ai_chat_fragment",
             "segment_id": extract_data["segment_id"],
             "segment_index": seg_idx,
