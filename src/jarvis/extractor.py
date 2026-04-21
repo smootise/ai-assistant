@@ -237,9 +237,16 @@ class SegmentExtractor:
     ) -> Dict[str, Any]:
         # Model sometimes returns a bare list instead of {"statements": [...]}
         if isinstance(parsed_data, list):
-            statements = parsed_data
+            raw_statements = parsed_data
         else:
-            statements = parsed_data.get("statements", [])
+            raw_statements = parsed_data.get("statements", [])
+        # Filter out malformed entries missing required keys
+        statements = [s for s in raw_statements if isinstance(s, dict) and "speaker" in s and "text" in s]
+        if len(statements) < len(raw_statements):
+            logger.warning(
+                f"Segment {segment['segment_id']}: dropped {len(raw_statements) - len(statements)} "
+                f"malformed statement(s) missing 'speaker' or 'text'"
+            )
         seg_idx = segment["segment_index"]
         output: Dict[str, Any] = {
             "statements": statements,
@@ -284,6 +291,6 @@ def _render_md(output_data: Dict[str, Any]) -> str:
         "",
     ]
     for stmt in output_data.get("statements", []):
-        lines.append(f"**{stmt['speaker']}:** {stmt['text']}")
+        lines.append(f"**{stmt.get('speaker', '?')}:** {stmt.get('text', '')}")
         lines.append("")
     return "\n".join(lines)

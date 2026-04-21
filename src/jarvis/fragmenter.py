@@ -330,6 +330,6 @@ def _render_md(output_data: Dict[str, Any]) -> str:
         "",
     ]
     for stmt in output_data.get("statements", []):
-        lines.append(f"**{stmt['speaker']}:** {stmt['text']}")
+        lines.append(f"**{stmt.get('speaker', '?')}:** {stmt.get('text', '')}")
         lines.append("")
     return "\n".join(lines)
