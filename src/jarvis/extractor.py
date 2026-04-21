@@ -138,8 +138,16 @@ class SegmentExtractor:
         is_degraded = False
         warning = ""
 
+        skip_reason: Optional[str] = None
         for attempt in range(2):
-            raw_response, gen_degraded, gen_warning = self._ollama.generate(prompt)
+            try:
+                raw_response, gen_degraded, gen_warning = self._ollama.generate(prompt)
+            except RuntimeError as e:
+                skip_reason = f"Timeout on attempt {attempt + 1}: {e}"
+                logger.error(
+                    f"Segment {segment['segment_id']} timed out on attempt {attempt + 1} — skipping"
+                )
+                break
             try:
                 parsed_data, parse_degraded, parse_warning = self._ollama.parse_json_response(
                     raw_response
@@ -160,6 +168,11 @@ class SegmentExtractor:
                     warning = f"JSON parse failed after 2 attempts: {e}"
 
         latency_ms = int((time.time() - start_time) * 1000)
+
+        if skip_reason:
+            is_degraded = True
+            warning = skip_reason
+            parsed_data = {"skipped": True}
 
         output_data = self._build_output_document(
             parsed_data=parsed_data,
@@ -230,7 +243,10 @@ class SegmentExtractor:
             "latency_ms": latency_ms,
         }
 
-        if is_degraded:
+        if isinstance(parsed_data, dict) and parsed_data.get("skipped"):
+            output["status"] = "skipped"
+            output["warnings"] = [warning]
+        elif is_degraded:
             output["status"] = "degraded"
             output["warnings"] = [warning]
         else:

@@ -198,12 +198,13 @@ class TestFragmentConversationExtracts:
         fragmenter = _make_fragmenter(prompts_dir)
         output_root = tmp_path / "OUTPUTS"
         self._write_extracts(output_root / "conv" / "extracts", 3)
-        results = fragmenter.fragment_conversation_extracts(
+        results, skipped = fragmenter.fragment_conversation_extracts(
             conversation_id="conv",
             output_root=output_root,
         )
         # 3 segments × 2 fragments each
         assert len(results) == 6
+        assert skipped == []
         assert fragmenter._ollama.generate.call_count == 3
 
     def test_skips_existing_without_force(self, prompts_dir, tmp_path):

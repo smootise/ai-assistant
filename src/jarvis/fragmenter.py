@@ -39,11 +39,11 @@ class Fragmenter:
         from_segment: int = 0,
         to_segment: Optional[int] = None,
         force: bool = False,
-    ) -> List[Tuple[Path, Dict[str, Any]]]:
+    ) -> Tuple[List[Tuple[Path, Dict[str, Any]]], List[Tuple[str, str]]]:
         """Fragment extracts for a conversation, optionally within a segment range.
 
         Resume-safe: skips segments whose fragment files already exist unless
-        force=True (detected by presence of fragment_{seg_idx:03d}_000.json).
+        force=True (detected by presence of fragment_000.json).
 
         Args:
             conversation_id: Parent conversation ID.
@@ -53,7 +53,9 @@ class Fragmenter:
             force: If True, overwrite existing fragment files.
 
         Returns:
-            List of (fragment_dir, output_data) tuples, one per fragment.
+            Tuple of:
+              - List of (fragment_dir, output_data) tuples, one per fragment.
+              - List of (segment_id, reason) tuples for segments that were skipped.
 
         Raises:
             FileNotFoundError: If the extracts directory does not exist.
@@ -67,9 +69,10 @@ class Fragmenter:
         extract_files = sorted(extract_dir.glob("extract_*.json"))
         if not extract_files:
             logger.warning(f"No extract files found in {extract_dir}")
-            return []
+            return [], []
 
         results: List[Tuple[Path, Dict[str, Any]]] = []
+        skipped: List[Tuple[str, str]] = []
         for extract_path in extract_files:
             with open(extract_path, encoding="utf-8") as f:
                 extract_data = json.load(f)
@@ -77,6 +80,12 @@ class Fragmenter:
             seg_idx = extract_data["segment_index"]
             effective_to = to_segment if to_segment is not None else float("inf")
             if not (from_segment <= seg_idx <= effective_to):
+                continue
+
+            # Skip extracts that were themselves skipped (timeout/parse failure)
+            if extract_data.get("status") == "skipped":
+                reason = (extract_data.get("warnings") or ["skipped during extraction"])[0]
+                skipped.append((extract_data["segment_id"], f"extract skipped: {reason}"))
                 continue
 
             segment_fragment_dir = fragments_root / f"segment_{seg_idx:03d}"
@@ -104,12 +113,15 @@ class Fragmenter:
                 extract_data=extract_data,
                 fragment_dir=segment_fragment_dir,
             )
+            if not fragments:
+                skipped.append((extract_data["segment_id"], "fragmentation produced no output (timeout or parse failure)"))
             results.extend(fragments)
 
         logger.info(
             f"Produced {len(results)} fragments for conversation {conversation_id}"
+            + (f" ({len(skipped)} segments skipped)" if skipped else "")
         )
-        return results
+        return results, skipped
 
     def fragment_extract(
         self,
@@ -140,8 +152,17 @@ class Fragmenter:
         is_degraded = False
         warning = ""
 
+        skip_reason: Optional[str] = None
         for attempt in range(2):
-            raw_response, gen_degraded, gen_warning = self._ollama.generate(prompt)
+            try:
+                raw_response, gen_degraded, gen_warning = self._ollama.generate(prompt)
+            except RuntimeError as e:
+                skip_reason = f"Timeout on attempt {attempt + 1}: {e}"
+                logger.error(
+                    f"Segment {extract_data.get('segment_id')} fragment timed out "
+                    f"on attempt {attempt + 1} — skipping"
+                )
+                break
             try:
                 parsed_data, parse_degraded, parse_warning = self._ollama.parse_json_response(
                     raw_response
@@ -164,6 +185,12 @@ class Fragmenter:
                     warning = f"JSON parse failed after 2 attempts: {e}"
 
         latency_ms = int((time.time() - start_time) * 1000)
+
+        if skip_reason:
+            logger.warning(
+                f"Segment {extract_data.get('segment_id')} fragment skipped: {skip_reason}"
+            )
+            return []
 
         # Model sometimes returns a bare list instead of {"fragments": [...]}
         if isinstance(parsed_data, list):

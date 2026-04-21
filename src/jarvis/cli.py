@@ -693,10 +693,16 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
             return 0
 
         new_count = sum(1 for _, d in results if d.get("latency_ms", 0) > 0)
+        skipped = [(d["segment_id"], d.get("warnings", [])) for _, d in results if d.get("status") == "skipped"]
 
         print(f"\nExtraction complete for: {args.conversation_id}")
         print(f"  Segments processed: {len(results)} ({new_count} new, "
               f"{len(results) - new_count} from disk)")
+        if skipped:
+            print(f"  Skipped           : {len(skipped)}")
+            for seg_id, warnings in skipped:
+                reason = warnings[0] if warnings else "unknown"
+                print(f"    - {seg_id}: {reason}")
         print(f"  Output directory  : {extract_dir}")
         return 0
 
@@ -766,7 +772,7 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
         from_segment = args.from_segment if args.from_segment is not None else 0
         to_segment = args.to_segment
 
-        results = fragmenter.fragment_conversation_extracts(
+        results, skipped_segments = fragmenter.fragment_conversation_extracts(
             conversation_id=args.conversation_id,
             output_root=output_root,
             from_segment=from_segment,
@@ -774,7 +780,7 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
             force=args.force,
         )
 
-        if not results:
+        if not results and not skipped_segments:
             print("No fragments produced.")
             return 0
 
@@ -792,6 +798,10 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
 
         print(f"\nFragmentation complete for: {args.conversation_id}")
         print(f"  Fragments produced: {len(results)}")
+        if skipped_segments:
+            print(f"  Skipped segments  : {len(skipped_segments)}")
+            for seg_id, reason in skipped_segments:
+                print(f"    - {seg_id}: {reason}")
         print(f"  Output directory  : {fragment_dir}")
         return 0
 
