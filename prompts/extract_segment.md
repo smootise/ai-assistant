@@ -8,8 +8,6 @@ Remove: filler phrases, pleasantries, meta-commentary about the conversation its
 
 Do not summarize or compress meaning. If the user said something specific, keep it specific. Do not invent or extrapolate content that is not explicitly present in the segment.
 
-Cap: return at most 30 statements. If the segment contains more distinct ideas, keep the most important ones and merge closely related points into a single statement.
-
 ## Language rule
 
 Respond in the same language as the conversation.
