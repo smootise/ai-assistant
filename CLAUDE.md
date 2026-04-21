@@ -38,6 +38,7 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 - Web UI: browser-based interface to query JARVIS and view results
 - TrueNAS deployment: migrate JARVIS services (Ollama, Qdrant, backend) to run on TrueNAS
 - API integrations: Notion, Slack, and other data sources as ingestion adapters
+- Logging overhaul: structured log file output (errors + raw model responses on parse failure written to file, not terminal), log rotation, configurable verbosity per module
 
 ---
 
