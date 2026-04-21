@@ -235,6 +235,7 @@ class Fragmenter:
             "segment_index": seg_idx,
             "fragment_index": frag_idx,
             "parent_conversation_id": extract_data["parent_conversation_id"],
+            "conversation_date": extract_data.get("conversation_date"),
             "schema": self._schema,
             "schema_version": self._schema_version,
             "provider": "local",

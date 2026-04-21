@@ -104,6 +104,7 @@ class MemoryLayer:
             "model": output_data.get("model"),
             "segment_id": output_data.get("segment_id"),
             "parent_conversation_id": output_data.get("parent_conversation_id"),
+            "conversation_date": output_data.get("conversation_date"),
         }
         try:
             point_id = self.vector_store.upsert(

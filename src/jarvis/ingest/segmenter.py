@@ -182,6 +182,10 @@ def _make_segment(
     message_ids = [m["message_id"] for m in messages]
     segment_id = f"{conversation_id}_s{segment_index:03d}"
 
+    # Use the timestamp of the first message as the segment's conversation date.
+    # This is when the exchange actually happened, not when the pipeline ran.
+    conversation_date = messages[0].get("created_at")
+
     return {
         "conversation_id": conversation_id,
         "segment_id": segment_id,
@@ -189,6 +193,7 @@ def _make_segment(
         "start_position": positions[0],
         "end_position": positions[-1],
         "message_ids": message_ids,
+        "conversation_date": conversation_date,
         "segment_text": _format_segment_text(messages),
     }
 

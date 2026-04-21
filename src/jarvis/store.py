@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # Current schema version — increment when adding columns.
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS _jarvis_meta (
@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS summaries (
     topic_segment_range     TEXT,
     fragment_index          INTEGER,
     fragment_title          TEXT,
-    statements              TEXT
+    statements              TEXT,
+    conversation_date       TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_summaries_source_file  ON summaries (source_file);
@@ -140,6 +141,7 @@ class SummaryStore:
             )
             if output_data.get("statements") is not None
             else None,
+            "conversation_date": output_data.get("conversation_date"),
         }
 
         sql = """
@@ -150,7 +152,7 @@ class SummaryStore:
                 created_at, embedded_at, output_json_path, output_md_path, qdrant_point_id,
                 segment_id, segment_index, parent_conversation_id,
                 topic_index, topic_segment_range,
-                fragment_index, fragment_title, statements
+                fragment_index, fragment_title, statements, conversation_date
             ) VALUES (
                 :run_id, :source_file, :source_kind, :provider, :model, :embedding_model,
                 :schema, :schema_version, :status, :lang, :confidence, :latency_ms,
@@ -158,7 +160,7 @@ class SummaryStore:
                 :created_at, :embedded_at, :output_json_path, :output_md_path, :qdrant_point_id,
                 :segment_id, :segment_index, :parent_conversation_id,
                 :topic_index, :topic_segment_range,
-                :fragment_index, :fragment_title, :statements
+                :fragment_index, :fragment_title, :statements, :conversation_date
             )
         """
         with self._connect() as conn:

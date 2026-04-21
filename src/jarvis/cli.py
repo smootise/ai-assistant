@@ -222,7 +222,8 @@ def cmd_retrieve(args: argparse.Namespace, config: dict) -> int:
 def _build_context_block(rows: list[dict]) -> str:
     parts = []
     for i, row in enumerate(rows, start=1):
-        header = f"--- Excerpt {i} (source: {row['source_file']}, date: {row['created_at']}) ---"
+        date = row.get("conversation_date") or row["created_at"]
+        header = f"--- Excerpt {i} (source: {row['source_file']}, date: {date}) ---"
         if row.get("statements"):
             title = row.get("fragment_title") or ""
             lines = []

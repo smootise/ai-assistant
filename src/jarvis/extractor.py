@@ -207,6 +207,7 @@ class SegmentExtractor:
             "segment_id": segment["segment_id"],
             "segment_index": seg_idx,
             "parent_conversation_id": segment["conversation_id"],
+            "conversation_date": segment.get("conversation_date"),
             "schema": self._schema,
             "schema_version": self._schema_version,
             "provider": "local",
