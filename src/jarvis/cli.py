@@ -824,6 +824,10 @@ def main() -> int:
         description="JARVIS - Local-first AI assistant for PM workflows",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument(
+        "--debug", action="store_true", default=False,
+        help="Set log level to DEBUG for this run",
+    )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # -- summarize --------------------------------------------------------
@@ -1045,7 +1049,7 @@ def main() -> int:
         return 1
 
     config = load_config()
-    setup_logging(config["log_level"])
+    setup_logging("DEBUG" if args.debug else config["log_level"])
 
     if args.command == "summarize":
         return cmd_summarize(args, config)
