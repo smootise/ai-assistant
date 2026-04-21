@@ -96,7 +96,7 @@ class SegmentExtractor:
             if existing_path.exists() and not force:
                 with open(existing_path, encoding="utf-8") as f:
                     output_data = json.load(f)
-                if output_data.get("status") in ("skipped", "degraded"):
+                if output_data.get("status") in ("skipped", "partial"):
                     logger.info(
                         f"Re-processing segment {seg_idx} ({segment['segment_id']}) "
                         f"— previous extract has status '{output_data['status']}'"
@@ -145,6 +145,7 @@ class SegmentExtractor:
         prompt = self._build_prompt(segment["segment_text"])
         parsed_data: Dict[str, Any] = {}
         is_degraded = False
+        is_partial = False
         warning = ""
 
         skip_reason: Optional[str] = None
@@ -176,21 +177,21 @@ class SegmentExtractor:
                     logger.error(
                         f"Segment {segment['segment_id']} parse failed after {attempt + 1} attempt(s) — skipping"
                     )
-                    is_degraded = True
+                    is_partial = True
                     warning = f"JSON parse failed after {attempt + 1} attempt(s): {e}"
 
         latency_ms = int((time.time() - start_time) * 1000)
 
         if skip_reason:
-            is_degraded = True
-            warning = skip_reason
             parsed_data = {"skipped": True}
+            warning = skip_reason
 
         output_data = self._build_output_document(
             parsed_data=parsed_data,
             segment=segment,
             latency_ms=latency_ms,
             is_degraded=is_degraded,
+            is_partial=is_partial,
             warning=warning,
         )
 
@@ -231,6 +232,7 @@ class SegmentExtractor:
         segment: Dict[str, Any],
         latency_ms: int,
         is_degraded: bool,
+        is_partial: bool,
         warning: str,
     ) -> Dict[str, Any]:
         # Model sometimes returns a bare list instead of {"statements": [...]}
@@ -257,6 +259,9 @@ class SegmentExtractor:
 
         if isinstance(parsed_data, dict) and parsed_data.get("skipped"):
             output["status"] = "skipped"
+            output["warnings"] = [warning]
+        elif is_partial:
+            output["status"] = "partial"
             output["warnings"] = [warning]
         elif is_degraded:
             output["status"] = "degraded"

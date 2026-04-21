@@ -95,7 +95,7 @@ class Fragmenter:
             if sentinel.exists() and not force:
                 with open(sentinel, encoding="utf-8") as f:
                     sentinel_data = json.load(f)
-                if sentinel_data.get("status") in ("skipped", "degraded"):
+                if sentinel_data.get("status") in ("skipped", "partial"):
                     logger.info(
                         f"Re-processing segment {seg_idx} ({extract_data['segment_id']}) "
                         f"— previous fragments have status '{sentinel_data['status']}'"
@@ -163,6 +163,7 @@ class Fragmenter:
         prompt = self._build_prompt(statements)
         parsed_data: Dict[str, Any] = {}
         is_degraded = False
+        is_partial = False
         warning = ""
 
         skip_reason: Optional[str] = None
@@ -197,7 +198,7 @@ class Fragmenter:
                         f"Segment {extract_data.get('segment_id')} fragment parse failed "
                         f"after {attempt + 1} attempt(s) — skipping"
                     )
-                    is_degraded = True
+                    is_partial = True
                     warning = f"JSON parse failed after {attempt + 1} attempt(s): {e}"
 
         latency_ms = int((time.time() - start_time) * 1000)
@@ -231,6 +232,7 @@ class Fragmenter:
                 frag_idx=frag_idx,
                 latency_ms=latency_ms,
                 is_degraded=is_degraded,
+                is_partial=is_partial,
                 warning=warning,
             )
 
@@ -276,6 +278,7 @@ class Fragmenter:
         frag_idx: int,
         latency_ms: int,
         is_degraded: bool,
+        is_partial: bool,
         warning: str,
     ) -> Dict[str, Any]:
         frag_statements = raw_fragment.get("statements", [])
@@ -302,7 +305,10 @@ class Fragmenter:
             "latency_ms": latency_ms,
         }
 
-        if is_degraded:
+        if is_partial:
+            output["status"] = "partial"
+            output["warnings"] = [warning]
+        elif is_degraded:
             output["status"] = "degraded"
             output["warnings"] = [warning]
         else:
