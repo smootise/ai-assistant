@@ -134,21 +134,30 @@ class SegmentExtractor:
         start_time = time.time()
 
         prompt = self._build_prompt(segment["segment_text"])
-        raw_response, is_degraded, warning = self._ollama.generate(prompt)
+        parsed_data: Dict[str, Any] = {}
+        is_degraded = False
+        warning = ""
 
-        try:
-            parsed_data, parse_degraded, parse_warning = self._ollama.parse_json_response(
-                raw_response
-            )
-            if parse_degraded:
-                is_degraded = True
-                warning = parse_warning
-        except ValueError as e:
-            logger.error(
-                f"Failed to parse extraction response for segment "
-                f"{segment['segment_id']}: {e}"
-            )
-            raise RuntimeError(f"Model did not return valid JSON: {e}") from e
+        for attempt in range(2):
+            raw_response, gen_degraded, gen_warning = self._ollama.generate(prompt)
+            try:
+                parsed_data, parse_degraded, parse_warning = self._ollama.parse_json_response(
+                    raw_response
+                )
+                is_degraded = gen_degraded or parse_degraded
+                warning = parse_warning if parse_degraded else gen_warning
+                break
+            except ValueError as e:
+                if attempt == 0:
+                    logger.warning(
+                        f"Segment {segment['segment_id']} parse failed on attempt 1 — retrying..."
+                    )
+                else:
+                    logger.error(
+                        f"Segment {segment['segment_id']} parse failed after 2 attempts — skipping"
+                    )
+                    is_degraded = True
+                    warning = f"JSON parse failed after 2 attempts: {e}"
 
         latency_ms = int((time.time() - start_time) * 1000)
 
