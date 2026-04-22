@@ -348,21 +348,46 @@ class SummaryStore:
         )
         return point_ids
 
-    def delete_extract_rows(self, conversation_id: str) -> List[str]:
-        """Delete all extract rows for a conversation and return qdrant_point_ids."""
+    def delete_extract_rows(
+        self,
+        conversation_id: str,
+        segment_indices: Optional[List[int]] = None,
+    ) -> List[str]:
+        """Delete extract rows for a conversation and return qdrant_point_ids.
+
+        If segment_indices is given, only rows whose segment_index is in that
+        list are deleted. Otherwise all extract rows for the conversation are
+        deleted.
+        """
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT * FROM summaries WHERE parent_conversation_id = ? "
-                "AND source_kind = 'ai_chat_extract'",
-                (conversation_id,),
-            ).fetchall()
-            point_ids = [r["qdrant_point_id"] for r in rows if r["qdrant_point_id"]]
-            conn.execute(
-                "DELETE FROM summaries WHERE parent_conversation_id = ? "
-                "AND source_kind = 'ai_chat_extract'",
-                (conversation_id,),
-            )
+            if segment_indices is not None:
+                placeholders = ",".join("?" * len(segment_indices))
+                rows = conn.execute(
+                    f"SELECT * FROM summaries WHERE parent_conversation_id = ? "
+                    f"AND source_kind = 'ai_chat_extract' "
+                    f"AND segment_index IN ({placeholders})",
+                    [conversation_id] + segment_indices,
+                ).fetchall()
+                point_ids = [r["qdrant_point_id"] for r in rows if r["qdrant_point_id"]]
+                conn.execute(
+                    f"DELETE FROM summaries WHERE parent_conversation_id = ? "
+                    f"AND source_kind = 'ai_chat_extract' "
+                    f"AND segment_index IN ({placeholders})",
+                    [conversation_id] + segment_indices,
+                )
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM summaries WHERE parent_conversation_id = ? "
+                    "AND source_kind = 'ai_chat_extract'",
+                    (conversation_id,),
+                ).fetchall()
+                point_ids = [r["qdrant_point_id"] for r in rows if r["qdrant_point_id"]]
+                conn.execute(
+                    "DELETE FROM summaries WHERE parent_conversation_id = ? "
+                    "AND source_kind = 'ai_chat_extract'",
+                    (conversation_id,),
+                )
         logger.info(f"Deleted {len(rows)} extract rows for conversation {conversation_id}")
         return point_ids
 

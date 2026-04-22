@@ -653,7 +653,17 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
     try:
         if args.force:
             store = SummaryStore(db_path=config["db_path"])
-            point_ids = store.delete_extract_rows(args.conversation_id)
+            # Determine the index range being forced so we only wipe that scope.
+            all_seg_indices = sorted(
+                int(f.stem.split("_")[1])
+                for f in segments_dir.glob("segment_*.json")
+                if f.name != "pending_tail.json"
+            )
+            effective_from = from_segment
+            effective_to = to_segment if to_segment is not None else (max(all_seg_indices) if all_seg_indices else from_segment)
+            forced_indices = list(range(effective_from, effective_to + 1))
+
+            point_ids = store.delete_extract_rows(args.conversation_id, segment_indices=forced_indices)
             if point_ids:
                 try:
                     vs = VectorStore(host=config["qdrant_host"], port=config["qdrant_port"])
@@ -661,10 +671,15 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
                 except Exception:
                     pass
             if extract_dir.exists():
-                for f in extract_dir.glob("extract_*"):
-                    f.unlink()
+                for idx in forced_indices:
+                    f = extract_dir / f"extract_{idx:03d}.json"
+                    if f.exists():
+                        f.unlink()
+                    m = extract_dir / f"extract_{idx:03d}.md"
+                    if m.exists():
+                        m.unlink()
             logger.info(
-                f"--force: wiped existing extracts for {args.conversation_id}"
+                f"--force: wiped extracts {effective_from}–{effective_to} for {args.conversation_id}"
             )
 
         ollama_client = OllamaClient(
