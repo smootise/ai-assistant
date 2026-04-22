@@ -142,7 +142,7 @@ class SegmentExtractor:
         """
         start_time = time.time()
 
-        prompt = self._build_prompt(segment["segment_text"])
+        system_prompt, user_content = self._build_prompt(segment["segment_text"])
         parsed_data: Dict[str, Any] = {}
         is_degraded = False
         is_partial = False
@@ -151,7 +151,7 @@ class SegmentExtractor:
         skip_reason: Optional[str] = None
         for attempt in range(retries + 1):
             try:
-                raw_response, gen_degraded, gen_warning = self._ollama.generate(prompt)
+                raw_response, gen_degraded, gen_warning = self._ollama.chat(system_prompt, user_content)
             except RuntimeError as e:
                 skip_reason = f"Timeout on attempt {attempt + 1}: {e}"
                 logger.error(
@@ -216,7 +216,7 @@ class SegmentExtractor:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _build_prompt(self, segment_text: str) -> str:
+    def _build_prompt(self, segment_text: str) -> tuple:
         prompt_path = self._prompts_dir / "extract_segment.md"
         if not prompt_path.exists():
             raise FileNotFoundError(f"Prompt template not found: {prompt_path}")
@@ -224,7 +224,9 @@ class SegmentExtractor:
         with open(prompt_path, encoding="utf-8") as f:
             template = f.read()
 
-        return template.replace("{segment_text}", segment_text)
+        system_prompt, user_template = template.split("---USER---", 1)
+        user_content = user_template.strip().replace("{segment_text}", segment_text)
+        return system_prompt.strip(), user_content
 
     def _build_output_document(
         self,

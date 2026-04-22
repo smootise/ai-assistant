@@ -210,8 +210,8 @@ class TopicDetector:
             Tuple of (output_dir, output_data).
         """
         start_time = time.time()
-        prompt = self._build_topic_prompt(topic_segments)
-        raw, is_degraded, warning = self._ollama.generate(prompt)
+        system_prompt, user_content = self._build_topic_prompt(topic_segments)
+        raw, is_degraded, warning = self._ollama.chat(system_prompt, user_content)
         try:
             parsed, parse_degraded, parse_warning = self._ollama.parse_json_response(raw)
             if parse_degraded:
@@ -301,8 +301,8 @@ class TopicDetector:
             self._prompt_template = prompt_path.read_text(encoding="utf-8")
         return self._prompt_template
 
-    def _build_topic_prompt(self, topic_segments: List[Dict[str, Any]]) -> str:
-        template = self._load_prompt_template()
+    def _build_topic_prompt(self, topic_segments: List[Dict[str, Any]]) -> tuple:
+        system_prompt = self._load_prompt_template()
 
         segment_lines = []
         for i, seg in enumerate(topic_segments):
@@ -310,10 +310,8 @@ class TopicDetector:
             segment_lines.append(f"Segment {i}: {summary_text}")
 
         segments_block = "\n".join(segment_lines)
-        injection = (
-            f"\n\n---BEGIN TOPIC SEGMENTS---\n{segments_block}\n---END TOPIC SEGMENTS---"
-        )
-        return template + injection
+        user_content = f"---BEGIN TOPIC SEGMENTS---\n{segments_block}\n---END TOPIC SEGMENTS---"
+        return system_prompt, user_content
 
     def _print_distribution_report(
         self,

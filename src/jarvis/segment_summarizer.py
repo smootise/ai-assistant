@@ -151,8 +151,8 @@ class SegmentSummarizer:
         """
         start_time = time.time()
 
-        prompt = self._build_segment_prompt(segment["segment_text"], prior_summaries)
-        raw_response, is_degraded, warning = self.ollama.generate(prompt)
+        system_prompt, user_content = self._build_segment_prompt(segment["segment_text"], prior_summaries)
+        raw_response, is_degraded, warning = self.ollama.chat(system_prompt, user_content)
 
         try:
             parsed_data, parse_degraded, parse_warning = self.ollama.parse_json_response(
@@ -190,29 +190,28 @@ class SegmentSummarizer:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _build_segment_prompt(self, segment_text: str, prior_summaries: List[str]) -> str:
+    def _build_segment_prompt(self, segment_text: str, prior_summaries: List[str]) -> tuple:
         prompt_path = self.prompts_dir / "summarize_ai_chat_segment.md"
         if not prompt_path.exists():
             raise FileNotFoundError(f"Prompt template not found: {prompt_path}")
 
         with open(prompt_path, encoding="utf-8") as f:
-            template = f.read()
+            system_prompt = f.read().strip()
 
-        parts = [template]
-
+        user_parts = []
         if prior_summaries:
             context_lines = "\n".join(
                 f"Segment {i}: {s}" for i, s in enumerate(prior_summaries)
             )
-            parts.append(
-                f"\n\n---BEGIN PREVIOUS CONTEXT---\n{context_lines}\n---END PREVIOUS CONTEXT---"
+            user_parts.append(
+                f"---BEGIN PREVIOUS CONTEXT---\n{context_lines}\n---END PREVIOUS CONTEXT---"
             )
 
-        parts.append(
-            f"\n\n---BEGIN SEGMENT TRANSCRIPT---\n{segment_text}\n---END SEGMENT TRANSCRIPT---"
+        user_parts.append(
+            f"---BEGIN SEGMENT TRANSCRIPT---\n{segment_text}\n---END SEGMENT TRANSCRIPT---"
         )
 
-        return "".join(parts)
+        return system_prompt, "\n\n".join(user_parts)
 
     def _build_output_document(
         self,

@@ -280,7 +280,7 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
 
         prompt_path = Path(config["prompts_dir"]) / "answer_question.md"
         template = prompt_path.read_text(encoding="utf-8")
-        prompt = (
+        system_prompt = (
             template
             .replace("{question}", args.query)
             .replace("{context_block}", context_block)
@@ -295,7 +295,7 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
             print()
 
         logger.info(f"Generating answer with model={config['local_model_name']}...")
-        raw, is_degraded, warning = ollama.generate(prompt, temperature=args.temperature)
+        raw, is_degraded, warning = ollama.chat(system_prompt, args.query, temperature=args.temperature)
 
         if is_degraded:
             logger.warning(f"Degraded response: {warning}")

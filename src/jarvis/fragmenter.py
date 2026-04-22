@@ -160,7 +160,7 @@ class Fragmenter:
 
         start_time = time.time()
 
-        prompt = self._build_prompt(statements)
+        system_prompt, user_content = self._build_prompt(statements)
         parsed_data: Dict[str, Any] = {}
         is_degraded = False
         is_partial = False
@@ -169,7 +169,7 @@ class Fragmenter:
         skip_reason: Optional[str] = None
         for attempt in range(retries + 1):
             try:
-                raw_response, gen_degraded, gen_warning = self._ollama.generate(prompt)
+                raw_response, gen_degraded, gen_warning = self._ollama.chat(system_prompt, user_content)
             except RuntimeError as e:
                 skip_reason = f"Timeout on attempt {attempt + 1}: {e}"
                 logger.error(
@@ -257,7 +257,7 @@ class Fragmenter:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _build_prompt(self, statements: List[Dict[str, Any]]) -> str:
+    def _build_prompt(self, statements: List[Dict[str, Any]]) -> tuple:
         prompt_path = self._prompts_dir / "fragment_extract.md"
         if not prompt_path.exists():
             raise FileNotFoundError(f"Prompt template not found: {prompt_path}")
@@ -268,7 +268,9 @@ class Fragmenter:
         statements_text = "\n".join(
             f"{stmt['speaker']}: {stmt['text']}" for stmt in statements
         )
-        return template.replace("{statements_text}", statements_text)
+        system_prompt, user_template = template.split("---USER---", 1)
+        user_content = user_template.strip().replace("{statements_text}", statements_text)
+        return system_prompt.strip(), user_content
 
     def _build_output_document(
         self,

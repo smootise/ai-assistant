@@ -65,7 +65,7 @@ def test_answer_happy_path(mock_build_memory, mock_ollama_cls, tmp_path, capsys)
     mock_build_memory.return_value = _mock_memory(hits, FAKE_ROWS)
 
     mock_ollama = MagicMock()
-    mock_ollama.generate.return_value = ("SQLite is the source of truth.", False, "")
+    mock_ollama.chat.return_value = ("SQLite is the source of truth.", False, "")
     mock_ollama_cls.return_value = mock_ollama
 
     prompt_file = tmp_path / "answer_question.md"
@@ -81,7 +81,7 @@ def test_answer_happy_path(mock_build_memory, mock_ollama_cls, tmp_path, capsys)
     out = capsys.readouterr().out
     assert "SQLite is the source of truth." in out
     assert 'Answer to: "Why SQLite?"' in out
-    mock_ollama.generate.assert_called_once()
+    mock_ollama.chat.assert_called_once()
 
 
 @patch("jarvis.cli.OllamaClient")
@@ -94,7 +94,7 @@ def test_answer_no_hits(mock_build_memory, mock_ollama_cls, tmp_path, capsys):
     assert result == 0
     out = capsys.readouterr().out
     assert "No relevant context found" in out
-    mock_ollama_cls.return_value.generate.assert_not_called()
+    mock_ollama_cls.return_value.chat.assert_not_called()
 
 
 @patch("jarvis.cli.OllamaClient")
@@ -104,7 +104,7 @@ def test_answer_degraded_response(mock_build_memory, mock_ollama_cls, tmp_path, 
     mock_build_memory.return_value = _mock_memory(hits, FAKE_ROWS[:1])
 
     mock_ollama = MagicMock()
-    mock_ollama.generate.return_value = ("Some answer.", True, "JSON fallback used")
+    mock_ollama.chat.return_value = ("Some answer.", True, "JSON fallback used")
     mock_ollama_cls.return_value = mock_ollama
 
     prompt_file = tmp_path / "answer_question.md"

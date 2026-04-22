@@ -73,10 +73,10 @@ class ConversationSummarizer:
         conversation = self._load_conversation(file_path)
 
         # Load and format prompt
-        prompt = self._build_prompt(conversation)
+        system_prompt, user_content = self._build_prompt(conversation)
 
         # Call Ollama
-        raw_response, is_degraded, warning = self.ollama.generate(prompt)
+        raw_response, is_degraded, warning = self.ollama.chat(system_prompt, user_content)
 
         # Parse JSON response
         try:
@@ -148,34 +148,30 @@ class ConversationSummarizer:
         logger.debug(f"Loaded {len(data)} messages from {file_path}")
         return data
 
-    def _build_prompt(self, conversation: List[Dict[str, str]]) -> str:
-        """Build the full prompt by loading template and formatting conversation.
+    def _build_prompt(self, conversation: List[Dict[str, str]]) -> tuple:
+        """Build system prompt and user content from template and conversation.
 
         Args:
             conversation: List of message dictionaries.
 
         Returns:
-            Complete prompt string.
+            Tuple of (system_prompt, user_content).
 
         Raises:
             FileNotFoundError: If prompt template is missing.
         """
-        # Load prompt template
         prompt_path = self.prompts_dir / "summarize_conversation.md"
         if not prompt_path.exists():
             raise FileNotFoundError(f"Prompt template not found: {prompt_path}")
 
         with open(prompt_path, "r", encoding="utf-8") as f:
-            template = f.read()
+            system_prompt = f.read().strip()
 
-        # Format transcript
         transcript = self._format_transcript(conversation)
+        user_content = f"---BEGIN TRANSCRIPT---\n{transcript}\n---END TRANSCRIPT---"
 
-        # Insert transcript between delimiters
-        full_prompt = f"{template}\n\n---BEGIN TRANSCRIPT---\n{transcript}\n---END TRANSCRIPT---"
-
-        logger.debug(f"Built prompt with {len(full_prompt)} chars")
-        return full_prompt
+        logger.debug(f"Built system prompt ({len(system_prompt)} chars) + user content ({len(user_content)} chars)")
+        return system_prompt, user_content
 
     def _format_transcript(self, conversation: List[Dict[str, str]]) -> str:
         """Format conversation messages as a readable transcript.

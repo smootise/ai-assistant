@@ -32,6 +32,7 @@ class OllamaClient:
         self.model = model
         self.timeout = timeout
         self.generate_url = f"{base_url}/api/generate"
+        self.chat_url = f"{base_url}/api/chat"
 
     def generate(self, prompt: str, temperature: float = 0.3) -> Tuple[str, bool, str]:
         """Send prompt to Ollama and get response.
@@ -79,6 +80,63 @@ class OllamaClient:
             raise RuntimeError(f"Ollama error: {result['error']}")
 
         raw_response = result.get("response", "").strip()
+        logger.debug(f"Raw response length: {len(raw_response)} chars")
+
+        return raw_response, False, ""
+
+    def chat(self, system: str, user: str, temperature: float = 0.3) -> Tuple[str, bool, str]:
+        """Send a chat request to Ollama with separate system and user messages.
+
+        Uses /api/chat so the model's chat template properly separates privileged
+        instructions (system) from untrusted input data (user), reducing the risk
+        of prompt injection from content embedded in the data.
+
+        Args:
+            system: System prompt (instructions, output format, rules).
+            user: User message (the data to process).
+            temperature: Sampling temperature (0.0-1.0).
+
+        Returns:
+            Tuple of (response_text, is_degraded, warning_message).
+
+        Raises:
+            ConnectionError: If Ollama server is unreachable.
+            RuntimeError: If Ollama returns an error or times out.
+        """
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+            "options": {"temperature": temperature},
+        }
+
+        logger.info(f"Sending chat request to Ollama (model={self.model})...")
+        logger.debug(f"System prompt length: {len(system)} chars, user content: {len(user)} chars")
+
+        try:
+            response = requests.post(self.chat_url, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Cannot connect to Ollama at {self.base_url}")
+            raise ConnectionError(
+                f"Ollama server unreachable at {self.base_url}. "
+                "Is Ollama running? (Try: ollama serve)"
+            ) from e
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Ollama chat request timed out after {self.timeout}s")
+            raise RuntimeError(f"Ollama inference timed out after {self.timeout}s") from e
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ollama chat request failed: {e}")
+            raise RuntimeError(f"Ollama request failed: {e}") from e
+
+        result = response.json()
+        if "error" in result:
+            raise RuntimeError(f"Ollama error: {result['error']}")
+
+        raw_response = result.get("message", {}).get("content", "").strip()
         logger.debug(f"Raw response length: {len(raw_response)} chars")
 
         return raw_response, False, ""

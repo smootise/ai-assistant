@@ -47,7 +47,7 @@ def _make_detector(
     embedder.embed.return_value = [0.1, 0.2, 0.3]
     ollama = MagicMock()
     ollama.model = "gemma4:31b"
-    ollama.generate.return_value = (
+    ollama.chat.return_value = (
         '{"summary": "topic summary", "bullets": [], "action_items": [], "confidence": 0.8}',
         False,
         "",
@@ -215,7 +215,7 @@ class TestSummarizeTopic:
             conversation_id="conv",
             topic_summaries_dir=topic_dir,
         )
-        call_args = detector._ollama.generate.call_args[0][0]
+        call_args = detector._ollama.chat.call_args[0][1]
         assert "alpha summary" in call_args
         assert "beta summary" in call_args
 
@@ -273,7 +273,7 @@ class TestDetectAndSummarize:
             "conv-id", tmp_path, dry_run=True
         )
         assert results == []
-        detector._ollama.generate.assert_not_called()
+        detector._ollama.chat.assert_not_called()
 
     def test_end_to_end_two_topics(self, tmp_path):
         detector = _make_detector(prompts_dir=str(tmp_path), threshold=0.65)

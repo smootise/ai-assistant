@@ -42,7 +42,7 @@ def _make_segment(index: int, conversation_id: str = "test-conv") -> Dict[str, A
 def _make_summarizer(prompts_dir: str, context_window: int = 3) -> SegmentSummarizer:
     client = MagicMock()
     client.model = "test-model"
-    client.generate.return_value = (_VALID_JSON_RESPONSE, False, "")
+    client.chat.return_value = (_VALID_JSON_RESPONSE, False, "")
     client.parse_json_response.return_value = (json.loads(_VALID_JSON_RESPONSE), False, "")
     return SegmentSummarizer(
         ollama_client=client,
@@ -75,34 +75,34 @@ def summarizer(prompts_dir) -> SegmentSummarizer:
 
 class TestBuildSegmentPrompt:
     def test_no_context_omits_context_block(self, summarizer):
-        prompt = summarizer._build_segment_prompt("user: Q\n\nassistant: A", [])
-        assert "---BEGIN PREVIOUS CONTEXT---" not in prompt
-        assert "---END PREVIOUS CONTEXT---" not in prompt
+        _, user_content = summarizer._build_segment_prompt("user: Q\n\nassistant: A", [])
+        assert "---BEGIN PREVIOUS CONTEXT---" not in user_content
+        assert "---END PREVIOUS CONTEXT---" not in user_content
 
     def test_no_context_includes_transcript_block(self, summarizer):
-        prompt = summarizer._build_segment_prompt("user: Q\n\nassistant: A", [])
-        assert "---BEGIN SEGMENT TRANSCRIPT---" in prompt
-        assert "user: Q" in prompt
+        _, user_content = summarizer._build_segment_prompt("user: Q\n\nassistant: A", [])
+        assert "---BEGIN SEGMENT TRANSCRIPT---" in user_content
+        assert "user: Q" in user_content
 
     def test_with_context_includes_both_blocks(self, summarizer):
-        prompt = summarizer._build_segment_prompt("user: Q", ["Summary of segment 0."])
-        assert "---BEGIN PREVIOUS CONTEXT---" in prompt
-        assert "---END PREVIOUS CONTEXT---" in prompt
-        assert "---BEGIN SEGMENT TRANSCRIPT---" in prompt
+        _, user_content = summarizer._build_segment_prompt("user: Q", ["Summary of segment 0."])
+        assert "---BEGIN PREVIOUS CONTEXT---" in user_content
+        assert "---END PREVIOUS CONTEXT---" in user_content
+        assert "---BEGIN SEGMENT TRANSCRIPT---" in user_content
 
     def test_context_summaries_are_prefixed(self, summarizer):
-        prompt = summarizer._build_segment_prompt("user: Q", ["First.", "Second."])
-        assert "Segment 0: First." in prompt
-        assert "Segment 1: Second." in prompt
+        _, user_content = summarizer._build_segment_prompt("user: Q", ["First.", "Second."])
+        assert "Segment 0: First." in user_content
+        assert "Segment 1: Second." in user_content
 
     def test_context_window_respected(self, prompts_dir):
         s = _make_summarizer(prompts_dir, context_window=2)
         summaries = ["S0", "S1", "S2", "S3", "S4"]
-        prompt = s._build_segment_prompt("user: Q", summaries[-2:])
-        assert "Segment 0: S3" in prompt
-        assert "Segment 1: S4" in prompt
-        assert "S0" not in prompt
-        assert "S1" not in prompt
+        _, user_content = s._build_segment_prompt("user: Q", summaries[-2:])
+        assert "Segment 0: S3" in user_content
+        assert "Segment 1: S4" in user_content
+        assert "S0" not in user_content
+        assert "S1" not in user_content
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ class TestSummarizeSegment:
         client = MagicMock()
         client.model = "test-model"
         fenced = f"```json\n{_VALID_JSON_RESPONSE}\n```"
-        client.generate.return_value = (fenced, False, "")
+        client.chat.return_value = (fenced, False, "")
         client.parse_json_response.return_value = (
             json.loads(_VALID_JSON_RESPONSE), True, "Stripped code fences"
         )
@@ -185,7 +185,7 @@ class TestSummarizeConversationSegments:
             }), False, "")
             for i in range(3)
         ]
-        client.generate.side_effect = responses
+        client.chat.side_effect = responses
         client.parse_json_response.side_effect = [
             (json.loads(r[0]), False, "") for r in responses
         ]
@@ -203,9 +203,9 @@ class TestSummarizeConversationSegments:
             output_root=tmp_path / "OUTPUTS",
         )
 
-        third_call_prompt = client.generate.call_args_list[2][0][0]
-        assert "Summary of segment 0." in third_call_prompt
-        assert "Summary of segment 1." in third_call_prompt
+        third_call_user = client.chat.call_args_list[2][0][1]
+        assert "Summary of segment 0." in third_call_user
+        assert "Summary of segment 1." in third_call_user
 
     def test_skips_pending_tail(self, prompts_dir, tmp_path):
         segments = [_make_segment(0)]
@@ -215,7 +215,7 @@ class TestSummarizeConversationSegments:
 
         client = MagicMock()
         client.model = "test-model"
-        client.generate.return_value = (_VALID_JSON_RESPONSE, False, "")
+        client.chat.return_value = (_VALID_JSON_RESPONSE, False, "")
         client.parse_json_response.return_value = (json.loads(_VALID_JSON_RESPONSE), False, "")
 
         s = SegmentSummarizer(
@@ -230,7 +230,7 @@ class TestSummarizeConversationSegments:
             output_root=tmp_path / "OUTPUTS",
         )
         assert len(results) == 1
-        assert client.generate.call_count == 1
+        assert client.chat.call_count == 1
 
     def test_raises_if_segments_dir_missing(self, summarizer, tmp_path):
         with pytest.raises(FileNotFoundError):
@@ -247,7 +247,7 @@ class TestSummarizeConversationSegments:
 
         client = MagicMock()
         client.model = "test-model"
-        client.generate.return_value = (_VALID_JSON_RESPONSE, False, "")
+        client.chat.return_value = (_VALID_JSON_RESPONSE, False, "")
         client.parse_json_response.return_value = (json.loads(_VALID_JSON_RESPONSE), False, "")
 
         s = SegmentSummarizer(
@@ -264,7 +264,7 @@ class TestSummarizeConversationSegments:
             to_segment=3,
         )
         assert len(results) == 3
-        assert client.generate.call_count == 3
+        assert client.chat.call_count == 3
 
     def test_preseed_context_from_existing_files(self, prompts_dir, tmp_path):
         segments = [_make_segment(i) for i in range(3)]
@@ -291,7 +291,7 @@ class TestSummarizeConversationSegments:
 
         client = MagicMock()
         client.model = "test-model"
-        client.generate.return_value = (_VALID_JSON_RESPONSE, False, "")
+        client.chat.return_value = (_VALID_JSON_RESPONSE, False, "")
         client.parse_json_response.return_value = (json.loads(_VALID_JSON_RESPONSE), False, "")
 
         s = SegmentSummarizer(
@@ -308,9 +308,9 @@ class TestSummarizeConversationSegments:
             from_segment=2,
         )
 
-        prompt_used = client.generate.call_args_list[0][0][0]
-        assert "Pre-existing summary 0." in prompt_used
-        assert "Pre-existing summary 1." in prompt_used
+        user_content = client.chat.call_args_list[0][0][1]
+        assert "Pre-existing summary 0." in user_content
+        assert "Pre-existing summary 1." in user_content
 
 
 # ---------------------------------------------------------------------------

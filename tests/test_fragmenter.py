@@ -53,7 +53,7 @@ def _make_extract(seg_idx: int, conversation_id: str = "test-conv") -> Dict[str,
 def _make_fragmenter(prompts_dir: str) -> Fragmenter:
     client = MagicMock()
     client.model = "gemma4:31b"
-    client.generate.return_value = (_FRAGMENTS_RESPONSE, False, "")
+    client.chat.return_value = (_FRAGMENTS_RESPONSE, False, "")
     client.parse_json_response.return_value = (
         json.loads(_FRAGMENTS_RESPONSE), False, ""
     )
@@ -68,7 +68,7 @@ def _make_fragmenter(prompts_dir: str) -> Fragmenter:
 @pytest.fixture()
 def prompts_dir(tmp_path) -> str:
     (tmp_path / "fragment_extract.md").write_text(
-        "Fragment these statements:\n\n{statements_text}", encoding="utf-8"
+        "Fragment these statements into coherent groups.\n---USER---\n{statements_text}", encoding="utf-8"
     )
     return str(tmp_path)
 
@@ -137,8 +137,8 @@ class TestFragmentExtract:
             extract_data=_make_extract(0),
             fragment_dir=tmp_path / "fragments",
         )
-        prompt = fragmenter._ollama.generate.call_args[0][0]
-        assert "We need an embedding model." in prompt
+        user_content = fragmenter._ollama.chat.call_args[0][1]
+        assert "We need an embedding model." in user_content
 
     def test_empty_statements_returns_empty(self, prompts_dir, tmp_path):
         fragmenter = _make_fragmenter(prompts_dir)
@@ -149,15 +149,15 @@ class TestFragmentExtract:
             fragment_dir=tmp_path / "fragments",
         )
         assert results == []
-        fragmenter._ollama.generate.assert_not_called()
+        fragmenter._ollama.chat.assert_not_called()
 
     def test_degraded_sets_status(self, tmp_path):
         p = tmp_path / "prompts"
         p.mkdir()
-        (p / "fragment_extract.md").write_text("{statements_text}", encoding="utf-8")
+        (p / "fragment_extract.md").write_text("Fragment statements.\n---USER---\n{statements_text}", encoding="utf-8")
         client = MagicMock()
         client.model = "gemma4:31b"
-        client.generate.return_value = (_FRAGMENTS_RESPONSE, False, "")
+        client.chat.return_value = (_FRAGMENTS_RESPONSE, False, "")
         client.parse_json_response.return_value = (
             json.loads(_FRAGMENTS_RESPONSE), True, "Stripped code fences"
         )
@@ -205,7 +205,7 @@ class TestFragmentConversationExtracts:
         # 3 segments × 2 fragments each
         assert len(results) == 6
         assert skipped == []
-        assert fragmenter._ollama.generate.call_count == 3
+        assert fragmenter._ollama.chat.call_count == 3
 
     def test_skips_existing_without_force(self, prompts_dir, tmp_path):
         fragmenter = _make_fragmenter(prompts_dir)
@@ -229,7 +229,7 @@ class TestFragmentConversationExtracts:
             output_root=output_root,
         )
         # Only segment 1 should be processed
-        assert fragmenter._ollama.generate.call_count == 1
+        assert fragmenter._ollama.chat.call_count == 1
 
     def test_force_reprocesses_all(self, prompts_dir, tmp_path):
         fragmenter = _make_fragmenter(prompts_dir)
@@ -253,4 +253,4 @@ class TestFragmentConversationExtracts:
             output_root=output_root,
             force=True,
         )
-        assert fragmenter._ollama.generate.call_count == 2
+        assert fragmenter._ollama.chat.call_count == 2
