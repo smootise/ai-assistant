@@ -202,7 +202,7 @@ Group extracted statements into topically coherent sub-units for semantic retrie
 **Resume-safe:** if fragments already exist for a segment, it is skipped unless `--force` is set.
 
 ```bash
-python -m jarvis.cli fragment-extracts chatgpt --conversation-id <id> --persist
+python -m jarvis.cli fragment-extracts chatgpt --conversation-id <id> --persist --embed
 ```
 
 | Flag | Default | Description |
@@ -210,7 +210,8 @@ python -m jarvis.cli fragment-extracts chatgpt --conversation-id <id> --persist
 | `--conversation-id` | *(required)* | Conversation ID |
 | `--from-segment` | `0` | Start at this segment index, inclusive |
 | `--to-segment` | last | Stop after this segment index, inclusive |
-| `--persist` | off | Save to SQLite and index in Qdrant |
+| `--persist` | off | Persist fragments to SQLite (source of truth) |
+| `--embed` | off | Embed and index fragments in Qdrant (requires `--persist`) |
 | `--force` | off | Wipe existing fragment files and records, then re-run |
 
 **Prerequisites:** extracts must exist (`extract-segments` must have run first).

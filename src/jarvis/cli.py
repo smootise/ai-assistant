@@ -817,14 +817,19 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
             return 0
 
         if args.persist:
-            logger.info("Persisting fragments to SQLite + Qdrant...")
+            if args.embed:
+                logger.info("Persisting fragments to SQLite and indexing in Qdrant...")
+            else:
+                logger.info("Persisting fragments to SQLite...")
             memory = _build_memory_layer(config)
             persisted = 0
             for output_dir, output_data in results:
                 if memory.store.get_by_source_file(output_data["source_file"]):
                     logger.debug(f"Skipping already-persisted: {output_data['source_file']}")
                     continue
-                memory.persist(output_data=output_data, output_dir=output_dir)
+                summary_id = memory.persist_sqlite(output_data=output_data, output_dir=output_dir)
+                if args.embed:
+                    memory.index_in_qdrant(summary_id=summary_id, output_data=output_data)
                 persisted += 1
             skipped_count = len(results) - persisted
             logger.info(f"Persisted {persisted} fragments ({skipped_count} already existed)")
@@ -1071,7 +1076,11 @@ def main() -> int:
     )
     fe_chatgpt.add_argument(
         "--persist", action="store_true", default=False,
-        help="Persist fragments to SQLite and index in Qdrant",
+        help="Persist fragments to SQLite (source of truth). Does not index Qdrant.",
+    )
+    fe_chatgpt.add_argument(
+        "--embed", action="store_true", default=False,
+        help="Embed and index persisted fragments in Qdrant. Requires --persist.",
     )
     fe_chatgpt.add_argument(
         "--force", action="store_true", default=False,
@@ -1080,6 +1089,15 @@ def main() -> int:
 
     # -- parse & dispatch -------------------------------------------------
     args = parser.parse_args()
+
+    if (
+        getattr(args, "command", None) == "fragment-extracts"
+        and getattr(args, "embed", False)
+        and not getattr(args, "persist", False)
+    ):
+        parser.error(
+            "--embed requires --persist (Qdrant indexing can only be done for persisted fragments)"
+        )
 
     if not args.command:
         parser.print_help()

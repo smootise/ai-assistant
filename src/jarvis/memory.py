@@ -41,19 +41,12 @@ class MemoryLayer:
         self.vector_store = vector_store
         self.embedder = embedder
 
-    def persist(
+    def persist_sqlite(
         self,
         output_data: Dict[str, Any],
         output_dir: Optional[Path] = None,
     ) -> int:
-        """Persist a summary to SQLite and index it in Qdrant.
-
-        Steps:
-        1. Insert summary record into SQLite → get summary_id.
-        2. Build canonical embedding text from semantic fields.
-        3. Embed with Ollama.
-        4. Upsert vector into Qdrant with payload metadata.
-        5. Update SQLite row with qdrant_point_id and embedded_at.
+        """Insert a summary record into SQLite and return its summary_id.
 
         Args:
             output_data: The summarization output dict.
@@ -61,14 +54,10 @@ class MemoryLayer:
                         artifact file paths stored in SQLite).
 
         Returns:
-            SQLite summary_id of the persisted record.
-
-        Raises:
-            RuntimeError: On any hard failure in embedding or Qdrant upsert.
+            SQLite summary_id of the inserted record.
         """
         source_file = output_data.get("source_file", "")
 
-        # Derive artifact paths from the output dir
         output_json_path: Optional[str] = None
         output_md_path: Optional[str] = None
         if output_dir is not None:
@@ -76,25 +65,36 @@ class MemoryLayer:
             output_json_path = str(output_dir / f"{stem}.json")
             output_md_path = str(output_dir / f"{stem}.md")
 
-        # Step 1 — insert into SQLite
         summary_id = self.store.insert_summary(
             output_data=output_data,
             output_json_path=output_json_path,
             output_md_path=output_md_path,
         )
+        logger.debug(f"SQLite insert summary_id={summary_id} (source={source_file})")
+        return summary_id
 
-        # Step 2 — build canonical text
+    def index_in_qdrant(self, summary_id: int, output_data: Dict[str, Any]) -> str:
+        """Embed output_data and upsert into Qdrant; write back point ID to SQLite.
+
+        Args:
+            summary_id: SQLite summary_id of an already-persisted record.
+            output_data: The summarization output dict (used to build embedding text).
+
+        Returns:
+            Qdrant point_id of the upserted vector.
+
+        Raises:
+            RuntimeError: On embedding or Qdrant upsert failure.
+        """
         embedding_text = build_embedding_text(output_data)
         logger.debug(f"Embedding text ({len(embedding_text)} chars):\n{embedding_text[:200]}…")
 
-        # Step 3 — embed
         try:
             vector = self.embedder.embed(embedding_text)
         except (ConnectionError, RuntimeError) as e:
             logger.error(f"Embedding failed for summary_id={summary_id}: {e}")
             raise
 
-        # Step 4 — upsert into Qdrant
         payload = {
             "source_file": output_data.get("source_file"),
             "source_kind": output_data.get("source_kind"),
@@ -116,15 +116,29 @@ class MemoryLayer:
             logger.error(f"Qdrant upsert failed for summary_id={summary_id}: {e}")
             raise
 
-        # Step 5 — write back Qdrant point ID and embedding metadata to SQLite
         self.store.update_embedding(
             summary_id=summary_id,
             qdrant_point_id=point_id,
             embedding_model=self.embedder.model,
         )
+        logger.info(f"Indexed summary_id={summary_id} in Qdrant (point={point_id})")
+        return point_id
 
-        logger.info(
-            f"Persisted summary_id={summary_id} "
-            f"(source={source_file}, qdrant_point={point_id})"
-        )
+    def persist(
+        self,
+        output_data: Dict[str, Any],
+        output_dir: Optional[Path] = None,
+    ) -> int:
+        """Persist a summary to SQLite and index it in Qdrant.
+
+        Thin wrapper around persist_sqlite + index_in_qdrant. All existing
+        callers (summarize, summarize-segments, detect-topics) use this.
+
+        Returns:
+            SQLite summary_id of the persisted record.
+        """
+        summary_id = self.persist_sqlite(output_data=output_data, output_dir=output_dir)
+        self.index_in_qdrant(summary_id=summary_id, output_data=output_data)
+        source_file = output_data.get("source_file", "")
+        logger.info(f"Persisted summary_id={summary_id} (source={source_file})")
         return summary_id
