@@ -395,7 +395,7 @@ class SegmentExtractor:
         prompt_path = self._prompts_dir / "describe_archived_block.md"
         if not prompt_path.exists():
             logger.warning(
-                f"describe_archived_block.md prompt not found — skipping archival descriptions"
+                "describe_archived_block.md prompt not found — skipping archival descriptions"
             )
             return blocks
 

@@ -170,7 +170,10 @@ class ConversationSummarizer:
         transcript = self._format_transcript(conversation)
         user_content = f"---BEGIN TRANSCRIPT---\n{transcript}\n---END TRANSCRIPT---"
 
-        logger.debug(f"Built system prompt ({len(system_prompt)} chars) + user content ({len(user_content)} chars)")
+        logger.debug(
+            f"Built system prompt ({len(system_prompt)} chars) + "
+            f"user content ({len(user_content)} chars)"
+        )
         return system_prompt, user_content
 
     def _format_transcript(self, conversation: List[Dict[str, str]]) -> str:

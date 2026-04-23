@@ -151,7 +151,9 @@ class SegmentSummarizer:
         """
         start_time = time.time()
 
-        system_prompt, user_content = self._build_segment_prompt(segment["segment_text"], prior_summaries)
+        system_prompt, user_content = self._build_segment_prompt(
+            segment["segment_text"], prior_summaries
+        )
         raw_response, is_degraded, warning = self.ollama.chat(system_prompt, user_content)
 
         try:

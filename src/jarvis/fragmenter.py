@@ -127,7 +127,10 @@ class Fragmenter:
                 retries=retries,
             )
             if not fragments:
-                skipped.append((extract_data["segment_id"], "fragmentation produced no output (timeout or parse failure)"))
+                skipped.append((
+                    extract_data["segment_id"],
+                    "fragmentation produced no output (timeout or parse failure)",
+                ))
             results.extend(fragments)
 
         logger.info(
@@ -170,7 +173,9 @@ class Fragmenter:
         skip_reason: Optional[str] = None
         for attempt in range(retries + 1):
             try:
-                raw_response, gen_degraded, gen_warning = self._ollama.chat(system_prompt, user_content)
+                raw_response, gen_degraded, gen_warning = self._ollama.chat(
+                    system_prompt, user_content
+                )
             except RuntimeError as e:
                 skip_reason = f"Timeout on attempt {attempt + 1}: {e}"
                 logger.error(
@@ -187,7 +192,8 @@ class Fragmenter:
                 break
             except ValueError as e:
                 logger.debug(
-                    f"Segment {extract_data.get('segment_id')} raw model output (attempt {attempt + 1}):\n{raw_response}"
+                    f"Segment {extract_data.get('segment_id')} raw model output "
+                    f"(attempt {attempt + 1}):\n{raw_response}"
                 )
                 if attempt < retries:
                     logger.warning(

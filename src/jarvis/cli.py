@@ -295,7 +295,9 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
             print()
 
         logger.info(f"Generating answer with model={config['local_model_name']}...")
-        raw, is_degraded, warning = ollama.chat(system_prompt, args.query, temperature=args.temperature)
+        raw, is_degraded, warning = ollama.chat(
+            system_prompt, args.query, temperature=args.temperature
+        )
 
         if is_degraded:
             logger.warning(f"Degraded response: {warning}")
@@ -485,7 +487,10 @@ def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
                     continue
                 memory.persist(output_data=output_data, output_dir=output_dir)
                 persisted += 1
-            logger.info(f"Persisted {persisted} segment summaries ({len(results) - persisted} already existed)")
+            skipped_count = len(results) - persisted
+            logger.info(
+                f"Persisted {persisted} segment summaries ({skipped_count} already existed)"
+            )
 
         print(f"\nSegment summarization complete for: {args.conversation_id}")
         print(f"  Segments processed: {len(results)} ({new_count} new, "
@@ -602,7 +607,8 @@ def cmd_detect_topics(args: argparse.Namespace, config: dict) -> int:
                     continue
                 memory.persist(output_data=output_data, output_dir=output_dir)
                 persisted += 1
-            logger.info(f"Persisted {persisted} topic summaries ({len(results) - persisted} already existed)")
+            skipped_count = len(results) - persisted
+            logger.info(f"Persisted {persisted} topic summaries ({skipped_count} already existed)")
 
         print(f"\nTopic detection complete for: {args.conversation_id}")
         print(f"  Topics detected   : {len(results)}")
@@ -660,10 +666,15 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
                 if f.name != "pending_tail.json"
             )
             effective_from = from_segment
-            effective_to = to_segment if to_segment is not None else (max(all_seg_indices) if all_seg_indices else from_segment)
+            effective_to = (
+                to_segment if to_segment is not None
+                else (max(all_seg_indices) if all_seg_indices else from_segment)
+            )
             forced_indices = list(range(effective_from, effective_to + 1))
 
-            point_ids = store.delete_extract_rows(args.conversation_id, segment_indices=forced_indices)
+            point_ids = store.delete_extract_rows(
+                args.conversation_id, segment_indices=forced_indices
+            )
             if point_ids:
                 try:
                     vs = VectorStore(host=config["qdrant_host"], port=config["qdrant_port"])
@@ -679,7 +690,8 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
                     if m.exists():
                         m.unlink()
             logger.info(
-                f"--force: wiped extracts {effective_from}–{effective_to} for {args.conversation_id}"
+                f"--force: wiped extracts {effective_from}–{effective_to} "
+                f"for {args.conversation_id}"
             )
 
         ollama_client = OllamaClient(
@@ -709,7 +721,10 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
             return 0
 
         new_count = sum(1 for _, d in results if d.get("latency_ms", 0) > 0)
-        skipped = [(d["segment_id"], d.get("warnings", [])) for _, d in results if d.get("status") == "skipped"]
+        skipped = [
+            (d["segment_id"], d.get("warnings", []))
+            for _, d in results if d.get("status") == "skipped"
+        ]
 
         print(f"\nExtraction complete for: {args.conversation_id}")
         print(f"  Segments processed: {len(results)} ({new_count} new, "
@@ -811,7 +826,8 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
                     continue
                 memory.persist(output_data=output_data, output_dir=output_dir)
                 persisted += 1
-            logger.info(f"Persisted {persisted} fragments ({len(results) - persisted} already existed)")
+            skipped_count = len(results) - persisted
+            logger.info(f"Persisted {persisted} fragments ({skipped_count} already existed)")
 
         print(f"\nFragmentation complete for: {args.conversation_id}")
         print(f"  Fragments produced: {len(results)}")
@@ -884,7 +900,7 @@ def main() -> int:
     )
     retrieve_parser.add_argument(
         "--min-score", type=float, default=0.50, dest="min_score",
-        help="Score threshold — results above this are always included up to --top-k (default: 0.50)",
+        help="Score threshold — results above this are always included up to --top-k (default: 0.50)",  # noqa: E501
     )
 
     # -- answer -----------------------------------------------------------

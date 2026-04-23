@@ -82,10 +82,11 @@ def detect_blocks(segment_text: str) -> List[ArchivedBlock]:
         _add(m.start(), m.end(), "fenced_code", m.group(0))
 
     # --- JSON-schema-like: "type": "object" or "properties": { with ≥ 8 lines ---
-    for m in re.finditer(
-        r'(?s)(\{[^{}]{0,200}"type"\s*:\s*"object".*?\}|\{[^{}]{0,200}"properties"\s*:\s*\{.*?\}\s*\})',
-        segment_text,
-    ):
+    _json_schema_re = (
+        r'(?s)(\{[^{}]{0,200}"type"\s*:\s*"object".*?\}'
+        r'|\{[^{}]{0,200}"properties"\s*:\s*\{.*?\}\s*\})'
+    )
+    for m in re.finditer(_json_schema_re, segment_text):
         raw = m.group(0)
         if raw.count("\n") + 1 >= 8:
             _add(m.start(), m.end(), "json_schema_like", raw)
@@ -223,7 +224,7 @@ def _detect_xml_blocks(
 
     def _flush(run_lines: List[str], run_start: int) -> None:
         raw = "".join(run_lines)
-        xml_count = sum(1 for l in run_lines if xml_tag.search(l))
+        xml_count = sum(1 for line in run_lines if xml_tag.search(line))
         if len(run_lines) >= 4 and xml_count / len(run_lines) >= 0.6:
             add(run_start, run_start + len(raw), "xml_like", raw)
 
@@ -248,30 +249,14 @@ def _detect_prompt_blocks(
 ) -> None:
     """Detect large blocks that look like embedded prompts."""
     lines = segment_text.splitlines(keepends=True)
-    # Sliding window: look for ≥ 20-line or ≥ 1500-char contiguous regions
-    # containing ≥ 2 prompt tokens OR ≥ 3 markdown headings.
-    window: List[str] = []
-    window_start_char = 0
-    char_pos = 0
 
     def _score(window: List[str]) -> int:
         text = "".join(window)
         token_hits = sum(1 for t in _PROMPT_TOKENS if t in text)
-        heading_hits = sum(1 for l in window if re.match(r"^#{1,3}\s+\w", l))
+        heading_hits = sum(1 for line in window if re.match(r"^#{1,3}\s+\w", line))
         score = token_hits + (1 if heading_hits >= 3 else 0)
         return score
 
-    def _flush_window(window: List[str], start: int) -> None:
-        if not window:
-            return
-        raw = "".join(window)
-        if (len(window) >= 20 or len(raw) >= 1500) and _score(window) >= 2:
-            add(start, start + len(raw), "prompt_like", raw)
-
-    # Group lines into paragraphs separated by blank lines for better window management.
-    # Actually: scan for any 20-line run (or 1500-char run) with the right token density.
-    # Simple approach: emit non-overlapping candidate windows.
-    i = 0
     char_pos = 0
     line_char_offsets = []
     for line in lines:
