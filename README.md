@@ -173,6 +173,10 @@ Lower threshold → fewer, broader topics. Higher → more, finer-grained topics
 
 Extract all informational content from each segment as a clean list of attributed statements (speaker + text). This is the first step of the extract→fragment retrieval pipeline.
 
+**Hardened extraction:** segments with embedded code blocks, large prompts, or other structured content are preprocessed deterministically before the LLM call. Risky blocks are replaced with labelled placeholders (`[ARCHIVED_BLOCK_N]`) and an inventory is appended; the raw content is stored in the extract for traceability but never sent to the model. This prevents model drift on code-heavy or prompt-heavy segments.
+
+**3-step retry ladder:** if attempt 1 (inventory placeholders) fails validation, attempt 2 runs archival descriptions of each risky block and retries. If attempt 2 also fails, attempt 3 extracts each message independently and merges results in order.
+
 **Resume-safe:** if an extract already exists for a segment, the LLM call is skipped. Re-run after an interruption to pick up where you left off.
 
 ```bash

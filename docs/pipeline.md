@@ -153,6 +153,112 @@ All segment summary fields, plus:
 
 ---
 
+## Step 4 — Extract Segments
+
+```bash
+python -m jarvis.cli extract-segments chatgpt \
+  --conversation-id <id>
+```
+
+Extracts all informational content from each segment as a clean list of attributed statements
+(`speaker` + `text`). This is the first step of the extract→fragment retrieval pipeline.
+
+### Hardening: three views of a segment
+
+The extractor maintains strict separation between three representations:
+
+| View | Where it lives | Used for |
+|---|---|---|
+| **Source text** | `inbox/.../segments/segment_NNN.json` | Audit / citation — never changed |
+| **Working text** | Built in memory for LLM input | Extraction calls — contains placeholders |
+| **Retrieval text** | `OUTPUTS/.../fragments/.../fragment_NNN.json` (`text` field) | Qdrant embedding — no raw blobs |
+
+### Risky block detection
+
+Before any LLM call, the segment text is scanned deterministically for risky embedded blocks:
+
+- **Fenced code blocks** — triple-backtick or tilde fences
+- **Prompt-like blocks** — sustained blocks with ≥ 2 prompt-style tokens ("You are", "IMPORTANT:", "Return ONLY", "---USER---", etc.) or high heading density
+- **XML-like blocks** — runs of lines where ≥ 60 % match XML tag patterns
+- **JSON-schema-like blocks** — blocks with `"type": "object"` or `"properties": {` and ≥ 8 lines
+- **Long imperative blocks** — ≥ 15-line runs with ≥ 5 lines starting with imperative verbs
+
+Blocks below 400 chars *and* below 6 lines are not archived.
+
+Each detected block is replaced with a placeholder (`[ARCHIVED_BLOCK_1]`, etc.) in the working
+text, and a deterministic inventory is appended:
+
+```
+---ARCHIVED BLOCKS---
+[ARCHIVED_BLOCK_1] kind=fenced_code speaker=user lines=42 chars=1873
+```
+
+### 3-step retry ladder
+
+Attempts always use materially different requests — no re-sending the same request:
+
+| Attempt | Input to LLM | Trigger |
+|---|---|---|
+| 1 | Working text with placeholders + deterministic inventory | Always |
+| 2 | Working text with placeholders + archival block descriptions (one LLM call per block to describe it compactly) | Attempt 1 fails validation |
+| 3 | Per-message extraction — each speaker message extracted independently, merged in order | Attempt 2 fails validation |
+
+### Drift detection and validation
+
+Each LLM response is validated before acceptance. A response is rejected (and the next
+attempt triggered) if any of these hold:
+
+- Unknown top-level keys (only `statements` is allowed)
+- Any statement with `speaker` not in `{"user", "assistant"}`
+- Statement count exceeds `max(40, line_count // 2)` — implausibly high
+- Any 4-gram appears ≥ 5 times across all statements — repetitive drift
+- Zero statements extracted from a non-empty segment (> 200 chars)
+
+After all 3 attempts fail validation, the extract receives `status: "partial"` with warnings.
+
+### Output layout
+
+```
+OUTPUTS/<conversation_id>/extracts/
+  extract_000.json    # statements + archived_blocks inventory + extraction_attempt
+  extract_000.md
+  extract_001.json
+  extract_001.md
+  ...
+```
+
+### What each extract contains
+
+| Field | Description |
+|---|---|
+| `statements` | List of `{statement_id, statement_index, speaker, text, ...}` — per-statement metadata injected deterministically |
+| `archived_blocks` | List of detected risky blocks including `raw_text` for traceability |
+| `extraction_attempt` | Which attempt (1/2/3) produced the final output |
+| `status` | `ok`, `degraded`, `partial`, or `skipped` |
+
+---
+
+## Step 5 — Fragment Extracts
+
+```bash
+python -m jarvis.cli fragment-extracts chatgpt \
+  --conversation-id <id> \
+  --persist
+```
+
+Groups extracted statements into topically coherent sub-units for retrieval. Each fragment
+is embedded and stored in Qdrant.
+
+**Retrieval-clean text:** fragment `text` (the field Qdrant embeds) is built from the fragment
+title + cleaned statement lines + compact archival notes for any archived block references.
+Raw block content (code, prompts, etc.) is never included in the retrieval text.
+
+**Traceability:** each fragment records `statement_start_index` / `statement_end_index`
+pointing back to the exact statement range in the extract record. The extract record holds
+the full `archived_blocks` list including `raw_text` for citation and debugging.
+
+---
+
 ## Retrieval
 
 After persisting segment and topic summaries, query across all data:

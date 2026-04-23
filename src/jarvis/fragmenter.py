@@ -6,6 +6,7 @@ coherent fragments. Each fragment is an independent retrieval unit.
 
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -284,14 +285,69 @@ class Fragmenter:
         warning: str,
     ) -> Dict[str, Any]:
         frag_statements = raw_fragment.get("statements", [])
-        text = "\n".join(
-            f"{s['speaker']}: {s['text']}" for s in frag_statements
-        )
+        title = raw_fragment.get("title", "")
+
+        # Build a lookup from [ARCHIVED_BLOCK_N] token → brief_description.
+        # Keys include brackets to match what re.sub group(0) returns.
+        archived_lookup: Dict[str, str] = {}
+        for blk in extract_data.get("archived_blocks", []):
+            bid = blk.get("block_id", "")           # e.g. "ARCHIVED_BLOCK_1"
+            token = f"[{bid}]"                       # e.g. "[ARCHIVED_BLOCK_1]"
+            desc = blk.get("archival_description") or {}
+            brief = desc.get("brief_description") or (
+                f"{blk.get('block_kind', 'block')} "
+                f"({blk.get('line_count', '?')} lines)"
+            )
+            archived_lookup[token] = brief
+
+        # Build retrieval-safe text: replace any [ARCHIVED_BLOCK_N] tokens with
+        # their archival description; never include raw block content.
+        def _clean_stmt_text(text: str) -> str:
+            def _replace(m: re.Match) -> str:
+                return archived_lookup.get(m.group(0), m.group(0))
+            return re.sub(r"\[ARCHIVED_BLOCK_\d+\]", _replace, text)
+
+        cleaned_lines = [
+            f"{s.get('speaker', '?')}: {_clean_stmt_text(s.get('text', ''))}"
+            for s in frag_statements
+        ]
+
+        # Collect any archival block descriptions referenced by this fragment's statements
+        referenced_tokens = set()
+        for s in frag_statements:
+            for m in re.finditer(r"\[ARCHIVED_BLOCK_\d+\]", s.get("text", "")):
+                referenced_tokens.add(m.group(0))
+
+        archival_notes = [
+            f"[Archived: {archived_lookup[token]}]"
+            for token in sorted(referenced_tokens)
+            if token in archived_lookup
+        ]
+
+        text_parts = []
+        if title:
+            text_parts.append(title)
+        if cleaned_lines:
+            text_parts.append("\n".join(cleaned_lines))
+        if archival_notes:
+            text_parts.append("\n".join(archival_notes))
+        text = "\n\n".join(text_parts)
+
+        # Compute statement index span for traceability back to the extract
+        stmt_indices = [
+            s.get("statement_index")
+            for s in frag_statements
+            if isinstance(s.get("statement_index"), int)
+        ]
+        statement_start_index = min(stmt_indices) if stmt_indices else None
+        statement_end_index = max(stmt_indices) if stmt_indices else None
 
         output: Dict[str, Any] = {
             "text": text,
-            "title": raw_fragment.get("title", ""),
+            "title": title,
             "statements": frag_statements,
+            "statement_start_index": statement_start_index,
+            "statement_end_index": statement_end_index,
             "source_file": f"segment_{seg_idx:03d}/fragment_{frag_idx:03d}.json",
             "source_kind": "ai_chat_fragment",
             "segment_id": extract_data["segment_id"],

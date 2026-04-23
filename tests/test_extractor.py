@@ -34,7 +34,7 @@ def _make_segment(index: int, conversation_id: str = "test-conv") -> Dict[str, A
 def _make_extractor(prompts_dir: str) -> SegmentExtractor:
     client = MagicMock()
     client.model = "gemma4:31b"
-    client.chat.return_value = (_VALID_RESPONSE, False, "")
+    client.generate_json.return_value = (_VALID_RESPONSE, False, "")
     client.parse_json_response.return_value = (json.loads(_VALID_RESPONSE), False, "")
     return SegmentExtractor(
         ollama_client=client,
@@ -92,8 +92,8 @@ class TestExtractSegment:
         extractor = _make_extractor(prompts_dir)
         segment = _make_segment(0)
         extractor.extract_segment(segment=segment, extract_dir=tmp_path / "extracts")
-        user_content = extractor._ollama.chat.call_args[0][1]
-        assert segment["segment_text"] in user_content
+        prompt_arg = extractor._ollama.generate_json.call_args[0][0]
+        assert segment["segment_text"] in prompt_arg
 
     def test_degraded_response_sets_status(self, tmp_path):
         p = tmp_path / "prompts"
@@ -101,7 +101,7 @@ class TestExtractSegment:
         (p / "extract_segment.md").write_text("Extract statements.\n---USER---\n{segment_text}", encoding="utf-8")
         client = MagicMock()
         client.model = "gemma4:31b"
-        client.chat.return_value = (_VALID_RESPONSE, False, "")
+        client.generate_json.return_value = (_VALID_RESPONSE, False, "")
         client.parse_json_response.return_value = (
             json.loads(_VALID_RESPONSE), True, "Stripped code fences"
         )
@@ -152,7 +152,7 @@ class TestExtractConversationSegments:
             output_root=tmp_path / "OUTPUTS",
         )
         assert len(results) == 3
-        assert extractor._ollama.chat.call_count == 3
+        assert extractor._ollama.generate_json.call_count == 3
 
     def test_skips_existing_without_force(self, prompts_dir, tmp_path):
         extractor = _make_extractor(prompts_dir)
@@ -175,7 +175,7 @@ class TestExtractConversationSegments:
             output_root=output_root,
         )
         assert len(results) == 2
-        assert extractor._ollama.chat.call_count == 1
+        assert extractor._ollama.generate_json.call_count == 1
 
     def test_force_overwrites(self, prompts_dir, tmp_path):
         extractor = _make_extractor(prompts_dir)
@@ -198,7 +198,7 @@ class TestExtractConversationSegments:
             output_root=output_root,
             force=True,
         )
-        assert extractor._ollama.chat.call_count == 2
+        assert extractor._ollama.generate_json.call_count == 2
 
     def test_skips_pending_tail(self, prompts_dir, tmp_path):
         extractor = _make_extractor(prompts_dir)
@@ -212,4 +212,4 @@ class TestExtractConversationSegments:
             output_root=tmp_path / "OUTPUTS",
         )
         assert len(results) == 1
-        assert extractor._ollama.chat.call_count == 1
+        assert extractor._ollama.generate_json.call_count == 1

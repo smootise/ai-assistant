@@ -141,6 +141,69 @@ class OllamaClient:
 
         return raw_response, False, ""
 
+    def generate_json(
+        self,
+        prompt: str,
+        schema: Dict[str, Any],
+        temperature: float = 0.1,
+        keep_alive: str = "30m",
+    ) -> Tuple[str, bool, str]:
+        """Send a structured-output prompt to /api/generate with a JSON schema.
+
+        Uses raw=True so the model receives the full prompt verbatim (no chat
+        template applied). The format parameter enforces the response schema.
+
+        Args:
+            prompt: Full prompt text (system + user concatenated by caller).
+            schema: JSON-schema dict passed to Ollama's `format` field.
+            temperature: Sampling temperature. Default 0.1 for deterministic extraction.
+            keep_alive: How long Ollama keeps the model loaded. Default "30m".
+
+        Returns:
+            Tuple of (response_text, is_degraded, warning_message).
+
+        Raises:
+            ConnectionError: If Ollama server is unreachable.
+            RuntimeError: If Ollama returns an error or times out.
+        """
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "raw": True,
+            "keep_alive": keep_alive,
+            "format": schema,
+            "options": {"temperature": temperature},
+        }
+
+        logger.info(f"Sending generate_json request to Ollama (model={self.model})...")
+        logger.debug(f"Prompt length: {len(prompt)} chars")
+
+        try:
+            response = requests.post(self.generate_url, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Cannot connect to Ollama at {self.base_url}")
+            raise ConnectionError(
+                f"Ollama server unreachable at {self.base_url}. "
+                "Is Ollama running? (Try: ollama serve)"
+            ) from e
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Ollama generate_json request timed out after {self.timeout}s")
+            raise RuntimeError(f"Ollama inference timed out after {self.timeout}s") from e
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ollama generate_json request failed: {e}")
+            raise RuntimeError(f"Ollama request failed: {e}") from e
+
+        result = response.json()
+        if "error" in result:
+            raise RuntimeError(f"Ollama error: {result['error']}")
+
+        raw_response = result.get("response", "").strip()
+        logger.debug(f"Raw response length: {len(raw_response)} chars")
+
+        return raw_response, False, ""
+
     def parse_json_response(self, raw_response: str) -> Tuple[Dict[str, Any], bool, str]:
         """Parse JSON from model response with recovery logic.
 

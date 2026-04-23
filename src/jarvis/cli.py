@@ -701,7 +701,7 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
             from_segment=from_segment,
             to_segment=to_segment,
             force=args.force,
-            retries=args.retries,
+            retries=getattr(args, "retries", 1),
         )
 
         if not results:
@@ -794,7 +794,7 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
             from_segment=from_segment,
             to_segment=to_segment,
             force=args.force,
-            retries=args.retries,
+            retries=getattr(args, "retries", 1),
         )
 
         if not results and not skipped_segments:
