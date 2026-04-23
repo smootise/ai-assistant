@@ -110,6 +110,7 @@ class SegmentSummarizer:
                 )
                 with open(existing_path, encoding="utf-8") as f:
                     output_data = json.load(f)
+                output_data["_from_disk"] = True
                 rolling_summaries.append(output_data.get("summary", ""))
                 results.append((segment_summaries_dir, output_data))
                 continue

@@ -474,7 +474,7 @@ def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
             print("No segments to summarize in the specified range.")
             return 0
 
-        new_count = sum(1 for _, d in results if d.get("latency_ms", 0) > 0)
+        new_count = sum(1 for _, d in results if not d.get("_from_disk"))
         total_latency = sum(d.get("latency_ms", 0) for _, d in results)
 
         if args.persist:
@@ -720,7 +720,7 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
             print("No segments to extract in the specified range.")
             return 0
 
-        new_count = sum(1 for _, d in results if d.get("latency_ms", 0) > 0)
+        new_count = sum(1 for _, d in results if not d.get("_from_disk"))
         skipped = [
             (d["segment_id"], d.get("warnings", []))
             for _, d in results if d.get("status") == "skipped"

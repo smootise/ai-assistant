@@ -148,6 +148,7 @@ class SegmentExtractor:
                         f"Skipping segment {seg_idx} ({segment['segment_id']}) "
                         f"— extract already exists"
                     )
+                    output_data["_from_disk"] = True
                     results.append((extract_dir, output_data))
                     continue
 
