@@ -824,8 +824,18 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
             memory = _build_memory_layer(config)
             persisted = 0
             for output_dir, output_data in results:
-                if memory.store.get_by_source_file(output_data["source_file"]):
-                    logger.debug(f"Skipping already-persisted: {output_data['source_file']}")
+                existing = memory.store.get_by_source_file(output_data["source_file"])
+                if existing:
+                    if args.embed and not existing.get("qdrant_point_id"):
+                        logger.debug(
+                            f"Already in SQLite, indexing in Qdrant: {output_data['source_file']}"
+                        )
+                        memory.index_in_qdrant(
+                            summary_id=existing["summary_id"], output_data=output_data
+                        )
+                        persisted += 1
+                    else:
+                        logger.debug(f"Skipping already-persisted: {output_data['source_file']}")
                     continue
                 summary_id = memory.persist_sqlite(output_data=output_data, output_dir=output_dir)
                 if args.embed:

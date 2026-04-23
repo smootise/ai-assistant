@@ -167,8 +167,9 @@ class TestPersistOnly:
                 results, skipped
             )
             mock_memory = MagicMock()
-            # Both fragments already in DB
-            mock_memory.store.get_by_source_file.return_value = {"summary_id": 99}
+            mock_memory.store.get_by_source_file.return_value = {
+                "summary_id": 99, "qdrant_point_id": "abc-123"
+            }
             mock_build.return_value = mock_memory
 
             rc = cmd_fragment_extracts(args, config)
@@ -210,6 +211,60 @@ class TestPersistAndEmbed:
         _, out1 = results[1]
         mock_memory.index_in_qdrant.assert_any_call(summary_id=10, output_data=out0)
         mock_memory.index_in_qdrant.assert_any_call(summary_id=11, output_data=out1)
+
+    def test_sqlite_only_then_embed_indexes_existing_rows(self, tmp_path):
+        """--persist --embed on rows already in SQLite but not Qdrant → index only."""
+        config = _make_config(tmp_path)
+        args = _make_args(persist=True, embed=True)
+        results, skipped = _canned_results()
+
+        with (
+            patch("jarvis.cli.Fragmenter") as MockFragmenter,
+            patch("jarvis.cli._build_memory_layer") as mock_build,
+        ):
+            MockFragmenter.return_value.fragment_conversation_extracts.return_value = (
+                results, skipped
+            )
+            mock_memory = MagicMock()
+            # Already in SQLite, not yet in Qdrant
+            mock_memory.store.get_by_source_file.return_value = {
+                "summary_id": 99, "qdrant_point_id": None
+            }
+            mock_build.return_value = mock_memory
+
+            rc = cmd_fragment_extracts(args, config)
+
+        assert rc == 0
+        mock_memory.persist_sqlite.assert_not_called()
+        assert mock_memory.index_in_qdrant.call_count == len(results)
+        mock_memory.index_in_qdrant.assert_any_call(summary_id=99, output_data=results[0][1])
+        mock_memory.index_in_qdrant.assert_any_call(summary_id=99, output_data=results[1][1])
+
+    def test_already_fully_indexed_skipped_on_embed(self, tmp_path):
+        """--persist --embed on rows already in SQLite AND Qdrant → skip entirely."""
+        config = _make_config(tmp_path)
+        args = _make_args(persist=True, embed=True)
+        results, skipped = _canned_results()
+
+        with (
+            patch("jarvis.cli.Fragmenter") as MockFragmenter,
+            patch("jarvis.cli._build_memory_layer") as mock_build,
+        ):
+            MockFragmenter.return_value.fragment_conversation_extracts.return_value = (
+                results, skipped
+            )
+            mock_memory = MagicMock()
+            # Already fully persisted and indexed
+            mock_memory.store.get_by_source_file.return_value = {
+                "summary_id": 99, "qdrant_point_id": "abc-123"
+            }
+            mock_build.return_value = mock_memory
+
+            rc = cmd_fragment_extracts(args, config)
+
+        assert rc == 0
+        mock_memory.persist_sqlite.assert_not_called()
+        mock_memory.index_in_qdrant.assert_not_called()
 
 
 class TestEmbedWithoutPersist:
