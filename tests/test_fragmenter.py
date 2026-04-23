@@ -254,3 +254,122 @@ class TestFragmentConversationExtracts:
             force=True,
         )
         assert fragmenter._ollama.chat.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Batched fragmentation (oversized extracts)
+# ---------------------------------------------------------------------------
+
+
+class TestBatchedFragmentation:
+
+    def _make_large_extract(self, n: int, seg_idx: int = 0) -> Dict[str, Any]:
+        statements = [
+            {"speaker": "assistant" if i % 2 else "user", "text": f"Statement {i}."}
+            for i in range(n)
+        ]
+        return {
+            "source_kind": "ai_chat_extract",
+            "source_file": f"extract_{seg_idx:03d}.json",
+            "segment_id": f"test-conv_s{seg_idx:03d}",
+            "segment_index": seg_idx,
+            "parent_conversation_id": "test-conv",
+            "statements": statements,
+            "archived_blocks": [],
+            "status": "ok",
+            "model": "gemma4:31b",
+            "latency_ms": 100,
+            "created_at": "2026-04-21T00:00:00Z",
+        }
+
+    def test_small_extract_does_not_batch(self, prompts_dir, tmp_path):
+        """Extracts under the threshold go through the normal single-call path."""
+        from jarvis.fragmenter import _MAX_STATEMENTS_PER_BATCH
+        extract = self._make_large_extract(n=_MAX_STATEMENTS_PER_BATCH - 1)
+        client = MagicMock()
+        client.model = "gemma4:31b"
+        client.chat.return_value = (_FRAGMENTS_RESPONSE, False, "")
+        client.parse_json_response.return_value = (json.loads(_FRAGMENTS_RESPONSE), False, "")
+        fragmenter = Fragmenter(
+            ollama_client=client, prompts_dir=prompts_dir,
+            schema="j", schema_version="1",
+        )
+        fragmenter.fragment_extract(extract_data=extract, fragment_dir=tmp_path / "f")
+        assert client.chat.call_count == 1
+
+    def test_large_extract_splits_into_multiple_calls(self, prompts_dir, tmp_path):
+        """Extracts over the threshold are split; one chat call per batch."""
+        from jarvis.fragmenter import _MAX_STATEMENTS_PER_BATCH
+        n = _MAX_STATEMENTS_PER_BATCH + 10
+        extract = self._make_large_extract(n=n)
+        expected_batches = 2  # ceil(n / MAX) = 2
+
+        client = MagicMock()
+        client.model = "gemma4:31b"
+        client.chat.return_value = (_FRAGMENTS_RESPONSE, False, "")
+        client.parse_json_response.return_value = (json.loads(_FRAGMENTS_RESPONSE), False, "")
+        fragmenter = Fragmenter(
+            ollama_client=client, prompts_dir=prompts_dir,
+            schema="j", schema_version="1",
+        )
+        results = fragmenter.fragment_extract(extract_data=extract, fragment_dir=tmp_path / "f")
+        assert client.chat.call_count == expected_batches
+        # Each batch produces 2 fragments → 4 total, with sequential indices
+        assert len(results) == 4
+        indices = [out["fragment_index"] for _, out in results]
+        assert indices == list(range(4))
+
+    def test_batch_prompt_contains_only_its_statements(self, prompts_dir, tmp_path):
+        """Each batch call sends only its own slice of statements."""
+        from jarvis.fragmenter import _MAX_STATEMENTS_PER_BATCH
+        n = _MAX_STATEMENTS_PER_BATCH + 5
+        extract = self._make_large_extract(n=n)
+
+        captured_prompts: List[str] = []
+
+        def _fake_chat(system, user):
+            captured_prompts.append(user)
+            return (_FRAGMENTS_RESPONSE, False, "")
+
+        client = MagicMock()
+        client.model = "gemma4:31b"
+        client.chat.side_effect = _fake_chat
+        client.parse_json_response.return_value = (json.loads(_FRAGMENTS_RESPONSE), False, "")
+        fragmenter = Fragmenter(
+            ollama_client=client, prompts_dir=prompts_dir,
+            schema="j", schema_version="1",
+        )
+        fragmenter.fragment_extract(extract_data=extract, fragment_dir=tmp_path / "f")
+
+        assert len(captured_prompts) == 2
+        # First batch: statements 0..MAX-1; second batch: statements MAX..n-1
+        assert f"Statement {_MAX_STATEMENTS_PER_BATCH - 1}." in captured_prompts[0]
+        assert f"Statement {_MAX_STATEMENTS_PER_BATCH}." in captured_prompts[1]
+        # Statements from batch 2 must not appear in batch 1
+        assert f"Statement {_MAX_STATEMENTS_PER_BATCH}." not in captured_prompts[0]
+
+    def test_failed_batch_does_not_abort_other_batches(self, prompts_dir, tmp_path):
+        """If one batch times out, the other batch's fragments are still returned."""
+        from jarvis.fragmenter import _MAX_STATEMENTS_PER_BATCH
+        n = _MAX_STATEMENTS_PER_BATCH + 5
+        extract = self._make_large_extract(n=n)
+
+        call_count = {"n": 0}
+
+        def _fake_chat(system, user):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("Ollama inference timed out after 600s")
+            return (_FRAGMENTS_RESPONSE, False, "")
+
+        client = MagicMock()
+        client.model = "gemma4:31b"
+        client.chat.side_effect = _fake_chat
+        client.parse_json_response.return_value = (json.loads(_FRAGMENTS_RESPONSE), False, "")
+        fragmenter = Fragmenter(
+            ollama_client=client, prompts_dir=prompts_dir,
+            schema="j", schema_version="1",
+        )
+        results = fragmenter.fragment_extract(extract_data=extract, fragment_dir=tmp_path / "f")
+        # Batch 1 failed, batch 2 succeeded → 2 fragments from batch 2
+        assert len(results) == 2

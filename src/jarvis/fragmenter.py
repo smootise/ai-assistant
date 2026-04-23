@@ -17,6 +17,12 @@ from jarvis.ollama import OllamaClient
 
 logger = logging.getLogger(__name__)
 
+# Statements beyond this threshold are split into batches before sending to
+# the model. The model has to re-emit every statement in its output JSON, so
+# large extracts push the response size past the timeout. 50 is a safe upper
+# bound given observed p95 latency on 38-45 statement extracts.
+_MAX_STATEMENTS_PER_BATCH = 50
+
 
 class Fragmenter:
     """Groups extracted statements into topically coherent retrieval fragments."""
@@ -162,15 +168,66 @@ class Fragmenter:
             )
             return []
 
-        start_time = time.time()
+        # Split oversized extracts into batches to keep model output within
+        # timeout limits (the model re-emits every statement in its response).
+        if len(statements) > _MAX_STATEMENTS_PER_BATCH:
+            return self._fragment_extract_batched(
+                statements=statements,
+                extract_data=extract_data,
+                fragment_dir=fragment_dir,
+                retries=retries,
+            )
 
+        raw_fragments, latency_ms, is_degraded, is_partial, skip_reason, warning = (
+            self._run_fragment_llm(
+                statements=statements,
+                segment_id=extract_data.get("segment_id", ""),
+                retries=retries,
+            )
+        )
+
+        if skip_reason:
+            logger.warning(
+                f"Segment {extract_data.get('segment_id')} fragment skipped: {skip_reason}"
+            )
+            return []
+
+        if not raw_fragments:
+            logger.warning(
+                f"Model returned no fragments for segment {extract_data.get('segment_id')}"
+            )
+            return []
+
+        return self._write_fragments(
+            raw_fragments=raw_fragments,
+            extract_data=extract_data,
+            fragment_dir=fragment_dir,
+            latency_ms=latency_ms,
+            is_degraded=is_degraded,
+            is_partial=is_partial,
+            warning=warning,
+            frag_idx_offset=0,
+        )
+
+    def _run_fragment_llm(
+        self,
+        statements: List[Dict[str, Any]],
+        segment_id: str,
+        retries: int,
+    ) -> Tuple[List[Dict], int, bool, bool, Optional[str], str]:
+        """Call the LLM to fragment a list of statements.
+
+        Returns:
+            (raw_fragments, latency_ms, is_degraded, is_partial, skip_reason, warning)
+        """
+        start_time = time.time()
         system_prompt, user_content = self._build_prompt(statements)
         parsed_data: Dict[str, Any] = {}
         is_degraded = False
         is_partial = False
         warning = ""
-
         skip_reason: Optional[str] = None
+
         for attempt in range(retries + 1):
             try:
                 raw_response, gen_degraded, gen_warning = self._ollama.chat(
@@ -179,8 +236,7 @@ class Fragmenter:
             except RuntimeError as e:
                 skip_reason = f"Timeout on attempt {attempt + 1}: {e}"
                 logger.error(
-                    f"Segment {extract_data.get('segment_id')} fragment timed out "
-                    f"on attempt {attempt + 1} — skipping"
+                    f"Segment {segment_id} fragment timed out on attempt {attempt + 1} — skipping"
                 )
                 break
             try:
@@ -192,63 +248,123 @@ class Fragmenter:
                 break
             except ValueError as e:
                 logger.debug(
-                    f"Segment {extract_data.get('segment_id')} raw model output "
+                    f"Segment {segment_id} raw model output "
                     f"(attempt {attempt + 1}):\n{raw_response}"
                 )
                 if attempt < retries:
                     logger.warning(
-                        f"Segment {extract_data.get('segment_id')} fragment parse failed "
+                        f"Segment {segment_id} fragment parse failed "
                         f"on attempt {attempt + 1} — retrying..."
                     )
                 else:
                     logger.error(
-                        f"Segment {extract_data.get('segment_id')} fragment parse failed "
+                        f"Segment {segment_id} fragment parse failed "
                         f"after {attempt + 1} attempt(s) — skipping"
                     )
                     is_partial = True
                     warning = f"JSON parse failed after {attempt + 1} attempt(s): {e}"
 
         latency_ms = int((time.time() - start_time) * 1000)
-
-        if skip_reason:
-            logger.warning(
-                f"Segment {extract_data.get('segment_id')} fragment skipped: {skip_reason}"
-            )
-            return []
-
-        # Model sometimes returns a bare list instead of {"fragments": [...]}
         if isinstance(parsed_data, list):
             raw_fragments = parsed_data
         else:
             raw_fragments = parsed_data.get("fragments", [])
-        if not raw_fragments:
-            logger.warning(
-                f"Model returned no fragments for segment {extract_data.get('segment_id')}"
+        return raw_fragments, latency_ms, is_degraded, is_partial, skip_reason, warning
+
+    def _fragment_extract_batched(
+        self,
+        statements: List[Dict[str, Any]],
+        extract_data: Dict[str, Any],
+        fragment_dir: Path,
+        retries: int,
+    ) -> List[Tuple[Path, Dict[str, Any]]]:
+        """Fragment an oversized extract by splitting statements into batches."""
+        segment_id = extract_data.get("segment_id", "")
+        n = len(statements)
+        batch_size = _MAX_STATEMENTS_PER_BATCH
+        batches = [statements[i: i + batch_size] for i in range(0, n, batch_size)]
+        logger.info(
+            f"Segment {segment_id}: {n} statements exceeds batch limit "
+            f"— splitting into {len(batches)} batch(es) of ≤{batch_size}"
+        )
+
+        all_raw_fragments: List[Dict] = []
+        total_latency = 0
+        any_degraded = False
+        any_partial = False
+        warnings: List[str] = []
+
+        for batch_idx, batch in enumerate(batches):
+            raw_fragments, latency_ms, is_degraded, is_partial, skip_reason, warning = (
+                self._run_fragment_llm(
+                    statements=batch,
+                    segment_id=f"{segment_id}[batch {batch_idx + 1}/{len(batches)}]",
+                    retries=retries,
+                )
             )
+            total_latency += latency_ms
+            if skip_reason:
+                logger.warning(
+                    f"Segment {segment_id} batch {batch_idx + 1} skipped: {skip_reason}"
+                )
+                continue
+            if not raw_fragments:
+                logger.warning(f"Segment {segment_id} batch {batch_idx + 1} produced no fragments")
+                continue
+            any_degraded = any_degraded or is_degraded
+            any_partial = any_partial or is_partial
+            if warning:
+                warnings.append(f"batch {batch_idx + 1}: {warning}")
+            all_raw_fragments.extend(raw_fragments)
+
+        if not all_raw_fragments:
             return []
 
+        return self._write_fragments(
+            raw_fragments=all_raw_fragments,
+            extract_data=extract_data,
+            fragment_dir=fragment_dir,
+            latency_ms=total_latency,
+            is_degraded=any_degraded,
+            is_partial=any_partial,
+            warning="; ".join(warnings),
+            frag_idx_offset=0,
+        )
+
+    def _write_fragments(
+        self,
+        raw_fragments: List[Dict],
+        extract_data: Dict[str, Any],
+        fragment_dir: Path,
+        latency_ms: int,
+        is_degraded: bool,
+        is_partial: bool,
+        warning: str,
+        frag_idx_offset: int,
+    ) -> List[Tuple[Path, Dict[str, Any]]]:
+        """Write raw fragment dicts to disk and return (dir, output_data) tuples."""
         fragment_dir.mkdir(parents=True, exist_ok=True)
         seg_idx = extract_data["segment_index"]
-
         results: List[Tuple[Path, Dict[str, Any]]] = []
+
         for frag_idx, raw_frag in enumerate(raw_fragments):
+            abs_idx = frag_idx_offset + frag_idx
             output_data = self._build_output_document(
                 raw_fragment=raw_frag,
                 extract_data=extract_data,
                 seg_idx=seg_idx,
-                frag_idx=frag_idx,
+                frag_idx=abs_idx,
                 latency_ms=latency_ms,
                 is_degraded=is_degraded,
                 is_partial=is_partial,
                 warning=warning,
             )
 
-            json_path = fragment_dir / f"fragment_{frag_idx:03d}.json"
-            md_path = fragment_dir / f"fragment_{frag_idx:03d}.md"
+            json_path = fragment_dir / f"fragment_{abs_idx:03d}.json"
+            md_path = fragment_dir / f"fragment_{abs_idx:03d}.md"
 
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(output_data, f, ensure_ascii=False, indent=2)
-
             with open(md_path, "w", encoding="utf-8") as f:
                 f.write(_render_md(output_data))
 
