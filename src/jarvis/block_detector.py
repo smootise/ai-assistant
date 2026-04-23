@@ -1,8 +1,8 @@
 """Deterministic preprocessing for segment text before LLM extraction.
 
-Detects risky embedded blocks (code fences, large prompts, XML, JSON-schema,
-long imperative sections) and builds a safe working view that replaces them
-with labelled placeholders, preventing model drift during extraction.
+Detects risky embedded blocks (code fences, XML, JSON-schema) and builds a
+safe working view that replaces them with labelled placeholders, preventing
+model drift during extraction.
 """
 
 import re
@@ -26,20 +26,7 @@ class ArchivedBlock:
     archival_description: Optional[Dict[str, Any]] = field(default=None)
 
 
-_BLOCK_KINDS = frozenset(
-    ["fenced_code", "prompt_like", "xml_like", "json_schema_like", "imperative_block"]
-)
-
-# Tokens whose presence is evidence of a prompt-like block
-_PROMPT_TOKENS = [
-    "You are", "IMPORTANT:", "Return ONLY", "Do not", "Your job",
-    "---USER---", "your task", "Your task",
-]
-
-_IMPERATIVE_STARTERS = re.compile(
-    r"^(Do|Return|Use|Extract|Never|Always|Avoid|Include|Exclude|Output|Respond|Write|List)\b",
-    re.MULTILINE,
-)
+_BLOCK_KINDS = frozenset(["fenced_code", "xml_like", "json_schema_like"])
 
 
 # ---------------------------------------------------------------------------
@@ -51,8 +38,6 @@ def detect_blocks(segment_text: str) -> List[ArchivedBlock]:
 
     Blocks are returned in the order they appear in the text.
     """
-    # Track occupied char ranges to avoid double-counting overlapping detectors.
-    # Each entry is (start, end) inclusive.
     occupied: List[Tuple[int, int]] = []
     candidates: List[Tuple[int, ArchivedBlock]] = []  # (start_pos, block)
 
@@ -94,15 +79,9 @@ def detect_blocks(segment_text: str) -> List[ArchivedBlock]:
     # --- XML-like: contiguous lines where ≥ 60 % match XML tag pattern ---
     _detect_xml_blocks(segment_text, _add)
 
-    # --- Prompt-like blocks ---
-    _detect_prompt_blocks(segment_text, _add)
-
-    # --- Long imperative blocks ---
-    _detect_imperative_blocks(segment_text, _add)
-
     # Sort by position in the document
     candidates.sort(key=lambda t: t[0])
-    # Re-assign sequential IDs in document order (counter may be out of order due to sort)
+    # Re-assign sequential IDs in document order
     blocks = []
     for idx, (_, blk) in enumerate(candidates, start=1):
         blk.block_id = f"ARCHIVED_BLOCK_{idx}"
@@ -241,91 +220,3 @@ def _detect_xml_blocks(
 
     if run_lines:
         _flush(run_lines, run_start_char)
-
-
-def _detect_prompt_blocks(
-    segment_text: str,
-    add: Any,
-) -> None:
-    """Detect large blocks that look like embedded prompts."""
-    lines = segment_text.splitlines(keepends=True)
-
-    def _score(window: List[str]) -> int:
-        text = "".join(window)
-        token_hits = sum(1 for t in _PROMPT_TOKENS if t in text)
-        heading_hits = sum(1 for line in window if re.match(r"^#{1,3}\s+\w", line))
-        score = token_hits + (1 if heading_hits >= 3 else 0)
-        return score
-
-    char_pos = 0
-    line_char_offsets = []
-    for line in lines:
-        line_char_offsets.append(char_pos)
-        char_pos += len(line)
-
-    n = len(lines)
-    i = 0
-    while i < n:
-        # Try to extend a window starting at i
-        j = i
-        run_chars = 0
-        while j < n:
-            run_chars += len(lines[j])
-            span_lines = lines[i: j + 1]
-            if (j - i + 1 >= 20 or run_chars >= 1500) and _score(span_lines) >= 2:
-                # Found a qualifying window; extend it as far as the score holds
-                k = j + 1
-                while k < n:
-                    extended = lines[i: k + 1]
-                    if _score(extended) >= 2:
-                        k += 1
-                    else:
-                        break
-                raw = "".join(lines[i:k])
-                add(line_char_offsets[i], line_char_offsets[i] + len(raw), "prompt_like", raw)
-                i = k  # skip past this window
-                break
-            j += 1
-        else:
-            i += 1
-
-
-def _detect_imperative_blocks(
-    segment_text: str,
-    add: Any,
-) -> None:
-    """Detect contiguous regions of ≥ 15 lines with ≥ 5 imperative-starting lines."""
-    lines = segment_text.splitlines(keepends=True)
-    n = len(lines)
-    line_char_offsets = []
-    char_pos = 0
-    for line in lines:
-        line_char_offsets.append(char_pos)
-        char_pos += len(line)
-
-    i = 0
-    while i < n:
-        # Collect a run of lines where many start with imperative verbs
-        j = i
-        imp_count = 0
-        while j < n:
-            if _IMPERATIVE_STARTERS.match(lines[j]):
-                imp_count += 1
-            run_len = j - i + 1
-            if run_len >= 15 and imp_count >= 5:
-                # Extend while still meeting threshold
-                k = j + 1
-                while k < n:
-                    if _IMPERATIVE_STARTERS.match(lines[k]):
-                        imp_count += 1
-                    k += 1
-                    run_len2 = k - i
-                    if imp_count / run_len2 < 5 / 15:
-                        break
-                raw = "".join(lines[i:k])
-                add(line_char_offsets[i], line_char_offsets[i] + len(raw), "imperative_block", raw)
-                i = k
-                break
-            j += 1
-        else:
-            i += 1
