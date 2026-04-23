@@ -20,6 +20,10 @@ Return ONLY a single JSON object matching the required schema. No explanation, n
 
 Each statement must be a complete, standalone sentence. One idea per statement. Keep exact names, numbers, and commands verbatim. Speaker must be exactly "user" or "assistant".
 
+## Speaker attribution rule
+
+The document uses `user:` and `assistant:` as speaker markers. Each marker is authoritative: every statement you extract belongs to the speaker whose marker most recently appeared before it in the document. When you encounter a new speaker marker, all subsequent statements switch to that speaker — even if the previous speaker's turn was very long. Never attribute a user's words to the assistant or vice versa.
+
 ## Statement style rules
 
 - Write plain declarative sentences. Never prefix a statement with `//`, `#`, `- `, or any other comment/bullet marker — those belong to code and markdown, not to extracted text.
