@@ -189,6 +189,13 @@ class SegmentExtractor:
         segment_text = segment["segment_text"]
         segment_id = segment["segment_id"]
 
+        segment_text, dropped_turns = _dedup_consecutive_assistant_turns(segment_text)
+        if dropped_turns:
+            logger.info(
+                f"Segment {segment_id}: dropped {dropped_turns} near-duplicate consecutive "
+                f"assistant turn(s) before extraction"
+            )
+
         # Detect risky blocks once; used across all attempts
         blocks = detect_blocks(segment_text)
         if blocks:
@@ -497,6 +504,62 @@ class SegmentExtractor:
             output["status"] = "ok"
 
         return output
+
+
+# ---------------------------------------------------------------------------
+# Consecutive-duplicate assistant turn deduplication
+# ---------------------------------------------------------------------------
+
+def _dedup_consecutive_assistant_turns(segment_text: str) -> Tuple[str, int]:
+    """Drop earlier turns when consecutive assistant messages are near-identical.
+
+    Uses the same 5-gram Jaccard similarity threshold (≥ 0.70) as the drift
+    detector. When two or more consecutive assistant turns are near-duplicates,
+    only the last one is kept (the most recent version of the answer).
+
+    Returns:
+        (deduped_text, dropped_count)
+    """
+    messages = split_by_message(segment_text)
+    if not messages:
+        return segment_text, 0
+
+    def _shingles(text: str, k: int = 5) -> frozenset:
+        words = re.findall(r"\w+", text.lower())
+        if len(words) < k:
+            return frozenset([" ".join(words)]) if words else frozenset()
+        return frozenset(" ".join(words[i: i + k]) for i in range(len(words) - k + 1))
+
+    keep = [True] * len(messages)
+    for i in range(len(messages) - 1):
+        if not keep[i]:
+            continue
+        speaker_i, text_i = messages[i]
+        if speaker_i != "assistant":
+            continue
+        j = i + 1
+        while j < len(messages):
+            speaker_j, text_j = messages[j]
+            if speaker_j != "assistant":
+                break
+            a, b = _shingles(text_i), _shingles(text_j)
+            if a and b:
+                inter = len(a & b)
+                union = len(a | b)
+                if union and inter / union >= 0.70:
+                    keep[i] = False
+                    break
+            j += 1
+
+    dropped = keep.count(False)
+    if not dropped:
+        return segment_text, 0
+
+    parts = []
+    for (speaker, body), kept in zip(messages, keep):
+        if kept:
+            parts.append(f"{speaker}: {body}")
+    return "\n\n".join(parts), dropped
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from jarvis.extractor import SegmentExtractor, _validate_statements
+from jarvis.extractor import SegmentExtractor, _validate_statements, _dedup_consecutive_assistant_turns
 from jarvis.fragmenter import Fragmenter
 
 
@@ -502,3 +502,98 @@ class TestRetrievalTextClean:
         _, frag_out = fragments[0]
         assert frag_out["statement_start_index"] == 0
         assert frag_out["statement_end_index"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Consecutive duplicate assistant turn deduplication
+# ---------------------------------------------------------------------------
+
+_ASSISTANT_BODY_A = (
+    "Here is the spec: use SQLite as source of truth, Qdrant for vector search, "
+    "Qwen3 for embeddings, and Gemma 4 31B for summarization. The pipeline order is "
+    "ingest then summarize then detect topics then retrieve."
+)
+
+# Near-identical to A (>70% Jaccard on 5-grams)
+_ASSISTANT_BODY_B = (
+    "Here is the spec: use SQLite as source of truth, Qdrant for vector search, "
+    "Qwen3 for embeddings, and Gemma 4 31B for summarization. The pipeline order is "
+    "ingest then summarize then detect-topics then retrieve and answer."
+)
+
+_ASSISTANT_BODY_DIFFERENT = (
+    "The retrieval unit is a fragment — a topically coherent sub-set of statements "
+    "from a single extract. Fragments are embedded independently for semantic search."
+)
+
+
+class TestDedupConsecutiveAssistantTurns:
+
+    def test_no_change_when_no_duplicates(self):
+        text = f"user: What is the plan?\n\nassistant: {_ASSISTANT_BODY_DIFFERENT}"
+        out, dropped = _dedup_consecutive_assistant_turns(text)
+        assert dropped == 0
+        assert "fragment" in out
+
+    def test_drops_earlier_of_two_near_identical_assistant_turns(self):
+        text = (
+            f"user: What is the plan?\n\n"
+            f"assistant: {_ASSISTANT_BODY_A}\n\n"
+            f"assistant: {_ASSISTANT_BODY_B}"
+        )
+        out, dropped = _dedup_consecutive_assistant_turns(text)
+        assert dropped == 1
+        # The last turn is kept
+        assert "detect-topics" in out
+        # The first turn is gone
+        assert out.count("assistant:") == 1
+
+    def test_keeps_distinct_consecutive_assistant_turns(self):
+        text = (
+            f"user: What is the plan?\n\n"
+            f"assistant: {_ASSISTANT_BODY_A}\n\n"
+            f"assistant: {_ASSISTANT_BODY_DIFFERENT}"
+        )
+        out, dropped = _dedup_consecutive_assistant_turns(text)
+        assert dropped == 0
+        assert out.count("assistant:") == 2
+
+    def test_user_turns_never_dropped(self):
+        # Two near-identical user turns should NOT be deduplicated
+        text = (
+            f"user: {_ASSISTANT_BODY_A}\n\n"
+            f"user: {_ASSISTANT_BODY_B}\n\n"
+            f"assistant: Understood."
+        )
+        out, dropped = _dedup_consecutive_assistant_turns(text)
+        assert dropped == 0
+        assert out.count("user:") == 2
+
+    def test_empty_segment_no_crash(self):
+        out, dropped = _dedup_consecutive_assistant_turns("")
+        assert dropped == 0
+        assert out == ""
+
+    def test_dedup_applied_before_extraction(self, prompts_dir, tmp_path):
+        """Extractor receives deduplicated text — duplicate turn does not reach the model."""
+        import json as _json
+
+        valid_resp = _json.dumps({"statements": [
+            {"speaker": "user", "text": "What is the plan?"},
+            {"speaker": "assistant", "text": _ASSISTANT_BODY_B},
+        ]})
+        client = _make_client(valid_resp)
+        extractor = _make_extractor(prompts_dir, client)
+
+        seg_text = (
+            f"user: What is the plan?\n\n"
+            f"assistant: {_ASSISTANT_BODY_A}\n\n"
+            f"assistant: {_ASSISTANT_BODY_B}"
+        )
+        seg = _make_segment(text=seg_text)
+        output = extractor.extract_segment(segment=seg, extract_dir=tmp_path / "out")
+
+        # Model was called; prompt must NOT contain the first (dropped) assistant turn
+        prompt_sent = client.generate_json.call_args[0][0]
+        # The dropped body ends with "retrieve." — the kept body ends with "answer."
+        assert "retrieve." not in prompt_sent or "answer." in prompt_sent
