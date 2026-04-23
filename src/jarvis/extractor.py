@@ -212,11 +212,11 @@ class SegmentExtractor:
         try:
             raw, gen_degraded, gen_warning = self._ollama.generate_json(prompt, _STATEMENTS_SCHEMA)
         except RuntimeError as e:
-            skip_reason = f"Attempt 1 timeout: {e}"
-            logger.error(f"Segment {segment_id} timed out on attempt 1 — skipping")
+            warnings.append(f"Attempt 1 timeout: {e}")
+            logger.warning(f"Segment {segment_id} timed out on attempt 1 — trying attempt 2")
             raw = ""
 
-        if not skip_reason:
+        if raw:
             try:
                 parsed, parse_degraded, parse_warning = self._ollama.parse_json_response(raw)
                 is_degraded = gen_degraded or parse_degraded
@@ -237,7 +237,7 @@ class SegmentExtractor:
                 logger.warning(f"Segment {segment_id} attempt 1 parse failed — trying attempt 2")
 
         # --- Attempt 2: archival descriptions ---
-        if not skip_reason and not statements:
+        if not statements:
             extraction_attempt = 2
             if blocks:
                 blocks = self._describe_blocks(blocks, segment_id)
@@ -248,11 +248,11 @@ class SegmentExtractor:
                     prompt2, _STATEMENTS_SCHEMA
                 )
             except RuntimeError as e:
-                skip_reason = f"Attempt 2 timeout: {e}"
-                logger.error(f"Segment {segment_id} timed out on attempt 2 — skipping")
+                warnings.append(f"Attempt 2 timeout: {e}")
+                logger.warning(f"Segment {segment_id} timed out on attempt 2 — trying attempt 3")
                 raw2 = ""
 
-            if not skip_reason:
+            if raw2:
                 try:
                     parsed2, parse_degraded2, parse_warning2 = self._ollama.parse_json_response(
                         raw2
@@ -276,7 +276,7 @@ class SegmentExtractor:
                     )
 
         # --- Attempt 3: per-message fallback ---
-        if not skip_reason and not statements:
+        if not statements:
             extraction_attempt = 3
             messages = split_by_message(segment_text)
             if not messages:
