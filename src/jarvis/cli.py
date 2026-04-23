@@ -831,7 +831,7 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
                             f"Already in SQLite, indexing in Qdrant: {output_data['source_file']}"
                         )
                         memory.index_in_qdrant(
-                            summary_id=existing["summary_id"], output_data=output_data
+                            summary_id=existing["id"], output_data=output_data
                         )
                         persisted += 1
                     else:

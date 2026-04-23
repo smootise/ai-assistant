@@ -168,7 +168,7 @@ class TestPersistOnly:
             )
             mock_memory = MagicMock()
             mock_memory.store.get_by_source_file.return_value = {
-                "summary_id": 99, "qdrant_point_id": "abc-123"
+                "id": 99, "qdrant_point_id": "abc-123"
             }
             mock_build.return_value = mock_memory
 
@@ -228,7 +228,7 @@ class TestPersistAndEmbed:
             mock_memory = MagicMock()
             # Already in SQLite, not yet in Qdrant
             mock_memory.store.get_by_source_file.return_value = {
-                "summary_id": 99, "qdrant_point_id": None
+                "id": 99, "qdrant_point_id": None
             }
             mock_build.return_value = mock_memory
 
@@ -237,8 +237,10 @@ class TestPersistAndEmbed:
         assert rc == 0
         mock_memory.persist_sqlite.assert_not_called()
         assert mock_memory.index_in_qdrant.call_count == len(results)
-        mock_memory.index_in_qdrant.assert_any_call(summary_id=99, output_data=results[0][1])
-        mock_memory.index_in_qdrant.assert_any_call(summary_id=99, output_data=results[1][1])
+        _, out0 = results[0]
+        _, out1 = results[1]
+        mock_memory.index_in_qdrant.assert_any_call(summary_id=99, output_data=out0)
+        mock_memory.index_in_qdrant.assert_any_call(summary_id=99, output_data=out1)
 
     def test_already_fully_indexed_skipped_on_embed(self, tmp_path):
         """--persist --embed on rows already in SQLite AND Qdrant → skip entirely."""
@@ -256,7 +258,7 @@ class TestPersistAndEmbed:
             mock_memory = MagicMock()
             # Already fully persisted and indexed
             mock_memory.store.get_by_source_file.return_value = {
-                "summary_id": 99, "qdrant_point_id": "abc-123"
+                "id": 99, "qdrant_point_id": "abc-123"
             }
             mock_build.return_value = mock_memory
 
