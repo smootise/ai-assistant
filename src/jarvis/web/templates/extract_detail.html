@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Extract — {{ extract.extract_id|short_id }} — JARVIS{% endblock %}
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="{{ url_for('dashboard.index') }}">Dashboard</a>
+  <span class="sep">/</span>
+  <a href="{{ url_for('conversations.conversations_list') }}">Conversations</a>
+  {% if conversation %}
+  <span class="sep">/</span>
+  <a href="{{ url_for('conversations.conversation_detail', conversation_id=conversation.conversation_id) }}">{{ (conversation.title or conversation.conversation_id)|truncate(30) }}</a>
+  {% endif %}
+  {% if segment %}
+  <span class="sep">/</span>
+  <a href="{{ url_for('segments.segment_detail', segment_id=segment.segment_id) }}">Segment #{{ segment.segment_index }}</a>
+  {% endif %}
+  <span class="sep">/</span>
+  <span class="current">Extract</span>
+</div>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Extract</h1>
+  <p class="mono">{{ extract.extract_id }}</p>
+</div>
+
+<div class="card">
+  <h2>Metadata</h2>
+  <table class="meta-table">
+    <tr><td>Extract ID</td><td class="mono">{{ extract.extract_id }}</td></tr>
+    <tr><td>Segment</td><td>
+      {% if segment %}
+      <a href="{{ url_for('segments.segment_detail', segment_id=segment.segment_id) }}">Segment #{{ segment.segment_index }}</a>
+      {% else %}
+      <span class="mono">{{ extract.segment_id }}</span> <em style="color:var(--muted); font-size:.85rem;">(not found)</em>
+      {% endif %}
+    </td></tr>
+    <tr><td>Conversation</td><td>
+      {% if conversation %}
+      <a href="{{ url_for('conversations.conversation_detail', conversation_id=conversation.conversation_id) }}">{{ conversation.title or conversation.conversation_id }}</a>
+      {% else %}
+      <span class="mono">{{ extract.parent_conversation_id }}</span>
+      {% endif %}
+    </td></tr>
+    <tr><td>Status</td><td><span class="badge {{ extract.status }}">{{ extract.status }}</span></td></tr>
+    <tr><td>Provider / Model</td><td>{{ extract.provider }} / {{ extract.model or '—' }}</td></tr>
+    <tr><td>Latency</td><td>{{ extract.latency_ms|string + ' ms' if extract.latency_ms else '—' }}</td></tr>
+    <tr><td>Created at</td><td>{{ extract.created_at or '—' }}</td></tr>
+  </table>
+  <div style="margin-top:.75rem;">
+    <a class="action-link" href="{{ url_for('extracts.extract_raw', extract_id=extract.extract_id) }}">View raw file →</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Statements ({{ statements|length }})</h2>
+  {% if statements %}
+  <ul class="statements-list">
+    {% for st in statements %}
+    <li>
+      <span class="speaker">{{ st.speaker }}</span>
+      <span>{{ st.text }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty-state">
+    <p>No statements recorded for this extract.</p>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Fragments ({{ fragments|length }})</h2>
+  {% if fragments %}
+  <table>
+    <thead>
+      <tr><th>#</th><th>Fragment ID</th><th>Title</th><th>Status</th><th>Embedded</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for f in fragments %}
+      <tr>
+        <td>{{ f.fragment_index }}</td>
+        <td class="mono"><a href="{{ url_for('fragments.fragment_detail', fragment_id=f.fragment_id) }}">{{ f.fragment_id|short_id }}</a></td>
+        <td>{{ f.title or '—' }}</td>
+        <td><span class="badge {{ f.status }}">{{ f.status }}</span></td>
+        <td>{{ '✓' if f.embedded_at else '—' }}</td>
+        <td><a class="action-link" href="{{ url_for('fragments.fragment_detail', fragment_id=f.fragment_id) }}">View →</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state">
+    <p>No fragments yet.</p>
+    <p>Run <code>python -m jarvis.cli fragment-extracts chatgpt --conversation-id {{ extract.parent_conversation_id }} --persist --embed</code></p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

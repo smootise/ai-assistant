@@ -961,6 +961,20 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
         return 1
 
 
+def cmd_serve(args, config: dict) -> int:
+    """Launch the JARVIS web UI (read-only operator console)."""
+    from jarvis.web.app import create_app
+
+    host = getattr(args, "host", "127.0.0.1")
+    port = getattr(args, "port", 5000)
+    debug = getattr(args, "debug", False)
+
+    app = create_app(config)
+    print(f"JARVIS web UI running at http://{host}:{port}")
+    app.run(host=host, port=port, debug=debug)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="JARVIS - Local-first AI assistant for PM workflows",
@@ -1200,6 +1214,18 @@ def main() -> int:
         help="Wipe existing fragment files and records before re-running",
     )
 
+    # -- serve ------------------------------------------------------------
+    serve_parser = subparsers.add_parser("serve", help="Launch the JARVIS web UI")
+    serve_parser.add_argument(
+        "--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)"
+    )
+    serve_parser.add_argument(
+        "--port", type=int, default=5000, help="Bind port (default: 5000)"
+    )
+    serve_parser.add_argument(
+        "--debug", action="store_true", default=False, help="Enable Flask debug mode"
+    )
+
     # -- parse & dispatch -------------------------------------------------
     args = parser.parse_args()
 
@@ -1235,6 +1261,8 @@ def main() -> int:
         return cmd_extract_segments(args, config)
     if args.command == "fragment-extracts":
         return cmd_fragment_extracts(args, config)
+    if args.command == "serve":
+        return cmd_serve(args, config)
 
     return 1
 

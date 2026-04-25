@@ -4,6 +4,7 @@
 Primary context file for Claude Code. Loaded on every session. Keep it lean — project-wide rules only.
 Sub-files carry task-specific detail and are auto-loaded when working in their subtree:
 - `src/jarvis/CLAUDE.md` — backend pipeline, modules, design decisions
+- `src/jarvis/web/CLAUDE.md` — web UI layer, V1 scope, file preview rules, empty-state contract
 - `tests/CLAUDE.md` — mock contracts, fixture conventions
 
 ---
@@ -35,11 +36,12 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 - Relational SQLite schema v7 (10 tables; deterministic IDs; `INSERT OR IGNORE` idempotency)
 - Fragment-only Qdrant index (`jarvis_fragments`; full records reconstructed from SQLite)
 - Full ingest → extract → fragment → retrieve pipeline with `--persist` flags throughout
+- Web UI V1: read-only operator console (Flask + Jinja2); browsing source → conversation → segment → extract → fragment lineage; ID-first whitelisted file preview; `python -m jarvis.cli serve`
 
 ### Planned
+- Web UI V2: uploads, job launching, retrieve/answer with citations
 - Token-budget retrieval: replace flat `--top-k` with `--max-context-tokens` to handle variable fragment sizes
 - `summarize` (single-file) `--persist`: wire standalone files through the same ingest→extract→fragment pipeline
-- Web UI: browser-based interface to query JARVIS and view results
 - TrueNAS deployment: migrate JARVIS services (Ollama, Qdrant, backend) to run on TrueNAS
 - API integrations: Notion, Slack, and other data sources as ingestion adapters
 - Logging overhaul: structured log file output (errors + raw model responses on parse failure written to file, not terminal), log rotation, configurable verbosity per module

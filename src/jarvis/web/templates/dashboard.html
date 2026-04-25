@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — JARVIS{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Dashboard</h1>
+  <p>Overview of all data stored by JARVIS.</p>
+</div>
+
+<div class="card-grid">
+  <div class="stat-card">
+    <div class="value">{{ counts.source_files }}</div>
+    <div class="label">Source Files</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">{{ counts.conversations }}</div>
+    <div class="label">Conversations</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">{{ counts.segments }}</div>
+    <div class="label">Segments</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">{{ counts.extracts }}</div>
+    <div class="label">Extracts</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">{{ counts.fragments }}</div>
+    <div class="label">Fragments</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">{{ counts.extract_statements }}</div>
+    <div class="label">Statements</div>
+  </div>
+</div>
+
+{% if counts.source_files == 0 %}
+<div class="card">
+  <div class="empty-state">
+    <p>No data ingested yet.</p>
+    <p>Run <code>python -m jarvis.cli ingest chatgpt --file &lt;export.json&gt; --persist</code> to get started.</p>
+  </div>
+</div>
+{% else %}
+
+{% macro recent_section(title, items, entity, id_field, label_field) %}
+{% if items %}
+<div class="card" style="margin-bottom:1rem;">
+  <h2>{{ title }}</h2>
+  <div>
+  {% for item in items %}
+    <div class="link-row">
+      <a href="{{ url_for(entity, **{id_field: item.id}) }}">{{ item.label or item.id }}</a>
+      <span class="mono" style="margin-left:auto; font-size:.78rem;">{{ item.created_at[:10] if item.created_at else '' }}</span>
+    </div>
+  {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endmacro %}
+
+<h2 style="margin-bottom:.75rem;">Recent Activity</h2>
+
+{{ recent_section("Source Files", recent.source_files, 'sources.source_detail', 'source_id', 'label') }}
+{{ recent_section("Conversations", recent.conversations, 'conversations.conversation_detail', 'conversation_id', 'label') }}
+{{ recent_section("Segments", recent.segments, 'segments.segment_detail', 'segment_id', 'label') }}
+{{ recent_section("Extracts", recent.extracts, 'extracts.extract_detail', 'extract_id', 'label') }}
+{{ recent_section("Fragments", recent.fragments, 'fragments.fragment_detail', 'fragment_id', 'label') }}
+
+{% endif %}
+{% endblock %}

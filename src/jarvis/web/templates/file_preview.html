@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ filename or 'File Preview' }} — JARVIS{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ filename or 'File Preview' }}</h1>
+</div>
+
+{% if error %}
+<div class="alert alert-error">{{ error }}</div>
+{% elif content is not none %}
+  {% if kind == 'json' %}
+  <div class="card">
+    <h2>JSON</h2>
+    <pre>{{ content }}</pre>
+  </div>
+  {% elif kind == 'markdown' %}
+  <div class="card">
+    <h2>Markdown</h2>
+    <pre>{{ content }}</pre>
+  </div>
+  {% else %}
+  <div class="card">
+    <h2>Text</h2>
+    <pre>{{ content }}</pre>
+  </div>
+  {% endif %}
+{% else %}
+<div class="alert alert-warning">No content to display.</div>
+{% endif %}
+{% endblock %}

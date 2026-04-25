@@ -97,7 +97,45 @@ python -m jarvis.cli answer "Why did we choose Qdrant over Pinecone?"
 
 ---
 
+## Web App
+
+JARVIS includes a read-only browser UI for exploring ingested data.
+
+### Start the web server
+
+```bash
+python -m jarvis.cli serve
+```
+
+Then open [http://localhost:5000](http://localhost:5000) in your browser.
+
+The UI lets you:
+- View counts and recent records on the **Dashboard**
+- Browse **Sources**, **Conversations**, **Segments**, **Extracts**, and **Fragments**
+- Follow the full data lineage: source → conversation → segment → extract → fragment
+- Inspect raw JSON/text files for each entity (read-only, whitelist-restricted)
+
+No uploads, pipeline actions, or query features in V1 — those are planned for V2.
+
+---
+
 ## CLI Reference
+
+### `serve`
+
+Launch the JARVIS web UI.
+
+```bash
+python -m jarvis.cli serve [--host 127.0.0.1] [--port 5000] [--debug]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--host` | `127.0.0.1` | Bind address |
+| `--port` | `5000` | Bind port |
+| `--debug` | off | Enable Flask debug mode (auto-reload, verbose errors) |
+
+---
 
 ### `ingest chatgpt`
 

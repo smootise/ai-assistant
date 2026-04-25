@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}JARVIS{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+
+<nav>
+  <span class="brand">JARVIS</span>
+  <a href="{{ url_for('dashboard.index') }}"
+     class="nav-link {% if request.endpoint == 'dashboard.index' %}active{% endif %}">Dashboard</a>
+  <a href="{{ url_for('sources.sources_list') }}"
+     class="nav-link {% if request.endpoint and request.endpoint.startswith('sources.') %}active{% endif %}">Sources</a>
+  <a href="{{ url_for('conversations.conversations_list') }}"
+     class="nav-link {% if request.endpoint and request.endpoint.startswith('conversations.') %}active{% endif %}">Conversations</a>
+</nav>
+
+<div class="container">
+  {% block breadcrumb %}{% endblock %}
+  {% block content %}{% endblock %}
+</div>
+
+</body>
+</html>

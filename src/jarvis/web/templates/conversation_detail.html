@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{{ conversation.title or conversation.conversation_id }} — JARVIS{% endblock %}
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="{{ url_for('dashboard.index') }}">Dashboard</a>
+  <span class="sep">/</span>
+  <a href="{{ url_for('conversations.conversations_list') }}">Conversations</a>
+  <span class="sep">/</span>
+  <span class="current">{{ (conversation.title or conversation.conversation_id)|truncate(40) }}</span>
+</div>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ conversation.title or conversation.conversation_id }}</h1>
+  <p>Conversation detail</p>
+</div>
+
+<div class="card">
+  <h2>Metadata</h2>
+  <table class="meta-table">
+    <tr><td>ID</td><td class="mono">{{ conversation.conversation_id }}</td></tr>
+    <tr><td>Title</td><td>{{ conversation.title or '—' }}</td></tr>
+    <tr><td>Platform</td><td><span class="badge">{{ conversation.source_platform }}</span></td></tr>
+    <tr><td>Messages</td><td>{{ conversation.message_count or '—' }}</td></tr>
+    <tr><td>Date</td><td>{{ conversation.conversation_date[:10] if conversation.conversation_date else '—' }}</td></tr>
+    <tr><td>Imported at</td><td>{{ conversation.imported_at or '—' }}</td></tr>
+    <tr><td>Created at</td><td>{{ conversation.created_at or '—' }}</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Segments ({{ segments|length }})</h2>
+  {% if segments %}
+  <table>
+    <thead>
+      <tr><th>#</th><th>Segment ID</th><th>Messages</th><th>Date</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for seg in segments %}
+      <tr>
+        <td>{{ seg.segment_index }}</td>
+        <td class="mono"><a href="{{ url_for('segments.segment_detail', segment_id=seg.segment_id) }}">{{ seg.segment_id|short_id }}</a></td>
+        <td>{{ seg.message_ids|length if seg.message_ids else '—' }}</td>
+        <td class="mono">{{ seg.conversation_date[:10] if seg.conversation_date else '—' }}</td>
+        <td><a class="action-link" href="{{ url_for('segments.segment_detail', segment_id=seg.segment_id) }}">View →</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state">
+    <p>No segments for this conversation.</p>
+    <p>Run <code>python -m jarvis.cli ingest chatgpt --conversation-id {{ conversation.conversation_id }} --persist</code></p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

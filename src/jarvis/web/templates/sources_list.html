@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Sources — JARVIS{% endblock %}
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="{{ url_for('dashboard.index') }}">Dashboard</a>
+  <span class="sep">/</span>
+  <span class="current">Sources</span>
+</div>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Source Files</h1>
+  <p>Raw data files ingested into JARVIS.</p>
+</div>
+
+<div class="card">
+{% if sources %}
+  <table>
+    <thead>
+      <tr>
+        <th>Filename</th>
+        <th>Kind</th>
+        <th>Size</th>
+        <th>Ingested</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for s in sources %}
+      <tr>
+        <td><a href="{{ url_for('sources.source_detail', source_id=s.source_file_id) }}">{{ s.original_filename }}</a></td>
+        <td><span class="badge">{{ s.source_kind }}</span></td>
+        <td class="mono">{{ '{:,}'.format(s.size_bytes) if s.size_bytes else '—' }}</td>
+        <td class="mono">{{ s.ingested_at[:10] if s.ingested_at else '—' }}</td>
+        <td><a class="action-link" href="{{ url_for('sources.source_detail', source_id=s.source_file_id) }}">View →</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if sources|length == limit %}
+  <div class="pagination">
+    {% if offset > 0 %}
+    <a class="action-link" href="{{ url_for('sources.sources_list', limit=limit, offset=[offset-limit, 0]|max) }}">← Prev</a>
+    {% endif %}
+    <a class="action-link" href="{{ url_for('sources.sources_list', limit=limit, offset=offset+limit) }}">Next →</a>
+  </div>
+  {% endif %}
+{% else %}
+  <div class="empty-state">
+    <p>No source files ingested yet.</p>
+    <p>Run <code>python -m jarvis.cli ingest chatgpt --file &lt;export.json&gt; --persist</code> to get started.</p>
+  </div>
+{% endif %}
+</div>
+{% endblock %}
