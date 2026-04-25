@@ -136,26 +136,8 @@ ID determinism: `segment_id = f"{conv_id}_s{idx:03d}"`, `extract_id = f"{segment
 
 ## Web Layer (V1 — Read-Only)
 
-A Flask + Jinja2 operator console (`src/jarvis/web/`) sits above `SummaryStore` and provides
-browser-based browsing of the full entity graph. It is strictly read-only in V1 — no pipeline
-invocations, no SQLite writes, no Qdrant queries.
+A Flask + Jinja2 operator console (`src/jarvis/web/`) for browsing the entity graph in a
+browser. Read-only in V1 — sits above `SummaryStore` public methods, no Qdrant, no writes.
 
-```
-Browser
-  └── Flask routes (src/jarvis/web/routes/)
-        └── services.py  (thin orchestration, missing-data normalization)
-              └── SummaryStore (public methods only — never _connect() directly)
-                    └── SQLite (data/jarvis.db)
-```
-
-**File preview** is ID-first: paths are resolved from SQLite entity metadata, never from
-user-supplied strings. Every resolved path is re-validated against an approved whitelist
-(`OUTPUTS/`, `inbox/ai_chat/`) before reading. Symlink escapes and path traversal are rejected.
-Size cap: 2 MB. Allowed extensions: `.json`, `.md`, `.txt`.
-
-**Start the web UI:**
-
-```bash
-python -m jarvis.cli serve          # default: 127.0.0.1:5000
-python -m jarvis.cli serve --port 8080 --debug
-```
+See [docs/webapp.md](webapp.md) for the full route map, file preview rules, code layout, and
+extension guide.
