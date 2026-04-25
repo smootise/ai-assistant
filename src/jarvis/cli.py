@@ -1,6 +1,8 @@
 """CLI entry point for JARVIS."""
 
 import argparse
+import hashlib
+import json
 import logging
 import sys
 from pathlib import Path
@@ -50,6 +52,26 @@ def _build_memory_layer(config: dict) -> MemoryLayer:
     return MemoryLayer(store=store, vector_store=vector_store, embedder=embedder)
 
 
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _source_file_data(path: Path, source_kind: str) -> dict:
+    sha = _sha256_file(path)
+    return {
+        "source_file_id": sha,
+        "source_kind": source_kind,
+        "original_filename": path.name,
+        "storage_path": str(path),
+        "sha256": sha,
+        "size_bytes": path.stat().st_size,
+    }
+
+
 def cmd_summarize(args: argparse.Namespace, config: dict) -> int:
     """Execute the summarize command."""
     logger = logging.getLogger(__name__)
@@ -71,32 +93,12 @@ def cmd_summarize(args: argparse.Namespace, config: dict) -> int:
 
     try:
         if args.force:
-            store = SummaryStore(db_path=config["db_path"])
-            qdrant_point_id = store.delete_by_source_file(input_file.name)
-            if qdrant_point_id:
-                try:
-                    vs = VectorStore(
-                        host=config["qdrant_host"], port=config["qdrant_port"]
-                    )
-                    vs.delete_points([qdrant_point_id])
-                except Exception:
-                    pass
             for p in (json_path, md_path):
                 if p.exists():
                     p.unlink()
             logger.info(f"--force: wiped existing outputs for {source_basename}")
-
         elif json_path.exists():
-            store = SummaryStore(db_path=config["db_path"])
-            qdrant_point_id = store.delete_by_source_file(input_file.name)
-            if qdrant_point_id:
-                try:
-                    vs = VectorStore(
-                        host=config["qdrant_host"], port=config["qdrant_port"]
-                    )
-                    vs.delete_points([qdrant_point_id])
-                except Exception:
-                    pass
+            pass  # OutputWriter will overwrite; no DB record to clean up
 
         ollama_client = OllamaClient(
             model=config["local_model_name"],
@@ -118,10 +120,10 @@ def cmd_summarize(args: argparse.Namespace, config: dict) -> int:
         logger.info(f"Outputs saved to: {output_dir}")
 
         if args.persist:
-            logger.info("Persisting to SQLite + Qdrant...")
-            memory = _build_memory_layer(config)
-            summary_id = memory.persist(output_data=output_data, output_dir=output_dir)
-            logger.info(f"Persisted as summary_id={summary_id}")
+            logger.warning(
+                "--persist is not yet implemented for cmd_summarize. "
+                "Use the chatgpt pipeline (ingest → extract-segments → fragment-extracts)."
+            )
 
         return 0
 
@@ -173,36 +175,30 @@ def cmd_retrieve(args: argparse.Namespace, config: dict) -> int:
             print("No results found.")
             return 0
 
-        summary_ids = [sid for sid, _, _ in hits]
-        scores = {sid: score for sid, score, _ in hits}
-        rows = memory.store.get_by_ids(summary_ids)
+        fragment_ids = [fid for fid, _, _ in hits]
+        scores = {fid: score for fid, score, _ in hits}
+        rows = memory.store.get_fragments_with_statements(fragment_ids)
 
         print(f"\nTop {len(rows)} result(s) for: \"{args.query}\"\n")
         print("-" * 72)
 
         for rank, row in enumerate(rows, start=1):
-            sid = row["id"]
-            score = scores.get(sid, 0.0)
+            fid = row["fragment_id"]
+            score = scores.get(fid, 0.0)
 
-            if row.get("summary"):
-                raw_preview = row["summary"]
-            elif row.get("statements"):
-                stmts = row["statements"]
-                title = row.get("fragment_title") or ""
-                body = " / ".join(
-                    f"{s['speaker']}: {s['text']}" for s in stmts[:2]
-                )
-                raw_preview = f"[{title}] {body}" if title else body
-            else:
-                raw_preview = ""
-
+            title = row.get("title") or ""
+            stmts = row.get("statements", [])
+            body = " / ".join(
+                f"{s['speaker']}: {s['text']}" for s in stmts[:2]
+            )
+            raw_preview = f"[{title}] {body}" if title else body
             preview = raw_preview[:160].replace("\n", " ")
             if len(raw_preview) > 160:
                 preview += "..."
 
-            print(f"#{rank}  score={score:.4f}  id={sid}")
-            print(f"    source : {row['source_file']}")
-            print(f"    created: {row['created_at']}")
+            print(f"#{rank}  score={score:.4f}  fragment={fid}")
+            print(f"    segment: {row.get('segment_id', '?')}")
+            print(f"    date   : {row.get('conversation_date', '?')}")
             print(f"    preview: {preview}")
             print()
 
@@ -222,21 +218,16 @@ def cmd_retrieve(args: argparse.Namespace, config: dict) -> int:
 def _build_context_block(rows: list[dict]) -> str:
     parts = []
     for i, row in enumerate(rows, start=1):
-        date = row.get("conversation_date") or row["created_at"]
-        header = f"--- Excerpt {i} (source: {row['source_file']}, date: {date}) ---"
-        if row.get("statements"):
-            title = row.get("fragment_title") or ""
-            lines = []
-            if title:
-                lines.append(f"Topic: {title}")
-            for s in row["statements"]:
-                lines.append(f"{s['speaker']}: {s['text']}")
-            body = "\n".join(lines)
-        else:
-            body = row.get("summary") or ""
-            bullets = row.get("bullets") or []
-            if bullets:
-                body += "\nKey points:\n" + "\n".join(f"- {b}" for b in bullets)
+        date = row.get("conversation_date") or row.get("fragment_created_at", "")
+        segment_id = row.get("segment_id", "?")
+        header = f"--- Excerpt {i} (segment: {segment_id}, date: {date}) ---"
+        title = row.get("title") or ""
+        lines = []
+        if title:
+            lines.append(f"Topic: {title}")
+        for s in row.get("statements", []):
+            lines.append(f"{s['speaker']}: {s['text']}")
+        body = "\n".join(lines) if lines else row.get("retrieval_text", "")
         parts.append(f"{header}\n{body}")
     return "\n\n".join(parts)
 
@@ -261,8 +252,8 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
             print("No relevant context found for your question.")
             return 0
 
-        summary_ids = [sid for sid, _, _ in hits]
-        rows = memory.store.get_by_ids(summary_ids)
+        fragment_ids = [fid for fid, _, _ in hits]
+        rows = memory.store.get_fragments_with_statements(fragment_ids)
 
         context_block = _build_context_block(rows)
 
@@ -366,6 +357,38 @@ def cmd_ingest(args: argparse.Namespace, config: dict) -> int:
             output_dir=segments_dir,
         )
 
+        if getattr(args, "persist", False):
+            logger.info("Persisting source file metadata, conversation, and segments...")
+            memory = _build_memory_layer(config)
+
+            raw_file_data = _source_file_data(raw_path, "chatgpt_raw_export")
+            memory.persist_source_file(raw_file_data)
+
+            norm_file_data = _source_file_data(norm_path, "chatgpt_normalized")
+            memory.persist_source_file(norm_file_data)
+
+            # Derive conversation_date from first segment's first message
+            first_seg = result["segments"][0] if result["segments"] else {}
+            conv_date = first_seg.get("conversation_date")
+
+            memory.persist_conversation({
+                "conversation_id": conversation_id,
+                "raw_source_file_id": raw_file_data["source_file_id"],
+                "normalized_source_file_id": norm_file_data["source_file_id"],
+                "title": normalized.get("title"),
+                "conversation_date": conv_date,
+                "source_platform": normalized.get("source_platform", "chatgpt"),
+                "message_count": normalized.get("message_count"),
+                "imported_at": normalized.get("imported_at"),
+            })
+
+            for seg in result["segments"]:
+                memory.persist_segment(seg)
+
+            logger.info(
+                f"Persisted {len(result['segments'])} segment(s) for {conversation_id}"
+            )
+
         print(f"\nIngest complete for: {normalized.get('title', conversation_id)}")
         print(f"  Visible messages  : {normalized['message_count']}")
         print(f"  Segments written  : {len(result['segments'])}")
@@ -412,11 +435,10 @@ def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
                 f for f in segments_dir.glob("segment_*.json")
                 if f.name != "pending_tail.json"
             )
-            import json as _json
             affected_segment_ids = []
             for sf in segment_files:
                 with open(sf, encoding="utf-8") as fh:
-                    sd = _json.load(fh)
+                    sd = json.load(fh)
                 idx = sd["segment_index"]
                 effective_to = to_segment if to_segment is not None else float("inf")
                 if from_segment <= idx <= effective_to:
@@ -428,18 +450,12 @@ def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
                     if p.exists():
                         p.unlink()
 
-            store = SummaryStore(db_path=config["db_path"])
-            point_ids = store.delete_segment_rows(args.conversation_id, affected_segment_ids)
-            if point_ids:
-                try:
-                    vs = VectorStore(
-                        host=config["qdrant_host"], port=config["qdrant_port"]
-                    )
-                    vs.delete_points(point_ids)
-                except Exception:
-                    pass
+            if args.persist:
+                store = SummaryStore(db_path=config["db_path"])
+                store.delete_segment_summaries(args.conversation_id)
+
             logger.info(
-                f"--force: wiped {len(affected_segment_ids)} segments "
+                f"--force: wiped {len(affected_segment_ids)} segment summaries "
                 f"(range [{from_segment}, {'end' if to_segment is None else to_segment}])"
             )
 
@@ -478,18 +494,22 @@ def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
         total_latency = sum(d.get("latency_ms", 0) for _, d in results)
 
         if args.persist:
-            logger.info("Persisting segment summaries to SQLite + Qdrant...")
+            logger.info("Persisting segment summaries to SQLite...")
             memory = _build_memory_layer(config)
             persisted = 0
-            for output_dir, output_data in results:
-                if memory.store.get_by_source_file(output_data["source_file"]):
-                    logger.debug(f"Skipping already-persisted: {output_data['source_file']}")
+            for _, output_data in results:
+                segment_id = output_data.get("segment_id")
+                if not segment_id:
                     continue
-                memory.persist(output_data=output_data, output_dir=output_dir)
+                existing = memory.store.get_segment_summary(segment_id)
+                if existing:
+                    logger.debug(f"Skipping already-persisted summary: {segment_id}")
+                    continue
+                memory.persist_segment_summary(output_data)
                 persisted += 1
-            skipped_count = len(results) - persisted
             logger.info(
-                f"Persisted {persisted} segment summaries ({skipped_count} already existed)"
+                f"Persisted {persisted} segment summaries "
+                f"({len(results) - persisted} already existed)"
             )
 
         print(f"\nSegment summarization complete for: {args.conversation_id}")
@@ -538,19 +558,12 @@ def cmd_detect_topics(args: argparse.Namespace, config: dict) -> int:
 
     try:
         if args.force:
-            store = SummaryStore(db_path=config["db_path"])
-            point_ids = store.delete_topic_rows(args.conversation_id)
-            if point_ids:
-                try:
-                    vs = VectorStore(
-                        host=config["qdrant_host"], port=config["qdrant_port"]
-                    )
-                    vs.delete_points(point_ids)
-                except Exception:
-                    pass
             if topic_summaries_dir.exists():
                 for f in topic_summaries_dir.glob("topic_*"):
                     f.unlink()
+            if args.persist:
+                store = SummaryStore(db_path=config["db_path"])
+                store.delete_topic_summaries(args.conversation_id)
             logger.info(
                 f"--force: wiped existing topic summaries for {args.conversation_id}"
             )
@@ -598,17 +611,42 @@ def cmd_detect_topics(args: argparse.Namespace, config: dict) -> int:
             return 0
 
         if args.persist:
-            logger.info("Persisting topic summaries to SQLite + Qdrant...")
+            logger.info("Persisting topic summaries to SQLite...")
             memory = _build_memory_layer(config)
             persisted = 0
-            for output_dir, output_data in results:
-                if memory.store.get_by_source_file(output_data["source_file"]):
-                    logger.debug(f"Skipping already-persisted: {output_data['source_file']}")
+            for _, output_data in results:
+                topic_idx = output_data.get("topic_index")
+                if topic_idx is None:
                     continue
-                memory.persist(output_data=output_data, output_dir=output_dir)
+                conv_id = output_data.get("parent_conversation_id", args.conversation_id)
+                # Check idempotency using topic_id = <conv_id>_t<NNN>
+                topic_id = f"{conv_id}_t{topic_idx:03d}"
+                with memory.store._connect() as conn:
+                    existing = conn.execute(
+                        "SELECT topic_id FROM topic_summaries WHERE topic_id = ?",
+                        (topic_id,),
+                    ).fetchone()
+                if existing:
+                    logger.debug(f"Skipping already-persisted topic: {topic_id}")
+                    continue
+                # Collect segment_ids from the topic's segment range
+                segment_ids: list = []
+                seg_range = output_data.get("topic_segment_range", "")
+                if seg_range:
+                    try:
+                        parts_range = seg_range.replace("s", "").split("-")
+                        if len(parts_range) == 2:
+                            start_idx, end_idx = int(parts_range[0]), int(parts_range[1])
+                            for idx in range(start_idx, end_idx + 1):
+                                segment_ids.append(f"{conv_id}_s{idx:03d}")
+                    except (ValueError, IndexError):
+                        pass
+                memory.persist_topic_summary(output_data, segment_ids=segment_ids or None)
                 persisted += 1
-            skipped_count = len(results) - persisted
-            logger.info(f"Persisted {persisted} topic summaries ({skipped_count} already existed)")
+            logger.info(
+                f"Persisted {persisted} topic summaries "
+                f"({len(results) - persisted} already existed)"
+            )
 
         print(f"\nTopic detection complete for: {args.conversation_id}")
         print(f"  Topics detected   : {len(results)}")
@@ -658,8 +696,6 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
 
     try:
         if args.force:
-            store = SummaryStore(db_path=config["db_path"])
-            # Determine the index range being forced so we only wipe that scope.
             all_seg_indices = sorted(
                 int(f.stem.split("_")[1])
                 for f in segments_dir.glob("segment_*.json")
@@ -672,23 +708,17 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
             )
             forced_indices = list(range(effective_from, effective_to + 1))
 
-            point_ids = store.delete_extract_rows(
-                args.conversation_id, segment_indices=forced_indices
-            )
-            if point_ids:
-                try:
-                    vs = VectorStore(host=config["qdrant_host"], port=config["qdrant_port"])
-                    vs.delete_points(point_ids)
-                except Exception:
-                    pass
             if extract_dir.exists():
                 for idx in forced_indices:
-                    f = extract_dir / f"extract_{idx:03d}.json"
-                    if f.exists():
-                        f.unlink()
-                    m = extract_dir / f"extract_{idx:03d}.md"
-                    if m.exists():
-                        m.unlink()
+                    for suffix in (".json", ".md"):
+                        p = extract_dir / f"extract_{idx:03d}{suffix}"
+                        if p.exists():
+                            p.unlink()
+
+            if getattr(args, "persist", False):
+                store = SummaryStore(db_path=config["db_path"])
+                store.delete_extracts(args.conversation_id, segment_indices=forced_indices)
+
             logger.info(
                 f"--force: wiped extracts {effective_from}–{effective_to} "
                 f"for {args.conversation_id}"
@@ -725,6 +755,25 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
             (d["segment_id"], d.get("warnings", []))
             for _, d in results if d.get("status") == "skipped"
         ]
+
+        if getattr(args, "persist", False):
+            logger.info("Persisting extracts to SQLite...")
+            memory = _build_memory_layer(config)
+            persisted = 0
+            for _, output_data in results:
+                segment_id = output_data.get("segment_id")
+                if not segment_id:
+                    continue
+                existing = memory.store.get_extract_by_segment(segment_id)
+                if existing:
+                    logger.debug(f"Skipping already-persisted extract: {segment_id}")
+                    continue
+                memory.persist_extract_with_statements(output_data)
+                persisted += 1
+            logger.info(
+                f"Persisted {persisted} extracts "
+                f"({len(results) - persisted} already existed)"
+            )
 
         print(f"\nExtraction complete for: {args.conversation_id}")
         print(f"  Segments processed: {len(results)} ({new_count} new, "
@@ -774,7 +823,7 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
     try:
         if args.force:
             store = SummaryStore(db_path=config["db_path"])
-            point_ids = store.delete_fragment_rows(args.conversation_id)
+            point_ids = store.delete_fragments(args.conversation_id)
             if point_ids:
                 try:
                     vs = VectorStore(host=config["qdrant_host"], port=config["qdrant_port"])
@@ -782,8 +831,10 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
                 except Exception:
                     pass
             if fragment_dir.exists():
-                for f in fragment_dir.glob("fragment_*"):
-                    f.unlink()
+                import shutil
+                for seg_dir in fragment_dir.glob("segment_*"):
+                    if seg_dir.is_dir():
+                        shutil.rmtree(seg_dir)
             logger.info(
                 f"--force: wiped existing fragments for {args.conversation_id}"
             )
@@ -823,24 +874,67 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
                 logger.info("Persisting fragments to SQLite...")
             memory = _build_memory_layer(config)
             persisted = 0
-            for output_dir, output_data in results:
-                existing = memory.store.get_by_source_file(output_data["source_file"])
+            for _, output_data in results:
+                segment_id = output_data.get("segment_id")
+                frag_idx = output_data.get("fragment_index")
+                if segment_id is None or frag_idx is None:
+                    continue
+
+                # Derive extract_id deterministically
+                extract_id = f"{segment_id}_x"
+                fragment_id = f"{extract_id}_f{frag_idx:03d}"
+
+                existing = memory.store.get_fragment(fragment_id)
                 if existing:
+                    # Repair missing statement links (can happen if --persist ran before
+                    # extract-segments populated extract_statements, or when loading
+                    # pre-refactor disk fragments that lack statement_index fields).
+                    link_count = memory.store.get_link_count(fragment_id)
+                    if link_count == 0 and output_data.get("statements"):
+                        frag_stmts = output_data["statements"]
+                        # Try deterministic path first (statement_index present)
+                        if isinstance(frag_stmts[0].get("statement_index"), int):
+                            statement_ids = [
+                                f"{extract_id}_st{s['statement_index']:04d}"
+                                for s in frag_stmts
+                            ]
+                        else:
+                            # Fall back: match by text against SQLite extract_statements
+                            db_stmts = memory.store.get_statements_for_extract(extract_id)
+                            text_to_id = {s["text"]: s["statement_id"] for s in db_stmts}
+                            statement_ids = [
+                                text_to_id[s["text"]]
+                                for s in frag_stmts
+                                if s["text"] in text_to_id
+                            ]
+                        if statement_ids:
+                            memory.store.insert_fragment_links(fragment_id, statement_ids)
+                            logger.debug(
+                                f"Repaired {len(statement_ids)} links for {fragment_id}"
+                            )
+
+                    # Check Qdrant status
                     if args.embed and not existing.get("qdrant_point_id"):
                         logger.debug(
-                            f"Already in SQLite, indexing in Qdrant: {output_data['source_file']}"
+                            f"Already in SQLite, indexing in Qdrant: {fragment_id}"
                         )
-                        memory.index_in_qdrant(
-                            summary_id=existing["id"], output_data=output_data
+                        memory.index_fragment_in_qdrant(
+                            fragment_id=fragment_id, output_data=output_data
                         )
                         persisted += 1
                     else:
-                        logger.debug(f"Skipping already-persisted: {output_data['source_file']}")
+                        logger.debug(f"Skipping already-persisted: {fragment_id}")
                     continue
-                summary_id = memory.persist_sqlite(output_data=output_data, output_dir=output_dir)
+
+                frag_id = memory.persist_fragment_with_links(
+                    output_data=output_data, extract_id=extract_id
+                )
                 if args.embed:
-                    memory.index_in_qdrant(summary_id=summary_id, output_data=output_data)
+                    memory.index_fragment_in_qdrant(
+                        fragment_id=frag_id, output_data=output_data
+                    )
                 persisted += 1
+
             skipped_count = len(results) - persisted
             logger.info(f"Persisted {persisted} fragments ({skipped_count} already existed)")
 
@@ -891,16 +985,16 @@ def main() -> int:
     )
     summarize_parser.add_argument(
         "--persist", action="store_true", default=False,
-        help="Persist the summary to SQLite and index it in Qdrant",
+        help="(Deprecated no-op) Persistence will be re-added in a future commit.",
     )
     summarize_parser.add_argument(
         "--force", action="store_true", default=False,
-        help="Wipe existing output files and DB/Qdrant records before re-running",
+        help="Wipe existing output files before re-running",
     )
 
     # -- retrieve ---------------------------------------------------------
     retrieve_parser = subparsers.add_parser(
-        "retrieve", help="Semantic search over persisted summaries"
+        "retrieve", help="Semantic search over persisted fragment embeddings"
     )
     retrieve_parser.add_argument(
         "--query", "-q", required=True, help="Natural-language search query"
@@ -920,7 +1014,7 @@ def main() -> int:
 
     # -- answer -----------------------------------------------------------
     answer_parser = subparsers.add_parser(
-        "answer", help="Answer a question using indexed data"
+        "answer", help="Answer a question using indexed fragment data"
     )
     answer_parser.add_argument("query", help="Natural-language question")
     answer_parser.add_argument(
@@ -960,6 +1054,10 @@ def main() -> int:
         "--output-dir", default="inbox/ai_chat/chatgpt",
         help="Base output directory (default: inbox/ai_chat/chatgpt)",
     )
+    ingest_chatgpt.add_argument(
+        "--persist", action="store_true", default=False,
+        help="Persist source file metadata, conversation, and segments to SQLite",
+    )
 
     # -- summarize-segments -----------------------------------------------
     ss_parser = subparsers.add_parser(
@@ -992,11 +1090,11 @@ def main() -> int:
     )
     ss_chatgpt.add_argument(
         "--persist", action="store_true", default=False,
-        help="Persist summaries to SQLite and index in Qdrant",
+        help="Persist segment summaries to SQLite (no Qdrant indexing)",
     )
     ss_chatgpt.add_argument(
         "--force", action="store_true", default=False,
-        help="Wipe existing files and DB/Qdrant records for the range before re-running",
+        help="Wipe existing files and DB records for the range before re-running",
     )
 
     # -- detect-topics ----------------------------------------------------
@@ -1026,11 +1124,11 @@ def main() -> int:
     )
     dt_chatgpt.add_argument(
         "--persist", action="store_true", default=False,
-        help="Persist topic summaries to SQLite and index in Qdrant",
+        help="Persist topic summaries to SQLite (no Qdrant indexing)",
     )
     dt_chatgpt.add_argument(
         "--force", action="store_true", default=False,
-        help="Wipe existing topic files and DB/Qdrant records before re-running",
+        help="Wipe existing topic files and DB records before re-running",
     )
 
     # -- extract-segments -------------------------------------------------
@@ -1057,6 +1155,10 @@ def main() -> int:
     es_chatgpt.add_argument(
         "--to-segment", type=int, default=None, dest="to_segment",
         help="Stop after this segment index, inclusive (default: last)",
+    )
+    es_chatgpt.add_argument(
+        "--persist", action="store_true", default=False,
+        help="Persist extracts and statements to SQLite",
     )
     es_chatgpt.add_argument(
         "--force", action="store_true", default=False,
@@ -1086,7 +1188,8 @@ def main() -> int:
     )
     fe_chatgpt.add_argument(
         "--persist", action="store_true", default=False,
-        help="Persist fragments to SQLite (source of truth). Does not index Qdrant.",
+        help="Persist fragments and statement links to SQLite (source of truth). "
+             "Does not index Qdrant.",
     )
     fe_chatgpt.add_argument(
         "--embed", action="store_true", default=False,

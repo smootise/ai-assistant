@@ -1,19 +1,18 @@
 """Memory layer orchestrator for JARVIS.
 
-Coordinates persistence to SQLite and vector indexing in Qdrant after
-a summarization run. This is the only module that touches both stores.
+Coordinates entity-level persistence to SQLite and fragment-level vector
+indexing in Qdrant. This is the only module that touches both stores.
 
 Responsibility split:
-- SQLite (SummaryStore)  → source of truth for structured summary records.
-- Qdrant (VectorStore)   → vector retrieval index; payload metadata only.
-- OUTPUTS folder         → raw JSON/Markdown artifacts.
+- SQLite (SummaryStore)  → relational source of truth for all records.
+- Qdrant (VectorStore)   → fragment vector index only; minimal payload.
+- OUTPUTS / inbox        → raw JSON/Markdown artifacts (stays on disk).
 """
 
 import logging
-from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from jarvis.embedder import EmbeddingClient, build_embedding_text
+from jarvis.embedder import EmbeddingClient
 from jarvis.store import SummaryStore
 from jarvis.vector_store import VectorStore
 
@@ -22,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryLayer:
-    """Persists a summary to SQLite and indexes it in Qdrant."""
+    """Persists pipeline records to SQLite; indexes fragment vectors in Qdrant."""
 
     def __init__(
         self,
@@ -30,55 +29,134 @@ class MemoryLayer:
         vector_store: VectorStore,
         embedder: EmbeddingClient,
     ):
-        """Initialize memory layer.
-
-        Args:
-            store: SQLite summary store.
-            vector_store: Qdrant vector store.
-            embedder: Ollama embedding client.
-        """
         self.store = store
         self.vector_store = vector_store
         self.embedder = embedder
 
-    def persist_sqlite(
-        self,
-        output_data: Dict[str, Any],
-        output_dir: Optional[Path] = None,
-    ) -> int:
-        """Insert a summary record into SQLite and return its summary_id.
+    # ------------------------------------------------------------------
+    # Ingest-stage persistence
+    # ------------------------------------------------------------------
 
-        Args:
-            output_data: The summarization output dict.
-            output_dir: Path to the OUTPUTS run directory (used to derive
-                        artifact file paths stored in SQLite).
+    def persist_source_file(self, data: Dict[str, Any]) -> str:
+        """Insert source file metadata. Returns source_file_id."""
+        fid = self.store.insert_source_file(data)
+        logger.debug(f"Source file persisted: {fid} ({data['source_kind']})")
+        return fid
 
-        Returns:
-            SQLite summary_id of the inserted record.
+    def persist_conversation(self, data: Dict[str, Any]) -> None:
+        """Insert conversation metadata row."""
+        self.store.insert_conversation(data)
+        logger.debug(f"Conversation persisted: {data['conversation_id']}")
+
+    def persist_segment(self, data: Dict[str, Any]) -> str:
+        """Insert a segment row (with full segment_text). Returns segment_id."""
+        sid = self.store.insert_segment(data)
+        logger.debug(f"Segment persisted: {sid}")
+        return sid
+
+    # ------------------------------------------------------------------
+    # Summarize-segments persistence
+    # ------------------------------------------------------------------
+
+    def persist_segment_summary(self, data: Dict[str, Any]) -> str:
+        """Insert a segment summary row. Returns segment_summary_id."""
+        ss_id = self.store.insert_segment_summary(data)
+        logger.debug(f"Segment summary persisted: {ss_id}")
+        return ss_id
+
+    # ------------------------------------------------------------------
+    # Topic persistence
+    # ------------------------------------------------------------------
+
+    def persist_topic_summary(
+        self, data: Dict[str, Any], segment_ids: Optional[List[str]] = None
+    ) -> str:
+        """Insert topic summary + segment mapping rows. Returns topic_id."""
+        topic_id = self.store.insert_topic_summary(data)
+        if segment_ids:
+            self.store.insert_topic_segments(topic_id, segment_ids)
+        logger.debug(f"Topic summary persisted: {topic_id}")
+        return topic_id
+
+    # ------------------------------------------------------------------
+    # Extract persistence
+    # ------------------------------------------------------------------
+
+    def persist_extract_with_statements(self, output_data: Dict[str, Any]) -> str:
+        """Insert extract row + all statement rows in one logical operation.
+
+        Idempotent: if the extract row already exists (segment_id UNIQUE),
+        both insert_extract and insert_statements are no-ops.
+
+        Returns the extract_id.
         """
-        source_file = output_data.get("source_file", "")
-
-        output_json_path: Optional[str] = None
-        output_md_path: Optional[str] = None
-        if output_dir is not None:
-            stem = Path(source_file).stem
-            output_json_path = str(output_dir / f"{stem}.json")
-            output_md_path = str(output_dir / f"{stem}.md")
-
-        summary_id = self.store.insert_summary(
-            output_data=output_data,
-            output_json_path=output_json_path,
-            output_md_path=output_md_path,
+        extract_id = self.store.insert_extract(output_data)
+        statements = output_data.get("statements", [])
+        if statements:
+            self.store.insert_statements(extract_id, statements)
+        logger.debug(
+            f"Extract persisted: {extract_id} ({len(statements)} statements)"
         )
-        logger.debug(f"SQLite insert summary_id={summary_id} (source={source_file})")
-        return summary_id
+        return extract_id
 
-    def index_in_qdrant(self, summary_id: int, output_data: Dict[str, Any]) -> str:
-        """Embed output_data and upsert into Qdrant; write back point ID to SQLite.
+    # ------------------------------------------------------------------
+    # Fragment persistence
+    # ------------------------------------------------------------------
+
+    def persist_fragment_with_links(
+        self, output_data: Dict[str, Any], extract_id: str
+    ) -> str:
+        """Insert fragment row + statement link rows.
+
+        Idempotent: INSERT OR IGNORE on (extract_id, fragment_index).
 
         Args:
-            summary_id: SQLite summary_id of an already-persisted record.
-            output_data: The summarization output dict (used to build embedding text).
+            output_data: Fragment output_data dict from Fragmenter.
+            extract_id: Parent extract_id (required — fragmenter knows its extract).
+
+        Returns the fragment_id.
+        """
+        frag_data: Dict[str, Any] = {
+            "extract_id": extract_id,
+            "fragment_index": output_data["fragment_index"],
+            "title": output_data.get("title"),
+            "retrieval_text": output_data.get("text", ""),
+            "status": output_data.get("status", "ok"),
+        }
+        if output_data.get("created_at"):
+            frag_data["created_at"] = output_data["created_at"]
+        fragment_id = self.store.insert_fragment(frag_data)
+
+        # Build statement_ids from linked statements (using deterministic IDs)
+        statements = output_data.get("statements", [])
+        statement_ids = [
+            f"{extract_id}_st{s['statement_index']:04d}"
+            for s in statements
+            if isinstance(s.get("statement_index"), int)
+        ]
+        if statement_ids:
+            self.store.insert_fragment_links(fragment_id, statement_ids)
+
+        logger.debug(
+            f"Fragment persisted: {fragment_id} "
+            f"({len(statement_ids)} statement links)"
+        )
+        return fragment_id
+
+    # ------------------------------------------------------------------
+    # Fragment Qdrant indexing
+    # ------------------------------------------------------------------
+
+    def index_fragment_in_qdrant(
+        self, fragment_id: str, output_data: Dict[str, Any]
+    ) -> str:
+        """Embed retrieval_text and upsert fragment into Qdrant.
+
+        Writes qdrant_point_id back to the fragments table on success.
+
+        Args:
+            fragment_id: SQLite fragment_id of an already-persisted fragment.
+            output_data: Fragment output_data (used for embedding text + payload).
 
         Returns:
             Qdrant point_id of the upserted vector.
@@ -86,59 +164,40 @@ class MemoryLayer:
         Raises:
             RuntimeError: On embedding or Qdrant upsert failure.
         """
-        embedding_text = build_embedding_text(output_data)
-        logger.debug(f"Embedding text ({len(embedding_text)} chars):\n{embedding_text[:200]}…")
+        retrieval_text = (output_data.get("text") or "").strip()
+        logger.debug(
+            f"Embedding fragment {fragment_id} ({len(retrieval_text)} chars)"
+        )
 
         try:
-            vector = self.embedder.embed(embedding_text)
+            vector = self.embedder.embed(retrieval_text)
         except (ConnectionError, RuntimeError) as e:
-            logger.error(f"Embedding failed for summary_id={summary_id}: {e}")
+            logger.error(f"Embedding failed for fragment {fragment_id}: {e}")
             raise
 
         payload = {
-            "source_file": output_data.get("source_file"),
-            "source_kind": output_data.get("source_kind"),
-            "lang": output_data.get("lang"),
-            "status": output_data.get("status"),
-            "created_at": output_data.get("created_at"),
-            "model": output_data.get("model"),
-            "segment_id": output_data.get("segment_id"),
+            "fragment_id": fragment_id,
             "parent_conversation_id": output_data.get("parent_conversation_id"),
+            "segment_id": output_data.get("segment_id"),
             "conversation_date": output_data.get("conversation_date"),
         }
+
         try:
             point_id = self.vector_store.upsert(
                 vector=vector,
-                summary_id=summary_id,
+                fragment_id=fragment_id,
                 payload=payload,
             )
         except (ValueError, RuntimeError) as e:
-            logger.error(f"Qdrant upsert failed for summary_id={summary_id}: {e}")
+            logger.error(f"Qdrant upsert failed for fragment {fragment_id}: {e}")
             raise
 
-        self.store.update_embedding(
-            summary_id=summary_id,
+        self.store.update_fragment_embedding(
+            fragment_id=fragment_id,
             qdrant_point_id=point_id,
             embedding_model=self.embedder.model,
         )
-        logger.info(f"Indexed summary_id={summary_id} in Qdrant (point={point_id})")
+        logger.info(
+            f"Indexed fragment {fragment_id} in Qdrant (point={point_id})"
+        )
         return point_id
-
-    def persist(
-        self,
-        output_data: Dict[str, Any],
-        output_dir: Optional[Path] = None,
-    ) -> int:
-        """Persist a summary to SQLite and index it in Qdrant.
-
-        Thin wrapper around persist_sqlite + index_in_qdrant. All existing
-        callers (summarize, summarize-segments, detect-topics) use this.
-
-        Returns:
-            SQLite summary_id of the persisted record.
-        """
-        summary_id = self.persist_sqlite(output_data=output_data, output_dir=output_dir)
-        self.index_in_qdrant(summary_id=summary_id, output_data=output_data)
-        source_file = output_data.get("source_file", "")
-        logger.info(f"Persisted summary_id={summary_id} (source={source_file})")
-        return summary_id

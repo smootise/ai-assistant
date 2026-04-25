@@ -17,7 +17,7 @@ and non-obvious design decisions that must not be re-litigated without good reas
 | `segment_summarizer.py` | `SegmentSummarizer` — per-segment summarization with rolling context. |
 | `topic_detector.py` | `TopicDetector` — cosine-similarity boundary detection + topic summarization. |
 | `store.py` | `SummaryStore` — SQLite persistence. Source of truth for all records. |
-| `memory.py` | `MemoryPersister` — writes to SQLite + indexes in Qdrant. |
+| `memory.py` | `MemoryLayer` — entity-shaped wrappers over `SummaryStore` + fragment-only Qdrant indexing. |
 | `vector_store.py` | `VectorStore` — Qdrant client wrapper (search, upsert, delete). |
 | `output_writer.py` | `OutputWriter` — writes `.json` + `.md` artifacts to disk. |
 | `ingest/` | Ingestion adapters. Currently: ChatGPT export parser + segmenter. |
@@ -29,12 +29,14 @@ and non-obvious design decisions that must not be re-litigated without good reas
 Commands must be run in this sequence for a given conversation:
 
 ```
-ingest chatgpt            →  normalize + segment  →  inbox/ai_chat/chatgpt/<conv_id>/
-summarize-segments chatgpt →  segment summaries   →  OUTPUTS/<conv_id>/segment_summaries/
-detect-topics chatgpt      →  topic summaries     →  OUTPUTS/<conv_id>/topic_summaries/
+ingest chatgpt --persist             →  inbox/…/<conv_id>/  +  SQLite: source_files, conversations, segments
+summarize-segments chatgpt --persist →  OUTPUTS/…/segment_summaries/  +  SQLite: segment_summaries
+detect-topics chatgpt --persist      →  OUTPUTS/…/topic_summaries/  +  SQLite: topic_summaries, topic_segments
+extract-segments chatgpt --persist   →  OUTPUTS/…/extracts/  +  SQLite: extracts, extract_statements
+fragment-extracts chatgpt --persist --embed  →  OUTPUTS/…/fragments/  +  SQLite: fragments, links  +  Qdrant
 ```
 
-`retrieve` and `answer` work across all persisted data regardless of source.
+`retrieve` and `answer` work across all indexed fragments regardless of source.
 
 ---
 
@@ -44,9 +46,11 @@ Stable paths — no timestamps in production flows:
 
 | Artifact | Path |
 |---|---|
-| Conversation summary | `OUTPUTS/<source_basename>/` |
+| Conversation summary (single-file) | `OUTPUTS/<source_basename>/` |
 | Segment summaries | `OUTPUTS/<conv_id>/segment_summaries/<segment_id>.json\|.md` |
 | Topic summaries | `OUTPUTS/<conv_id>/topic_summaries/topic_NNN.json` |
+| Extracts | `OUTPUTS/<conv_id>/extracts/extract_NNN.json\|.md` |
+| Fragments | `OUTPUTS/<conv_id>/fragments/segment_NNN/fragment_MMM.json\|.md` |
 | SQLite DB | `data/jarvis.db` |
 
 `JARVIS_OUTPUT_TIMESTAMP` / `JARVIS_OUTPUT_TS_FORMAT` are still wired but effectively unused
@@ -58,15 +62,10 @@ in the main pipeline flows. Do not reintroduce timestamps without explicit discu
 
 Two stores, distinct roles:
 
-- **SQLite (`SummaryStore`)** — canonical record for every summary. Every field from the output
-  document is stored here. Always query SQLite for full records.
-- **Qdrant (`VectorStore`)** — vector index only. Stores embedding + minimal payload
-  (`summary_id`, `source_file`, `source_kind`, `status`, `created_at`, `model`,
-  `segment_id`, `parent_conversation_id`). Full records are always fetched from SQLite by ID.
+- **SQLite (`SummaryStore`)** — relational source of truth for all pipeline records. Schema v7. Ten tables: `source_files`, `conversations`, `segments`, `segment_summaries`, `extracts`, `extract_statements`, `fragments`, `fragment_statement_links`, `topic_summaries`, `topic_segments`. Always query SQLite for full records.
+- **Qdrant (`VectorStore`)** — fragment vector index only. Collection: `jarvis_fragments`. Payload per point: `{fragment_id, parent_conversation_id, segment_id, conversation_date}`. Full records fetched from SQLite by `fragment_id` via `store.get_fragments_with_statements()`.
 
-SQLite schema is at **version 4**. Schema was rebuilt cleanly at v4 — no backward-compat
-migrations needed (databases were emptied). New columns must be added via a `_MIGRATION_V5`
-block appended to `_MIGRATIONS` in `store.py`.
+Schema changes require a version bump in `_SCHEMA_VERSION` (currently `7`) — no migration path, DB is wiped and rebuilt. All `INSERT OR IGNORE` operations use deterministic IDs, so rebuilding from existing disk artifacts (with `--persist` flags) is idempotent.
 
 ---
 
@@ -76,12 +75,14 @@ This is the single most important non-obvious design decision in the codebase.
 
 | Use case | Function | Text used | Why |
 |---|---|---|---|
-| **Retrieval indexing** | `build_embedding_text()` in `embedder.py` | Multi-field: summary + bullets + action_items | Richer signal for semantic search |
-| **Topic boundary detection** | `_build_embedding_text()` in `topic_detector.py` | Summary text only | Multi-field text flattens inter-segment similarity, producing a near-uniform distribution unsuitable for boundary detection |
+| **Fragment retrieval indexing** | `build_embedding_text()` in `embedder.py` | Fragment `text` field (title + cleaned statements) | Retrieval-clean; no raw code/prompt blobs |
+| **Topic boundary detection** | `_build_embedding_text()` in `topic_detector.py` | Segment summary text only | Multi-field text flattens inter-segment similarity, producing a near-uniform distribution unsuitable for boundary detection |
 
 Topic boundary detection always embeds on the fly from summary text. It never reuses Qdrant
 vectors. This was a deliberate fix — using Qdrant vectors gave a mean similarity of ~0.46 across
 all pairs. Summary-only gives ~0.70 mean with meaningful variance.
+
+Qdrant is **fragment-only**. Segment summaries and topic summaries are never embedded or indexed in Qdrant.
 
 ---
 
@@ -124,8 +125,7 @@ explicitly set it before the degraded check.
 **Resume (default):** if a `.json` output file already exists on disk for a segment/topic,
 skip the LLM call and load from disk. This makes interrupted runs safely resumable.
 
-**`--force`:** wipes existing output files and SQLite/Qdrant records for the affected scope,
-then re-runs from scratch.
+**`--force`:** wipes existing output files and SQLite records (and Qdrant point IDs for fragments) for the affected scope, then re-runs from scratch.
 
 **Critical scoping rule:** `--force` with `--from-segment X --to-segment Y` only affects
 segments in that range. Segments outside the range are never touched.

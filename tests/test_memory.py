@@ -1,14 +1,12 @@
-"""Unit tests for the memory layer — store, embedder text builder, and memory orchestration.
+"""Unit tests for the memory layer — relational store and memory orchestration.
 
-These tests do not require live Ollama or Qdrant services. External calls are
-replaced with simple stubs so the suite runs in CI without local services.
+Tests do not require live Ollama or Qdrant. External calls are mocked.
 """
 
 import json
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -24,17 +22,99 @@ from jarvis.store import SummaryStore
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
-@pytest.fixture()
-def sample_output() -> Dict[str, Any]:
-    """Load the expected_summary fixture as a dict."""
-    with open(FIXTURE_DIR / "expected_summary.json", encoding="utf-8") as f:
-        return json.load(f)
-
-
-@pytest.fixture()
-def tmp_store(tmp_path: Path) -> SummaryStore:
-    """SummaryStore backed by a temporary SQLite file."""
+def _make_store(tmp_path: Path) -> SummaryStore:
     return SummaryStore(db_path=str(tmp_path / "test.db"))
+
+
+def _source_file_data(kind: str = "chatgpt_raw_export") -> Dict[str, Any]:
+    sha = "abc123def456" * 3 + "abcd"  # 40 hex chars
+    return {
+        "source_file_id": sha,
+        "source_kind": kind,
+        "original_filename": "conv.json",
+        "storage_path": "inbox/ai_chat/chatgpt/conv-001/conv.json",
+        "sha256": sha,
+        "size_bytes": 1024,
+    }
+
+
+def _conversation_data(conv_id: str = "conv-001") -> Dict[str, Any]:
+    return {
+        "conversation_id": conv_id,
+        "source_platform": "chatgpt",
+        "title": "Test conversation",
+        "message_count": 4,
+    }
+
+
+def _segment_data(conv_id: str = "conv-001", idx: int = 0) -> Dict[str, Any]:
+    seg_id = f"{conv_id}_s{idx:03d}"
+    return {
+        "segment_id": seg_id,
+        "conversation_id": conv_id,
+        "segment_index": idx,
+        "start_position": idx * 3,
+        "end_position": idx * 3 + 2,
+        "message_ids": [f"msg-{idx}-a", f"msg-{idx}-b"],
+        "segment_text": f"user: hello {idx}\n\nassistant: hi there {idx}",
+    }
+
+
+def _extract_data(conv_id: str = "conv-001", seg_idx: int = 0) -> Dict[str, Any]:
+    seg_id = f"{conv_id}_s{seg_idx:03d}"
+    return {
+        "segment_id": seg_id,
+        "segment_index": seg_idx,
+        "parent_conversation_id": conv_id,
+        "provider": "local",
+        "model": "gemma4:31b",
+        "status": "ok",
+        "statements": [
+            {
+                "statement_id": f"{seg_id}_st0000",
+                "statement_index": 0,
+                "segment_id": seg_id,
+                "segment_index": seg_idx,
+                "parent_conversation_id": conv_id,
+                "speaker": "user",
+                "text": "hello",
+            },
+            {
+                "statement_id": f"{seg_id}_st0001",
+                "statement_index": 1,
+                "segment_id": seg_id,
+                "segment_index": seg_idx,
+                "parent_conversation_id": conv_id,
+                "speaker": "assistant",
+                "text": "hi there",
+            },
+        ],
+    }
+
+
+def _fragment_data(conv_id: str = "conv-001", seg_idx: int = 0, frag_idx: int = 0) -> Dict[str, Any]:
+    seg_id = f"{conv_id}_s{seg_idx:03d}"
+    extract_id = f"{seg_id}_x"
+    return {
+        # Fields used by store.insert_fragment
+        "extract_id": extract_id,
+        "fragment_index": frag_idx,
+        "title": f"Fragment {frag_idx}",
+        "retrieval_text": "user: hello\n\nassistant: hi there",
+        # Fields used by memory.index_fragment_in_qdrant (embedding text + payload)
+        "text": "user: hello\n\nassistant: hi there",
+        "segment_id": seg_id,
+        "segment_index": seg_idx,
+        "parent_conversation_id": conv_id,
+        "conversation_date": "2026-01-01T00:00:00Z",
+        "statements": [
+            {"statement_index": 0, "speaker": "user", "text": "hello"},
+            {"statement_index": 1, "speaker": "assistant", "text": "hi there"},
+        ],
+        "status": "ok",
+        "provider": "local",
+        "model": "gemma4:31b",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -43,211 +123,307 @@ def tmp_store(tmp_path: Path) -> SummaryStore:
 
 
 class TestSummaryStore:
-    def test_insert_returns_id(self, tmp_store: SummaryStore, sample_output: Dict[str, Any]):
-        row_id = tmp_store.insert_summary(sample_output)
-        assert isinstance(row_id, int)
-        assert row_id >= 1
+    def test_insert_source_file(self, tmp_path):
+        store = _make_store(tmp_path)
+        data = _source_file_data()
+        fid = store.insert_source_file(data)
+        assert fid == data["source_file_id"]
 
-    def test_inserted_row_is_retrievable(
-        self, tmp_store: SummaryStore, sample_output: Dict[str, Any]
-    ):
-        row_id = tmp_store.insert_summary(sample_output)
-        rows = tmp_store.get_by_ids([row_id])
+    def test_insert_source_file_idempotent(self, tmp_path):
+        store = _make_store(tmp_path)
+        data = _source_file_data()
+        store.insert_source_file(data)
+        store.insert_source_file(data)  # should not raise
+        with store._connect() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM source_files").fetchone()[0]
+        assert count == 1
+
+    def test_insert_conversation(self, tmp_path):
+        store = _make_store(tmp_path)
+        store.insert_source_file(_source_file_data())
+        store.insert_conversation(_conversation_data())
+        with store._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM conversations WHERE conversation_id = 'conv-001'"
+            ).fetchone()
+        assert row is not None
+
+    def test_insert_segment(self, tmp_path):
+        store = _make_store(tmp_path)
+        store.insert_source_file(_source_file_data())
+        store.insert_conversation(_conversation_data())
+        seg = _segment_data()
+        seg_id = store.insert_segment(seg)
+        assert seg_id == seg["segment_id"]
+
+    def test_get_segment(self, tmp_path):
+        store = _make_store(tmp_path)
+        store.insert_source_file(_source_file_data())
+        store.insert_conversation(_conversation_data())
+        seg = _segment_data()
+        store.insert_segment(seg)
+        fetched = store.get_segment(seg["segment_id"])
+        assert fetched is not None
+        assert fetched["segment_text"] == seg["segment_text"]
+        assert fetched["message_ids"] == seg["message_ids"]
+
+    def test_insert_segment_idempotent(self, tmp_path):
+        store = _make_store(tmp_path)
+        store.insert_source_file(_source_file_data())
+        store.insert_conversation(_conversation_data())
+        seg = _segment_data()
+        store.insert_segment(seg)
+        store.insert_segment(seg)
+        with store._connect() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM segments").fetchone()[0]
+        assert count == 1
+
+    def test_insert_extract_and_statements(self, tmp_path):
+        store = _make_store(tmp_path)
+        store.insert_source_file(_source_file_data())
+        store.insert_conversation(_conversation_data())
+        store.insert_segment(_segment_data())
+        ext = _extract_data()
+        extract_id = store.insert_extract(ext)
+        assert extract_id == "conv-001_s000_x"
+        store.insert_statements(extract_id, ext["statements"])
+        stmts = store.get_statements_for_extract(extract_id)
+        assert len(stmts) == 2
+        assert stmts[0]["speaker"] == "user"
+        assert stmts[1]["speaker"] == "assistant"
+
+    def test_insert_extract_idempotent(self, tmp_path):
+        store = _make_store(tmp_path)
+        store.insert_source_file(_source_file_data())
+        store.insert_conversation(_conversation_data())
+        store.insert_segment(_segment_data())
+        ext = _extract_data()
+        store.insert_extract(ext)
+        store.insert_extract(ext)
+        with store._connect() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM extracts").fetchone()[0]
+        assert count == 1
+
+    def test_insert_fragment_and_links(self, tmp_path):
+        store = _make_store(tmp_path)
+        store.insert_source_file(_source_file_data())
+        store.insert_conversation(_conversation_data())
+        store.insert_segment(_segment_data())
+        ext = _extract_data()
+        extract_id = store.insert_extract(ext)
+        store.insert_statements(extract_id, ext["statements"])
+        frag = _fragment_data()
+        fragment_id = store.insert_fragment(frag)
+        assert fragment_id == "conv-001_s000_x_f000"
+        statement_ids = [f"{extract_id}_st0000", f"{extract_id}_st0001"]
+        store.insert_fragment_links(fragment_id, statement_ids)
+        with store._connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM fragment_statement_links WHERE fragment_id = ?",
+                (fragment_id,),
+            ).fetchone()[0]
+        assert count == 2
+
+    def test_update_fragment_embedding(self, tmp_path):
+        store = _make_store(tmp_path)
+        store.insert_source_file(_source_file_data())
+        store.insert_conversation(_conversation_data())
+        store.insert_segment(_segment_data())
+        extract_id = store.insert_extract(_extract_data())
+        frag = _fragment_data()
+        fragment_id = store.insert_fragment(frag)
+        store.update_fragment_embedding(fragment_id, "qdrant-uuid-001", "qwen3-embedding")
+        fetched = store.get_fragment(fragment_id)
+        assert fetched["qdrant_point_id"] == "qdrant-uuid-001"
+        assert fetched["embedding_model"] == "qwen3-embedding"
+        assert fetched["embedded_at"] is not None
+
+    def test_get_fragments_with_statements_reconstruction(self, tmp_path):
+        store = _make_store(tmp_path)
+        store.insert_source_file(_source_file_data())
+        store.insert_conversation(_conversation_data())
+        store.insert_segment(_segment_data())
+        ext = _extract_data()
+        extract_id = store.insert_extract(ext)
+        store.insert_statements(extract_id, ext["statements"])
+        frag = _fragment_data()
+        fragment_id = store.insert_fragment(frag)
+        statement_ids = [f"{extract_id}_st0000", f"{extract_id}_st0001"]
+        store.insert_fragment_links(fragment_id, statement_ids)
+
+        rows = store.get_fragments_with_statements([fragment_id])
         assert len(rows) == 1
         row = rows[0]
-        assert row["source_file"] == sample_output["source_file"]
-        assert row["summary"] == sample_output["summary"]
-        assert isinstance(row["bullets"], list)
-        assert isinstance(row["action_items"], list)
+        assert row["fragment_id"] == fragment_id
+        assert row["segment_id"] == "conv-001_s000"
+        assert row["segment_text"] is not None
+        assert len(row["statements"]) == 2
+        assert row["statements"][0]["speaker"] == "user"
+        assert row["statements"][1]["speaker"] == "assistant"
 
-    def test_artifact_paths_stored(
-        self, tmp_store: SummaryStore, sample_output: Dict[str, Any]
-    ):
-        row_id = tmp_store.insert_summary(
-            sample_output,
-            output_json_path="OUTPUTS/20260409/conv_tiny_test.json",
-            output_md_path="OUTPUTS/20260409/conv_tiny_test.md",
-        )
-        rows = tmp_store.get_by_ids([row_id])
-        assert rows[0]["output_json_path"] == "OUTPUTS/20260409/conv_tiny_test.json"
-        assert rows[0]["output_md_path"] == "OUTPUTS/20260409/conv_tiny_test.md"
+    def test_get_fragments_with_statements_preserves_order(self, tmp_path):
+        store = _make_store(tmp_path)
+        store.insert_source_file(_source_file_data())
+        store.insert_conversation(_conversation_data())
+        store.insert_segment(_segment_data())
+        ext = _extract_data()
+        extract_id = store.insert_extract(ext)
+        store.insert_statements(extract_id, ext["statements"])
 
-    def test_update_embedding(
-        self, tmp_store: SummaryStore, sample_output: Dict[str, Any]
-    ):
-        row_id = tmp_store.insert_summary(sample_output)
-        tmp_store.update_embedding(
-            summary_id=row_id,
-            qdrant_point_id="test-uuid-1234",
-            embedding_model="qwen3-embedding",
-        )
-        rows = tmp_store.get_by_ids([row_id])
-        assert rows[0]["qdrant_point_id"] == "test-uuid-1234"
-        assert rows[0]["embedding_model"] == "qwen3-embedding"
-        assert rows[0]["embedded_at"] is not None
+        frag0 = _fragment_data(frag_idx=0)
+        frag1 = {**frag0, "fragment_index": 1, "title": "Second"}
+        fid0 = store.insert_fragment(frag0)
+        fid1 = store.insert_fragment(frag1)
 
-    def test_get_by_ids_preserves_order(
-        self, tmp_store: SummaryStore, sample_output: Dict[str, Any]
-    ):
-        id1 = tmp_store.insert_summary(sample_output)
-        id2 = tmp_store.insert_summary({**sample_output, "source_file": "other.json"})
-        # Request in reverse order
-        rows = tmp_store.get_by_ids([id2, id1])
-        assert rows[0]["id"] == id2
-        assert rows[1]["id"] == id1
+        rows = store.get_fragments_with_statements([fid1, fid0])
+        assert rows[0]["fragment_id"] == fid1
+        assert rows[1]["fragment_id"] == fid0
 
-    def test_schema_fields_stored(
-        self, tmp_store: SummaryStore, sample_output: Dict[str, Any]
-    ):
-        row_id = tmp_store.insert_summary(sample_output)
-        rows = tmp_store.get_by_ids([row_id])
-        assert rows[0]["schema"] == "jarvis.summarization"
-        assert rows[0]["schema_version"] == "1.0.0"
+    def test_get_fragments_with_statements_empty(self, tmp_path):
+        store = _make_store(tmp_path)
+        assert store.get_fragments_with_statements([]) == []
 
-    def test_latency_ms_stored(
-        self, tmp_store: SummaryStore, sample_output: Dict[str, Any]
-    ):
-        row_id = tmp_store.insert_summary(sample_output)
-        rows = tmp_store.get_by_ids([row_id])
-        assert rows[0]["latency_ms"] == sample_output["latency_ms"]
+    def test_delete_fragments(self, tmp_path):
+        store = _make_store(tmp_path)
+        store.insert_source_file(_source_file_data())
+        store.insert_conversation(_conversation_data())
+        store.insert_segment(_segment_data())
+        ext = _extract_data()
+        extract_id = store.insert_extract(ext)
+        store.insert_statements(extract_id, ext["statements"])
+        frag = _fragment_data()
+        fragment_id = store.insert_fragment(frag)
+        store.update_fragment_embedding(fragment_id, "pt-uuid", "qwen3-embedding")
 
-    def test_get_by_ids_empty(self, tmp_store: SummaryStore):
-        assert tmp_store.get_by_ids([]) == []
+        point_ids = store.delete_fragments("conv-001")
+        assert "pt-uuid" in point_ids
+        with store._connect() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM fragments").fetchone()[0]
+        assert count == 0
 
 
 # ---------------------------------------------------------------------------
-# build_embedding_text tests
+# build_embedding_text (kept for coverage — function is still importable)
 # ---------------------------------------------------------------------------
 
 
 class TestBuildEmbeddingText:
-    def test_contains_all_semantic_fields(self, sample_output: Dict[str, Any]):
-        text = build_embedding_text(sample_output)
-        assert sample_output["summary"] in text
-        for bullet in sample_output["bullets"]:
-            assert bullet in text
-        for action in sample_output["action_items"]:
-            assert action in text
-
-    def test_no_raw_json_structure(self, sample_output: Dict[str, Any]):
-        text = build_embedding_text(sample_output)
-        assert "{" not in text
-        assert '"summary"' not in text
-
-    def test_preserves_original_language(self):
-        """French text must not be translated."""
-        fr_output = {
-            "source_kind": "conversation",
-            "source_file": "conv_fr.json",
-            "summary": "L'équipe a finalisé les spécifications.",
-            "bullets": ["Décision : deux sous-dossiers"],
-            "action_items": ["Créer les fichiers FR"],
+    def test_fragment_returns_text_field(self):
+        data = {
+            "source_kind": "ai_chat_fragment",
+            "text": "user: hello\n\nassistant: hi",
         }
-        text = build_embedding_text(fr_output)
-        assert "L'équipe" in text
-        assert "Décision" in text
+        assert build_embedding_text(data) == "user: hello\n\nassistant: hi"
+
+    def test_non_fragment_combines_fields(self):
+        data = {
+            "source_kind": "conversation",
+            "summary": "A summary.",
+            "bullets": ["Point A"],
+            "action_items": ["Do X"],
+        }
+        text = build_embedding_text(data)
+        assert "A summary." in text
+        assert "Point A" in text
+        assert "Do X" in text
+        assert text.index("Key points") < text.index("A summary.")
 
     def test_empty_arrays_handled(self):
-        output = {
+        data = {
             "source_kind": "conversation",
-            "source_file": "test.json",
-            "summary": "A summary.",
+            "summary": "Only summary.",
             "bullets": [],
             "action_items": [],
         }
-        text = build_embedding_text(output)
-        assert "A summary." in text
+        text = build_embedding_text(data)
+        assert "Only summary." in text
         assert "Key points" not in text
-        assert "Action items" not in text
-
-    def test_bullets_appear_before_summary(self):
-        """Bullets must lead the embedding text for higher retrieval signal."""
-        output = {
-            "source_kind": "conversation",
-            "source_file": "test.json",
-            "summary": "A high-level synthesis.",
-            "bullets": ["Decision: use snake_case filenames"],
-            "action_items": [],
-        }
-        text = build_embedding_text(output)
-        assert text.index("Key points") < text.index("A high-level synthesis.")
 
 
 # ---------------------------------------------------------------------------
-# MemoryLayer tests (stubbed external services)
+# MemoryLayer tests
 # ---------------------------------------------------------------------------
 
 
 class TestMemoryLayer:
-    def test_persist_full_flow(
-        self, tmp_store: SummaryStore, sample_output: Dict[str, Any]
-    ):
-        """persist() should insert into SQLite, call embed, upsert to Qdrant,
-        and write back the Qdrant point ID."""
-        fake_vector = [0.1] * 1024
-
-        mock_vector_store = MagicMock()
-        mock_vector_store.upsert.return_value = "fake-point-uuid"
-
+    def _make_memory(self, tmp_path: Path) -> MemoryLayer:
+        store = _make_store(tmp_path)
+        mock_vs = MagicMock()
+        mock_vs.upsert.return_value = "fake-point-uuid"
         mock_embedder = MagicMock()
-        mock_embedder.embed.return_value = fake_vector
+        mock_embedder.embed.return_value = [0.1] * 1024
         mock_embedder.model = "qwen3-embedding"
+        return MemoryLayer(store=store, vector_store=mock_vs, embedder=mock_embedder)
 
-        memory = MemoryLayer(
-            store=tmp_store,
-            vector_store=mock_vector_store,
-            embedder=mock_embedder,
-        )
+    def _seed_extract(self, memory: MemoryLayer) -> str:
+        """Insert source_file, conversation, segment, and extract; return extract_id."""
+        memory.persist_source_file(_source_file_data())
+        memory.persist_conversation(_conversation_data())
+        memory.persist_segment(_segment_data())
+        extract_id = memory.persist_extract_with_statements(_extract_data())
+        return extract_id
 
-        summary_id = memory.persist(output_data=sample_output, output_dir=None)
+    def test_persist_extract_with_statements(self, tmp_path):
+        memory = self._make_memory(tmp_path)
+        extract_id = self._seed_extract(memory)
+        assert extract_id == "conv-001_s000_x"
+        stmts = memory.store.get_statements_for_extract(extract_id)
+        assert len(stmts) == 2
 
-        # SQLite record exists
-        rows = tmp_store.get_by_ids([summary_id])
-        assert len(rows) == 1
-        assert rows[0]["qdrant_point_id"] == "fake-point-uuid"
-        assert rows[0]["embedding_model"] == "qwen3-embedding"
-        assert rows[0]["embedded_at"] is not None
+    def test_persist_fragment_with_links(self, tmp_path):
+        memory = self._make_memory(tmp_path)
+        extract_id = self._seed_extract(memory)
+        frag_data = _fragment_data()
+        frag_id = memory.persist_fragment_with_links(frag_data, extract_id=extract_id)
+        assert frag_id == "conv-001_s000_x_f000"
+        with memory.store._connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM fragment_statement_links WHERE fragment_id = ?",
+                (frag_id,),
+            ).fetchone()[0]
+        assert count == 2
 
-        # Qdrant upsert called once with the right summary_id
-        mock_vector_store.upsert.assert_called_once()
-        call_kwargs = mock_vector_store.upsert.call_args.kwargs
-        assert call_kwargs["summary_id"] == summary_id
-        assert call_kwargs["vector"] == fake_vector
+    def test_index_fragment_in_qdrant(self, tmp_path):
+        memory = self._make_memory(tmp_path)
+        extract_id = self._seed_extract(memory)
+        frag_data = _fragment_data()
+        frag_id = memory.persist_fragment_with_links(frag_data, extract_id=extract_id)
+        point_id = memory.index_fragment_in_qdrant(fragment_id=frag_id, output_data=frag_data)
+        assert point_id == "fake-point-uuid"
+        # Qdrant upsert called with fragment_id in payload
+        call_kwargs = memory.vector_store.upsert.call_args.kwargs
+        assert call_kwargs["fragment_id"] == frag_id
+        # Written back to SQLite
+        fetched = memory.store.get_fragment(frag_id)
+        assert fetched["qdrant_point_id"] == "fake-point-uuid"
 
-    def test_persist_embedding_failure_raises(
-        self, tmp_store: SummaryStore, sample_output: Dict[str, Any]
-    ):
-        """If embedding fails, RuntimeError should propagate."""
-        mock_vector_store = MagicMock()
-        mock_embedder = MagicMock()
-        mock_embedder.embed.side_effect = RuntimeError("Ollama down")
-        mock_embedder.model = "qwen3-embedding"
-
-        memory = MemoryLayer(
-            store=tmp_store,
-            vector_store=mock_vector_store,
-            embedder=mock_embedder,
-        )
-
+    def test_index_fragment_embedding_failure_raises(self, tmp_path):
+        memory = self._make_memory(tmp_path)
+        extract_id = self._seed_extract(memory)
+        frag_id = memory.persist_fragment_with_links(_fragment_data(), extract_id=extract_id)
+        memory.embedder.embed.side_effect = RuntimeError("Ollama down")
         with pytest.raises(RuntimeError, match="Ollama down"):
-            memory.persist(output_data=sample_output)
+            memory.index_fragment_in_qdrant(frag_id, _fragment_data())
 
-    def test_persist_qdrant_failure_raises(
-        self, tmp_store: SummaryStore, sample_output: Dict[str, Any]
-    ):
-        """If Qdrant upsert fails, RuntimeError should propagate."""
-        mock_vector_store = MagicMock()
-        mock_vector_store.upsert.side_effect = RuntimeError("Qdrant unavailable")
-
-        mock_embedder = MagicMock()
-        mock_embedder.embed.return_value = [0.0] * 1024
-        mock_embedder.model = "qwen3-embedding"
-
-        memory = MemoryLayer(
-            store=tmp_store,
-            vector_store=mock_vector_store,
-            embedder=mock_embedder,
-        )
-
+    def test_index_fragment_qdrant_failure_raises(self, tmp_path):
+        memory = self._make_memory(tmp_path)
+        extract_id = self._seed_extract(memory)
+        frag_id = memory.persist_fragment_with_links(_fragment_data(), extract_id=extract_id)
+        memory.vector_store.upsert.side_effect = RuntimeError("Qdrant unavailable")
         with pytest.raises(RuntimeError, match="Qdrant unavailable"):
-            memory.persist(output_data=sample_output)
+            memory.index_fragment_in_qdrant(frag_id, _fragment_data())
+
+    def test_persist_idempotent_on_rerun(self, tmp_path):
+        """Running persist twice on the same data produces exactly one row each."""
+        memory = self._make_memory(tmp_path)
+        extract_id = self._seed_extract(memory)
+        frag_data = _fragment_data()
+        memory.persist_fragment_with_links(frag_data, extract_id=extract_id)
+        memory.persist_fragment_with_links(frag_data, extract_id=extract_id)
+        with memory.store._connect() as conn:
+            frag_count = conn.execute("SELECT COUNT(*) FROM fragments").fetchone()[0]
+            link_count = conn.execute(
+                "SELECT COUNT(*) FROM fragment_statement_links"
+            ).fetchone()[0]
+        assert frag_count == 1
+        assert link_count == 2

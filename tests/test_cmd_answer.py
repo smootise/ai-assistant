@@ -24,18 +24,22 @@ FAKE_CONFIG = {
 
 FAKE_ROWS = [
     {
-        "id": 1,
-        "summary": "We discussed the storage layer.",
-        "bullets": ["Decision: Use SQLite as source of truth"],
-        "source_file": "conv_001.json",
-        "created_at": "2025-01-01T00:00:00Z",
+        "fragment_id": "conv_001_s000_x_f000",
+        "segment_id": "conv_001_s000",
+        "title": "Storage layer discussion",
+        "retrieval_text": "We discussed the storage layer.",
+        "statements": [{"speaker": "assistant", "text": "Decision: Use SQLite as source of truth"}],
+        "conversation_date": "2025-01-01",
+        "fragment_created_at": "2025-01-01T00:00:00Z",
     },
     {
-        "id": 2,
-        "summary": "We compared Qdrant vs Pinecone.",
-        "bullets": ["Decision: Use Qdrant for local-first"],
-        "source_file": "conv_002.json",
-        "created_at": "2025-01-02T00:00:00Z",
+        "fragment_id": "conv_002_s000_x_f000",
+        "segment_id": "conv_002_s000",
+        "title": "Vector store comparison",
+        "retrieval_text": "We compared Qdrant vs Pinecone.",
+        "statements": [{"speaker": "assistant", "text": "Decision: Use Qdrant for local-first"}],
+        "conversation_date": "2025-01-02",
+        "fragment_created_at": "2025-01-02T00:00:00Z",
     },
 ]
 
@@ -54,7 +58,7 @@ def _mock_memory(hits, rows):
     memory = MagicMock()
     memory.embedder.embed.return_value = [0.1] * 128
     memory.vector_store.search.return_value = hits
-    memory.store.get_by_ids.return_value = rows
+    memory.store.get_fragments_with_statements.return_value = rows
     return memory
 
 
@@ -131,14 +135,21 @@ def test_answer_connection_error(mock_build_memory, mock_ollama_cls):
 def test_build_context_block_with_bullets():
     block = _build_context_block(FAKE_ROWS)
     assert "Excerpt 1" in block
-    assert "source: conv_001.json" in block
+    assert "segment: conv_001_s000" in block
     assert "Decision: Use SQLite as source of truth" in block
     assert "Excerpt 2" in block
 
 
 def test_build_context_block_no_bullets():
-    rows = [{"id": 1, "summary": "A summary.", "bullets": None,
-             "source_file": "f.json", "created_at": "2025-01-01T00:00:00Z"}]
+    rows = [{
+        "fragment_id": "conv_s000_x_f000",
+        "segment_id": "conv_s000",
+        "title": None,
+        "retrieval_text": "A summary.",
+        "statements": [],
+        "conversation_date": "2025-01-01",
+        "fragment_created_at": "2025-01-01T00:00:00Z",
+    }]
     block = _build_context_block(rows)
     assert "A summary." in block
-    assert "Key points" not in block
+    assert "segment: conv_s000" in block

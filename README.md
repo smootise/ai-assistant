@@ -18,16 +18,17 @@ Everything runs on your own machine. No data leaves your environment.
 
 ```
 Raw data (ChatGPT export, Notion, Slack, ...)
-    ↓  ingest
-Normalized segments
-    ↓  summarize-segments
-Segment summaries (SQLite + Qdrant)
-    ↓  detect-topics
-Topic summaries (SQLite + Qdrant)
-    ↓  extract-segments
-Attributed statements per segment
-    ↓  fragment-extracts
-Fragments (SQLite + Qdrant) ──▶ retrieve / answer
+    ↓  ingest --persist
+Normalized segments → SQLite (source_files, conversations, segments)
+    ↓  summarize-segments --persist
+Segment summaries → SQLite (segment_summaries)
+    ↓  detect-topics --persist
+Topic summaries → SQLite (topic_summaries)
+    ↓  extract-segments --persist
+Attributed statements → SQLite (extracts, extract_statements)
+    ↓  fragment-extracts --persist --embed
+Fragments → SQLite (fragments, links) + Qdrant vectors
+    ↓  retrieve / answer
 Answers grounded in your own data
 ```
 
@@ -72,20 +73,20 @@ docker run -p 6333:6333 -v qdrant_storage:/qdrant/storage qdrant/qdrant
 ### 4. Run the full pipeline on a ChatGPT export
 
 ```bash
-# Step 1 — ingest and segment
-python -m jarvis.cli ingest chatgpt --file inbox/ai_chat/chatgpt/raw/<export>.json
+# Step 1 — ingest, segment, and record in SQLite
+python -m jarvis.cli ingest chatgpt --file inbox/ai_chat/chatgpt/raw/<export>.json --persist
 
-# Step 2 — summarize each segment
+# Step 2 — summarize each segment and record in SQLite
 python -m jarvis.cli summarize-segments chatgpt --conversation-id <id> --persist
 
-# Step 3 — detect topics and summarize them
+# Step 3 — detect topics and record in SQLite
 python -m jarvis.cli detect-topics chatgpt --conversation-id <id> --persist
 
-# Step 4 — extract attributed statements from each segment
-python -m jarvis.cli extract-segments chatgpt --conversation-id <id>
+# Step 4 — extract attributed statements and record in SQLite
+python -m jarvis.cli extract-segments chatgpt --conversation-id <id> --persist
 
-# Step 5 — fragment extracts into retrieval units
-python -m jarvis.cli fragment-extracts chatgpt --conversation-id <id> --persist
+# Step 5 — fragment extracts into retrieval units; embed and index in Qdrant
+python -m jarvis.cli fragment-extracts chatgpt --conversation-id <id> --persist --embed
 
 # Step 6 — query your data
 python -m jarvis.cli retrieve --query "why did we choose Qdrant?"
@@ -103,15 +104,16 @@ python -m jarvis.cli answer "Why did we choose Qdrant over Pinecone?"
 Parse a raw ChatGPT export JSON, normalize it, and split it into segments.
 
 ```bash
-python -m jarvis.cli ingest chatgpt --file <path-to-export.json>
+python -m jarvis.cli ingest chatgpt --file <path-to-export.json> --persist
 ```
 
 | Flag | Default | Description |
 |---|---|---|
 | `--file` | *(required)* | Path to the raw ChatGPT export JSON |
 | `--output-dir` | `inbox/ai_chat/chatgpt` | Where to write normalized output |
+| `--persist` | off | Write source file metadata, conversation, and segment rows to SQLite |
 
-Re-running on an updated export is safe — existing messages are never duplicated.
+Re-running on an updated export is safe — existing messages are never duplicated. Re-running with `--persist` is idempotent (same SHA-256 → same row, no duplicates).
 
 See [docs/pipeline.md](docs/pipeline.md) for output layout details.
 
@@ -134,8 +136,8 @@ python -m jarvis.cli summarize-segments chatgpt --conversation-id <id> --persist
 | `--from-segment` | `0` | Start segment index (inclusive) |
 | `--to-segment` | last | End segment index (inclusive) |
 | `--context-window` | `3` | Prior segment summaries passed as rolling context |
-| `--persist` | off | Save to SQLite and index in Qdrant |
-| `--force` | off | Wipe existing files and records for the range, then re-run |
+| `--persist` | off | Write segment summary rows to SQLite (`segment_summaries` table) |
+| `--force` | off | Wipe existing files and SQLite records for the range, then re-run |
 
 `--force` with a range only affects that range — other segments are untouched.
 
@@ -160,8 +162,8 @@ python -m jarvis.cli detect-topics chatgpt --conversation-id <id> --dry-run
 | `--conversation-id` | *(required)* | Conversation ID |
 | `--threshold` | `0.55` | Cosine similarity threshold for topic boundaries |
 | `--dry-run` | off | Boundary detection only — no LLM calls |
-| `--persist` | off | Save to SQLite and index in Qdrant |
-| `--force` | off | Wipe existing topic files and records, then re-run |
+| `--persist` | off | Write topic summary rows to SQLite (`topic_summaries` table) |
+| `--force` | off | Wipe existing topic files and SQLite records, then re-run |
 
 Lower threshold → fewer, broader topics. Higher → more, finer-grained topics.
 
@@ -180,7 +182,7 @@ Extract all informational content from each segment as a clean list of attribute
 **Resume-safe:** if an extract already exists for a segment, the LLM call is skipped. Re-run after an interruption to pick up where you left off.
 
 ```bash
-python -m jarvis.cli extract-segments chatgpt --conversation-id <id>
+python -m jarvis.cli extract-segments chatgpt --conversation-id <id> --persist
 ```
 
 | Flag | Default | Description |
@@ -189,7 +191,8 @@ python -m jarvis.cli extract-segments chatgpt --conversation-id <id>
 | `--inbox-dir` | `inbox/ai_chat/chatgpt` | Base inbox directory |
 | `--from-segment` | `0` | Start at this segment index, inclusive |
 | `--to-segment` | last | Stop after this segment index, inclusive |
-| `--force` | off | Wipe existing extract files and re-run |
+| `--persist` | off | Write extract and statement rows to SQLite (`extracts`, `extract_statements` tables) |
+| `--force` | off | Wipe existing extract files and SQLite records, then re-run |
 
 **Prerequisites:** segments must exist (`ingest` must have run first).
 
@@ -210,9 +213,11 @@ python -m jarvis.cli fragment-extracts chatgpt --conversation-id <id> --persist 
 | `--conversation-id` | *(required)* | Conversation ID |
 | `--from-segment` | `0` | Start at this segment index, inclusive |
 | `--to-segment` | last | Stop after this segment index, inclusive |
-| `--persist` | off | Persist fragments to SQLite (source of truth) |
-| `--embed` | off | Embed and index fragments in Qdrant (requires `--persist`) |
-| `--force` | off | Wipe existing fragment files and records, then re-run |
+| `--persist` | off | Write fragment and link rows to SQLite (`fragments`, `fragment_statement_links` tables) |
+| `--embed` | off | Embed retrieval text and index each fragment in Qdrant (requires `--persist`) |
+| `--force` | off | Wipe existing fragment files and SQLite/Qdrant records, then re-run |
+
+`--embed` without `--persist` is rejected with exit code 2.
 
 **Prerequisites:** extracts must exist (`extract-segments` must have run first).
 
@@ -220,17 +225,16 @@ python -m jarvis.cli fragment-extracts chatgpt --conversation-id <id> --persist 
 
 ### `summarize`
 
-Summarize a single file (conversation, notes) in one shot.
+Summarize a single file (conversation, notes) in one shot. Writes disk artifacts only — SQLite persistence for this command will be added in a future release.
 
 ```bash
-python -m jarvis.cli summarize --file <path> --persist
+python -m jarvis.cli summarize --file <path>
 ```
 
 | Flag | Default | Description |
 |---|---|---|
 | `--file` | *(required)* | Path to `.md`, `.txt`, or `.json` input |
-| `--persist` | off | Save to SQLite and index in Qdrant |
-| `--force` | off | Wipe existing output and records, then re-run |
+| `--force` | off | Wipe existing output and re-run |
 
 ---
 
@@ -247,7 +251,7 @@ python -m jarvis.cli retrieve --query "what did we decide about the data model?"
 | `--query` | *(required)* | Natural language query |
 | `--top-k` | `5` | Number of results to return |
 
-Segments score higher for specific content; topics score higher for broad thematic queries. Use `--top-k 10` to surface both.
+Fragments score higher for specific content and direct statements. Use `--top-k 10` to surface a broader range.
 
 ---
 
@@ -267,7 +271,7 @@ python -m jarvis.cli answer "Why did we choose Qdrant over Pinecone?" --top-k 5
 
 The answer is grounded in the retrieved summaries — the LLM cites sources where possible. If no relevant context is found, it says so instead of hallucinating.
 
-**Prerequisites:** summaries must be persisted (`--persist` flag on `summarize-segments` or `detect-topics`). Both Ollama and Qdrant must be running.
+**Prerequisites:** fragments must be indexed (`fragment-extracts --persist --embed` must have run). Both Ollama and Qdrant must be running.
 
 ---
 
@@ -325,7 +329,11 @@ inbox/ai_chat/chatgpt/
       ...
 
 data/
-  jarvis.db                        # SQLite — source of truth for all records
+  jarvis.db                        # SQLite — relational source of truth (schema v7)
+                                   # Tables: source_files, conversations, segments,
+                                   #   segment_summaries, extracts, extract_statements,
+                                   #   fragments, fragment_statement_links,
+                                   #   topic_summaries, topic_segments
 ```
 
 ---

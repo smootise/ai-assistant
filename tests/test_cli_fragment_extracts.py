@@ -22,14 +22,24 @@ from jarvis.cli import cmd_fragment_extracts
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_output_data(fragment_index: int, conv_id: str = "conv-001") -> Dict[str, Any]:
+def _make_output_data(
+    fragment_index: int,
+    conv_id: str = "conv-001",
+    seg_idx: int = 0,
+) -> Dict[str, Any]:
+    seg_id = f"{conv_id}_s{seg_idx:03d}"
     return {
         "source_kind": "ai_chat_fragment",
-        "source_file": f"fragment_{fragment_index:03d}.json",
+        "source_file": f"segment_{seg_idx:03d}/fragment_{fragment_index:03d}.json",
         "parent_conversation_id": conv_id,
+        "segment_id": seg_id,
+        "segment_index": seg_idx,
         "fragment_index": fragment_index,
-        "fragment_title": f"Fragment {fragment_index}",
-        "statements": [],
+        "title": f"Fragment {fragment_index}",
+        "text": "user: hello\n\nassistant: hi",
+        "statements": [
+            {"statement_index": 0, "speaker": "user", "text": "hello"},
+        ],
         "status": "ok",
         "model": "gemma4:31b",
         "created_at": "2026-04-23T00:00:00Z",
@@ -108,7 +118,7 @@ class TestNoFlags:
         assert rc == 0
         mock_build.assert_not_called()
 
-    def test_persist_sqlite_not_called(self, tmp_path):
+    def test_no_persist_calls(self, tmp_path):
         config = _make_config(tmp_path)
         args = _make_args(persist=False, embed=False)
         results, skipped = _canned_results()
@@ -124,14 +134,14 @@ class TestNoFlags:
             mock_build.return_value = mock_memory
             cmd_fragment_extracts(args, config)
 
-        mock_memory.persist_sqlite.assert_not_called()
-        mock_memory.index_in_qdrant.assert_not_called()
+        mock_memory.persist_fragment_with_links.assert_not_called()
+        mock_memory.index_fragment_in_qdrant.assert_not_called()
 
 
 class TestPersistOnly:
     """--persist only → SQLite written; Qdrant not touched."""
 
-    def test_persist_sqlite_called_per_fragment(self, tmp_path):
+    def test_persist_fragment_called_per_fragment(self, tmp_path):
         config = _make_config(tmp_path)
         args = _make_args(persist=True, embed=False)
         results, skipped = _canned_results()
@@ -144,15 +154,18 @@ class TestPersistOnly:
                 results, skipped
             )
             mock_memory = MagicMock()
-            mock_memory.store.get_by_source_file.return_value = None
-            mock_memory.persist_sqlite.side_effect = [10, 11]
+            mock_memory.store.get_fragment.return_value = None
+            mock_memory.persist_fragment_with_links.side_effect = [
+                "conv-001_s000_x_f000",
+                "conv-001_s000_x_f001",
+            ]
             mock_build.return_value = mock_memory
 
             rc = cmd_fragment_extracts(args, config)
 
         assert rc == 0
-        assert mock_memory.persist_sqlite.call_count == len(results)
-        mock_memory.index_in_qdrant.assert_not_called()
+        assert mock_memory.persist_fragment_with_links.call_count == len(results)
+        mock_memory.index_fragment_in_qdrant.assert_not_called()
 
     def test_already_persisted_fragment_skipped(self, tmp_path):
         config = _make_config(tmp_path)
@@ -167,16 +180,18 @@ class TestPersistOnly:
                 results, skipped
             )
             mock_memory = MagicMock()
-            mock_memory.store.get_by_source_file.return_value = {
-                "id": 99, "qdrant_point_id": "abc-123"
+            # Already persisted and embedded
+            mock_memory.store.get_fragment.return_value = {
+                "fragment_id": "conv-001_s000_x_f000",
+                "qdrant_point_id": "abc-123",
             }
             mock_build.return_value = mock_memory
 
             rc = cmd_fragment_extracts(args, config)
 
         assert rc == 0
-        mock_memory.persist_sqlite.assert_not_called()
-        mock_memory.index_in_qdrant.assert_not_called()
+        mock_memory.persist_fragment_with_links.assert_not_called()
+        mock_memory.index_fragment_in_qdrant.assert_not_called()
 
 
 class TestPersistAndEmbed:
@@ -186,7 +201,7 @@ class TestPersistAndEmbed:
         config = _make_config(tmp_path)
         args = _make_args(persist=True, embed=True)
         results, skipped = _canned_results()
-        summary_ids = [10, 11]
+        frag_ids = ["conv-001_s000_x_f000", "conv-001_s000_x_f001"]
 
         with (
             patch("jarvis.cli.Fragmenter") as MockFragmenter,
@@ -196,21 +211,25 @@ class TestPersistAndEmbed:
                 results, skipped
             )
             mock_memory = MagicMock()
-            mock_memory.store.get_by_source_file.return_value = None
-            mock_memory.persist_sqlite.side_effect = summary_ids
+            mock_memory.store.get_fragment.return_value = None
+            mock_memory.persist_fragment_with_links.side_effect = frag_ids
             mock_build.return_value = mock_memory
 
             rc = cmd_fragment_extracts(args, config)
 
         assert rc == 0
-        assert mock_memory.persist_sqlite.call_count == len(results)
-        assert mock_memory.index_in_qdrant.call_count == len(results)
+        assert mock_memory.persist_fragment_with_links.call_count == len(results)
+        assert mock_memory.index_fragment_in_qdrant.call_count == len(results)
 
-        # Verify ordering: index_in_qdrant received the summary_id from persist_sqlite
+        # Ordering: index_in_qdrant must receive the fragment_id from persist
         _, out0 = results[0]
         _, out1 = results[1]
-        mock_memory.index_in_qdrant.assert_any_call(summary_id=10, output_data=out0)
-        mock_memory.index_in_qdrant.assert_any_call(summary_id=11, output_data=out1)
+        mock_memory.index_fragment_in_qdrant.assert_any_call(
+            fragment_id=frag_ids[0], output_data=out0
+        )
+        mock_memory.index_fragment_in_qdrant.assert_any_call(
+            fragment_id=frag_ids[1], output_data=out1
+        )
 
     def test_sqlite_only_then_embed_indexes_existing_rows(self, tmp_path):
         """--persist --embed on rows already in SQLite but not Qdrant → index only."""
@@ -227,22 +246,29 @@ class TestPersistAndEmbed:
             )
             mock_memory = MagicMock()
             # Already in SQLite, not yet in Qdrant
-            mock_memory.store.get_by_source_file.return_value = {
-                "id": 99, "qdrant_point_id": None
+            mock_memory.store.get_fragment.return_value = {
+                "fragment_id": "stub",  # existing row; CLI uses its derived fragment_id
+                "qdrant_point_id": None,
             }
             mock_build.return_value = mock_memory
 
             rc = cmd_fragment_extracts(args, config)
 
         assert rc == 0
-        mock_memory.persist_sqlite.assert_not_called()
-        assert mock_memory.index_in_qdrant.call_count == len(results)
+        mock_memory.persist_fragment_with_links.assert_not_called()
+        # Both fragments should be indexed (they have no qdrant_point_id)
+        assert mock_memory.index_fragment_in_qdrant.call_count == len(results)
         _, out0 = results[0]
         _, out1 = results[1]
-        mock_memory.index_in_qdrant.assert_any_call(summary_id=99, output_data=out0)
-        mock_memory.index_in_qdrant.assert_any_call(summary_id=99, output_data=out1)
+        # CLI derives fragment_id deterministically from segment_id + fragment_index
+        mock_memory.index_fragment_in_qdrant.assert_any_call(
+            fragment_id="conv-001_s000_x_f000", output_data=out0
+        )
+        mock_memory.index_fragment_in_qdrant.assert_any_call(
+            fragment_id="conv-001_s000_x_f001", output_data=out1
+        )
 
-    def test_already_fully_indexed_skipped_on_embed(self, tmp_path):
+    def test_already_fully_indexed_skipped(self, tmp_path):
         """--persist --embed on rows already in SQLite AND Qdrant → skip entirely."""
         config = _make_config(tmp_path)
         args = _make_args(persist=True, embed=True)
@@ -256,17 +282,17 @@ class TestPersistAndEmbed:
                 results, skipped
             )
             mock_memory = MagicMock()
-            # Already fully persisted and indexed
-            mock_memory.store.get_by_source_file.return_value = {
-                "id": 99, "qdrant_point_id": "abc-123"
+            mock_memory.store.get_fragment.return_value = {
+                "fragment_id": "conv-001_s000_x_f000",
+                "qdrant_point_id": "abc-123",
             }
             mock_build.return_value = mock_memory
 
             rc = cmd_fragment_extracts(args, config)
 
         assert rc == 0
-        mock_memory.persist_sqlite.assert_not_called()
-        mock_memory.index_in_qdrant.assert_not_called()
+        mock_memory.persist_fragment_with_links.assert_not_called()
+        mock_memory.index_fragment_in_qdrant.assert_not_called()
 
 
 class TestEmbedWithoutPersist:

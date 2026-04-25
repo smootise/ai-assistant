@@ -1,7 +1,20 @@
-"""SQLite persistence layer for JARVIS summaries.
+"""SQLite persistence layer for JARVIS.
 
-SQLite is the source of truth for all structured summary records.
-Each row maps 1:1 to one summarization run.
+SQLite is the relational source of truth for all pipeline records.
+One table per entity; foreign keys enforced. Full records are always
+reconstructible from SQLite by ID.
+
+Table hierarchy:
+  source_files
+    └── conversations
+          └── segments
+                ├── segment_summaries
+                ├── extracts
+                │     ├── extract_statements
+                │     └── fragments
+                │           └── fragment_statement_links ──► extract_statements
+                └── topic_summaries
+                      └── topic_segments ──► segments
 """
 
 import json
@@ -14,8 +27,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Current schema version — increment when adding columns.
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS _jarvis_meta (
@@ -23,270 +35,334 @@ CREATE TABLE IF NOT EXISTS _jarvis_meta (
     value TEXT
 );
 
-CREATE TABLE IF NOT EXISTS summaries (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id                  TEXT,
-    source_file             TEXT    NOT NULL,
-    source_kind             TEXT    NOT NULL,
-    provider                TEXT    NOT NULL,
-    model                   TEXT    NOT NULL,
-    embedding_model         TEXT,
-    schema                  TEXT    NOT NULL,
-    schema_version          TEXT    NOT NULL,
-    status                  TEXT    NOT NULL,
-    lang                    TEXT,
-    confidence              REAL    NOT NULL DEFAULT 0.0,
-    latency_ms              INTEGER,
-    summary                 TEXT    NOT NULL DEFAULT '',
-    bullets                 TEXT    NOT NULL DEFAULT '[]',
-    action_items            TEXT    NOT NULL DEFAULT '[]',
-    warnings                TEXT,
-    created_at              TEXT    NOT NULL,
-    embedded_at             TEXT,
-    output_json_path        TEXT,
-    output_md_path          TEXT,
-    qdrant_point_id         TEXT,
-    segment_id              TEXT,
-    segment_index           INTEGER,
-    parent_conversation_id  TEXT,
-    topic_index             INTEGER,
-    topic_segment_range     TEXT,
-    fragment_index          INTEGER,
-    fragment_title          TEXT,
-    statements              TEXT,
-    conversation_date       TEXT
+-- File metadata: raw export + normalized.json (content stays on disk)
+CREATE TABLE IF NOT EXISTS source_files (
+    source_file_id  TEXT PRIMARY KEY,
+    source_kind     TEXT NOT NULL,
+    original_filename TEXT NOT NULL,
+    storage_path    TEXT NOT NULL,
+    sha256          TEXT NOT NULL,
+    size_bytes      INTEGER,
+    ingested_at     TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    UNIQUE(sha256, source_kind)
 );
 
-CREATE INDEX IF NOT EXISTS idx_summaries_source_file  ON summaries (source_file);
-CREATE INDEX IF NOT EXISTS idx_summaries_created_at   ON summaries (created_at);
-CREATE INDEX IF NOT EXISTS idx_summaries_status       ON summaries (status);
-CREATE INDEX IF NOT EXISTS idx_summaries_segment_id   ON summaries (segment_id);
-CREATE INDEX IF NOT EXISTS idx_summaries_parent_conv  ON summaries (parent_conversation_id);
-CREATE INDEX IF NOT EXISTS idx_summaries_topic_index  ON summaries (topic_index);
+-- One row per conversation
+CREATE TABLE IF NOT EXISTS conversations (
+    conversation_id            TEXT PRIMARY KEY,
+    raw_source_file_id         TEXT REFERENCES source_files(source_file_id),
+    normalized_source_file_id  TEXT REFERENCES source_files(source_file_id),
+    title                      TEXT,
+    conversation_date          TEXT,
+    source_platform            TEXT NOT NULL,
+    message_count              INTEGER,
+    imported_at                TEXT,
+    created_at                 TEXT NOT NULL
+);
+
+-- One row per segment (includes full text for citation rendering)
+CREATE TABLE IF NOT EXISTS segments (
+    segment_id       TEXT PRIMARY KEY,
+    conversation_id  TEXT NOT NULL REFERENCES conversations(conversation_id),
+    segment_index    INTEGER NOT NULL,
+    start_position   INTEGER NOT NULL,
+    end_position     INTEGER NOT NULL,
+    message_ids_json TEXT NOT NULL,
+    conversation_date TEXT,
+    segment_text     TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    UNIQUE(conversation_id, segment_index)
+);
+
+-- One segment-summary row per segment (SQLite only, never embedded)
+CREATE TABLE IF NOT EXISTS segment_summaries (
+    segment_summary_id TEXT PRIMARY KEY,
+    segment_id         TEXT NOT NULL REFERENCES segments(segment_id),
+    summary            TEXT NOT NULL,
+    bullets            TEXT NOT NULL DEFAULT '[]',
+    action_items       TEXT NOT NULL DEFAULT '[]',
+    lang               TEXT,
+    status             TEXT NOT NULL,
+    warnings           TEXT,
+    provider           TEXT NOT NULL,
+    model              TEXT NOT NULL,
+    latency_ms         INTEGER,
+    created_at         TEXT NOT NULL,
+    UNIQUE(segment_id)
+);
+
+-- One extract row per segment
+CREATE TABLE IF NOT EXISTS extracts (
+    extract_id             TEXT PRIMARY KEY,
+    segment_id             TEXT NOT NULL REFERENCES segments(segment_id),
+    segment_index          INTEGER NOT NULL,
+    parent_conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id),
+    provider               TEXT NOT NULL,
+    model                  TEXT NOT NULL,
+    prompt_version         TEXT,
+    status                 TEXT NOT NULL,
+    warnings               TEXT,
+    latency_ms             INTEGER,
+    created_at             TEXT NOT NULL,
+    UNIQUE(segment_id)
+);
+
+-- One row per extracted statement (ordered by statement_index)
+CREATE TABLE IF NOT EXISTS extract_statements (
+    statement_id    TEXT PRIMARY KEY,
+    extract_id      TEXT NOT NULL REFERENCES extracts(extract_id) ON DELETE CASCADE,
+    statement_index INTEGER NOT NULL,
+    speaker         TEXT NOT NULL,
+    text            TEXT NOT NULL,
+    UNIQUE(extract_id, statement_index)
+);
+
+-- One row per fragment
+CREATE TABLE IF NOT EXISTS fragments (
+    fragment_id     TEXT PRIMARY KEY,
+    extract_id      TEXT NOT NULL REFERENCES extracts(extract_id),
+    fragment_index  INTEGER NOT NULL,
+    title           TEXT,
+    retrieval_text  TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    qdrant_point_id TEXT,
+    embedded_at     TEXT,
+    embedding_model TEXT,
+    created_at      TEXT NOT NULL,
+    UNIQUE(extract_id, fragment_index)
+);
+
+-- Many-to-many: fragment membership and ordering (supports non-contiguous spans later)
+CREATE TABLE IF NOT EXISTS fragment_statement_links (
+    fragment_id          TEXT NOT NULL REFERENCES fragments(fragment_id) ON DELETE CASCADE,
+    statement_id         TEXT NOT NULL REFERENCES extract_statements(statement_id),
+    position_in_fragment INTEGER NOT NULL,
+    PRIMARY KEY (fragment_id, statement_id),
+    UNIQUE (fragment_id, position_in_fragment)
+);
+
+-- Topic summaries (SQLite only, never embedded)
+CREATE TABLE IF NOT EXISTS topic_summaries (
+    topic_id            TEXT PRIMARY KEY,
+    conversation_id     TEXT NOT NULL REFERENCES conversations(conversation_id),
+    topic_index         INTEGER NOT NULL,
+    topic_segment_range TEXT,
+    summary             TEXT NOT NULL,
+    bullets             TEXT NOT NULL DEFAULT '[]',
+    action_items        TEXT NOT NULL DEFAULT '[]',
+    lang                TEXT,
+    status              TEXT NOT NULL,
+    warnings            TEXT,
+    provider            TEXT NOT NULL,
+    model               TEXT NOT NULL,
+    latency_ms          INTEGER,
+    created_at          TEXT NOT NULL,
+    UNIQUE(conversation_id, topic_index)
+);
+
+-- Mapping: which segments belong to which topic
+CREATE TABLE IF NOT EXISTS topic_segments (
+    topic_id   TEXT NOT NULL REFERENCES topic_summaries(topic_id) ON DELETE CASCADE,
+    segment_id TEXT NOT NULL REFERENCES segments(segment_id),
+    position   INTEGER NOT NULL,
+    PRIMARY KEY (topic_id, segment_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_segments_conv       ON segments (conversation_id, segment_index);
+CREATE INDEX IF NOT EXISTS idx_extracts_conv       ON extracts (parent_conversation_id);
+CREATE INDEX IF NOT EXISTS idx_fragments_extract   ON fragments (extract_id);
+CREATE INDEX IF NOT EXISTS idx_links_statement     ON fragment_statement_links (statement_id);
+CREATE INDEX IF NOT EXISTS idx_fragments_qdrant    ON fragments (qdrant_point_id);
+CREATE INDEX IF NOT EXISTS idx_seg_sum_segment     ON segment_summaries (segment_id);
+CREATE INDEX IF NOT EXISTS idx_topic_sum_conv
+    ON topic_summaries (conversation_id, topic_index);
+CREATE INDEX IF NOT EXISTS idx_topic_segs_topic    ON topic_segments (topic_id);
 """
 
-# No legacy migrations needed — DB is always fresh (user empties before schema changes).
-# _SCHEMA_VERSION = 5 is the baseline.
+# No migration path — DB is always wiped and rebuilt on schema changes.
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class SummaryStore:
-    """Manages the SQLite summaries table."""
+    """Relational SQLite store for all JARVIS pipeline records."""
 
     def __init__(self, db_path: str):
-        """Initialize and migrate the database.
-
-        Args:
-            db_path: Path to the SQLite database file. Parent dirs are created
-                     automatically.
-        """
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     # ------------------------------------------------------------------
-    # Public API
+    # Source files
     # ------------------------------------------------------------------
 
-    def insert_summary(
-        self,
-        output_data: Dict[str, Any],
-        output_json_path: Optional[str] = None,
-        output_md_path: Optional[str] = None,
-    ) -> int:
-        """Insert a summary record and return its row ID.
+    def insert_source_file(self, data: Dict[str, Any]) -> str:
+        """Insert a source file metadata row. Idempotent on (sha256, source_kind).
 
-        Args:
-            output_data: The summarization output dict (matches OUTPUTS.md schema).
-            output_json_path: Repo-relative path to the .json artifact.
-            output_md_path: Repo-relative path to the .md artifact.
+        Returns the source_file_id (sha256).
+        """
+        sql = """
+            INSERT OR IGNORE INTO source_files (
+                source_file_id, source_kind, original_filename, storage_path,
+                sha256, size_bytes, ingested_at, created_at
+            ) VALUES (
+                :source_file_id, :source_kind, :original_filename, :storage_path,
+                :sha256, :size_bytes, :ingested_at, :created_at
+            )
+        """
+        now = _now_iso()
+        row = {
+            "source_file_id": data["source_file_id"],
+            "source_kind": data["source_kind"],
+            "original_filename": data["original_filename"],
+            "storage_path": data["storage_path"],
+            "sha256": data["sha256"],
+            "size_bytes": data.get("size_bytes"),
+            "ingested_at": data.get("ingested_at") or now,
+            "created_at": data.get("created_at") or now,
+        }
+        with self._connect() as conn:
+            conn.execute(sql, row)
+        return data["source_file_id"]
 
-        Returns:
-            Auto-incremented row ID of the inserted record.
+    # ------------------------------------------------------------------
+    # Conversations
+    # ------------------------------------------------------------------
+
+    def insert_conversation(self, data: Dict[str, Any]) -> None:
+        """Insert a conversation row. Idempotent on conversation_id."""
+        sql = """
+            INSERT OR IGNORE INTO conversations (
+                conversation_id, raw_source_file_id, normalized_source_file_id,
+                title, conversation_date, source_platform, message_count,
+                imported_at, created_at
+            ) VALUES (
+                :conversation_id, :raw_source_file_id, :normalized_source_file_id,
+                :title, :conversation_date, :source_platform, :message_count,
+                :imported_at, :created_at
+            )
+        """
+        now = _now_iso()
+        row = {
+            "conversation_id": data["conversation_id"],
+            "raw_source_file_id": data.get("raw_source_file_id"),
+            "normalized_source_file_id": data.get("normalized_source_file_id"),
+            "title": data.get("title"),
+            "conversation_date": data.get("conversation_date"),
+            "source_platform": data.get("source_platform") or "chatgpt",
+            "message_count": data.get("message_count"),
+            "imported_at": data.get("imported_at") or now,
+            "created_at": data.get("created_at") or now,
+        }
+        with self._connect() as conn:
+            conn.execute(sql, row)
+
+    # ------------------------------------------------------------------
+    # Segments
+    # ------------------------------------------------------------------
+
+    def insert_segment(self, data: Dict[str, Any]) -> str:
+        """Insert a segment row. Idempotent on segment_id.
+
+        Returns the segment_id.
+        """
+        sql = """
+            INSERT OR IGNORE INTO segments (
+                segment_id, conversation_id, segment_index,
+                start_position, end_position, message_ids_json,
+                conversation_date, segment_text, created_at
+            ) VALUES (
+                :segment_id, :conversation_id, :segment_index,
+                :start_position, :end_position, :message_ids_json,
+                :conversation_date, :segment_text, :created_at
+            )
         """
         row = {
-            "run_id": output_data.get("run_id"),
-            "source_file": output_data["source_file"],
-            "source_kind": output_data.get("source_kind", "conversation"),
-            "provider": output_data["provider"],
-            "model": output_data["model"],
-            "embedding_model": output_data.get("embedding_model"),
-            "schema": output_data.get("schema", "jarvis.summarization"),
-            "schema_version": output_data.get("schema_version", "1.0.0"),
-            "status": output_data.get("status", "ok"),
-            "lang": output_data.get("lang"),
-            "confidence": output_data.get("confidence", 0.0),
-            "latency_ms": output_data.get("latency_ms"),
-            "summary": output_data.get("summary", ""),
-            "bullets": json.dumps(output_data.get("bullets", []), ensure_ascii=False),
-            "action_items": json.dumps(
-                output_data.get("action_items", []), ensure_ascii=False
-            ),
-            "warnings": json.dumps(output_data.get("warnings", []), ensure_ascii=False)
-            if output_data.get("warnings")
-            else None,
-            "created_at": output_data["created_at"],
-            "embedded_at": None,
-            "output_json_path": output_json_path,
-            "output_md_path": output_md_path,
-            "qdrant_point_id": None,
-            "segment_id": output_data.get("segment_id"),
-            "segment_index": output_data.get("segment_index"),
-            "parent_conversation_id": output_data.get("parent_conversation_id"),
-            "topic_index": output_data.get("topic_index"),
-            "topic_segment_range": output_data.get("topic_segment_range"),
-            "fragment_index": output_data.get("fragment_index"),
-            "fragment_title": output_data.get("title"),
-            "statements": json.dumps(
-                output_data.get("statements", []), ensure_ascii=False
-            )
-            if output_data.get("statements") is not None
-            else None,
-            "conversation_date": output_data.get("conversation_date"),
+            "segment_id": data["segment_id"],
+            "conversation_id": data["conversation_id"],
+            "segment_index": data["segment_index"],
+            "start_position": data["start_position"],
+            "end_position": data["end_position"],
+            "message_ids_json": json.dumps(data.get("message_ids", []), ensure_ascii=False),
+            "conversation_date": data.get("conversation_date"),
+            "segment_text": data["segment_text"],
+            "created_at": data.get("created_at") or _now_iso(),
         }
-
-        sql = """
-            INSERT INTO summaries (
-                run_id, source_file, source_kind, provider, model, embedding_model,
-                schema, schema_version, status, lang, confidence, latency_ms,
-                summary, bullets, action_items, warnings,
-                created_at, embedded_at, output_json_path, output_md_path, qdrant_point_id,
-                segment_id, segment_index, parent_conversation_id,
-                topic_index, topic_segment_range,
-                fragment_index, fragment_title, statements, conversation_date
-            ) VALUES (
-                :run_id, :source_file, :source_kind, :provider, :model, :embedding_model,
-                :schema, :schema_version, :status, :lang, :confidence, :latency_ms,
-                :summary, :bullets, :action_items, :warnings,
-                :created_at, :embedded_at, :output_json_path, :output_md_path, :qdrant_point_id,
-                :segment_id, :segment_index, :parent_conversation_id,
-                :topic_index, :topic_segment_range,
-                :fragment_index, :fragment_title, :statements, :conversation_date
-            )
-        """
         with self._connect() as conn:
-            cursor = conn.execute(sql, row)
-            row_id = cursor.lastrowid
+            conn.execute(sql, row)
+        return data["segment_id"]
 
-        logger.info(f"Inserted summary record id={row_id} for {output_data['source_file']}")
-        return row_id
-
-    def update_embedding(
-        self,
-        summary_id: int,
-        qdrant_point_id: str,
-        embedding_model: str,
-    ) -> None:
-        """Update a row with Qdrant point ID and embedding metadata.
-
-        Args:
-            summary_id: Row ID to update.
-            qdrant_point_id: UUID of the Qdrant point.
-            embedding_model: Name of the embedding model used.
-        """
-        embedded_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        sql = """
-            UPDATE summaries
-            SET qdrant_point_id = ?, embedding_model = ?, embedded_at = ?
-            WHERE id = ?
-        """
-        with self._connect() as conn:
-            conn.execute(sql, (qdrant_point_id, embedding_model, embedded_at, summary_id))
-
-        logger.debug(
-            f"Updated summary id={summary_id} with "
-            f"qdrant_point_id={qdrant_point_id}, embedded_at={embedded_at}"
-        )
-
-    def get_segment_summaries_by_conversation(
-        self, conversation_id: str
-    ) -> List[Dict[str, Any]]:
-        """Fetch all segment summaries for a conversation, ordered by segment_index.
-
-        Args:
-            conversation_id: The parent conversation ID.
-
-        Returns:
-            List of row dicts ordered by segment_index ASC.
-        """
-        sql = """
-            SELECT * FROM summaries
-            WHERE parent_conversation_id = ? AND segment_id IS NOT NULL
-            ORDER BY segment_index ASC
-        """
+    def get_segment(self, segment_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single segment row by ID."""
+        sql = "SELECT * FROM segments WHERE segment_id = ?"
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(sql, (conversation_id,)).fetchall()
+            row = conn.execute(sql, (segment_id,)).fetchone()
+        if row is None:
+            return None
+        r = dict(row)
+        r["message_ids"] = json.loads(r.get("message_ids_json") or "[]")
+        return r
 
-        result = []
-        for row in rows:
-            r = dict(row)
-            r["bullets"] = json.loads(r["bullets"] or "[]")
-            r["action_items"] = json.loads(r["action_items"] or "[]")
-            r["warnings"] = json.loads(r["warnings"]) if r["warnings"] else []
-            result.append(r)
-        return result
-
-    def get_topic_summaries_by_conversation(
-        self, conversation_id: str
-    ) -> List[Dict[str, Any]]:
-        """Fetch all topic summaries for a conversation, ordered by topic_index.
-
-        Args:
-            conversation_id: The parent conversation ID.
-
-        Returns:
-            List of row dicts ordered by topic_index ASC.
-        """
-        sql = """
-            SELECT * FROM summaries
-            WHERE parent_conversation_id = ? AND source_kind = 'ai_chat_topic'
-            ORDER BY topic_index ASC
-        """
-        with self._connect() as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(sql, (conversation_id,)).fetchall()
-
-        result = []
-        for row in rows:
-            r = dict(row)
-            r["bullets"] = json.loads(r["bullets"] or "[]")
-            r["action_items"] = json.loads(r["action_items"] or "[]")
-            r["warnings"] = json.loads(r["warnings"]) if r["warnings"] else []
-            result.append(r)
-        return result
-
-    def get_topic_rows(self, conversation_id: str) -> List[Dict[str, Any]]:
-        """Fetch all topic summary rows for a conversation."""
-        sql = """
-            SELECT * FROM summaries
-            WHERE parent_conversation_id = ? AND source_kind = 'ai_chat_topic'
-        """
-        with self._connect() as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(sql, (conversation_id,)).fetchall()
-        return [dict(row) for row in rows]
-
-    def delete_topic_rows(self, conversation_id: str) -> List[str]:
-        """Delete all topic summary rows and return their qdrant_point_ids."""
-        rows = self.get_topic_rows(conversation_id)
-        point_ids = [r["qdrant_point_id"] for r in rows if r.get("qdrant_point_id")]
+    def delete_segments(self, conversation_id: str, segment_ids: List[str]) -> None:
+        """Delete segment rows by ID."""
+        if not segment_ids:
+            return
+        placeholders = ",".join("?" * len(segment_ids))
         with self._connect() as conn:
             conn.execute(
-                """
-                DELETE FROM summaries
-                WHERE parent_conversation_id = ? AND source_kind = 'ai_chat_topic'
-                """,
-                (conversation_id,),
+                f"DELETE FROM segments WHERE conversation_id = ? "
+                f"AND segment_id IN ({placeholders})",
+                [conversation_id] + segment_ids,
             )
-        logger.info(f"Deleted {len(rows)} topic rows for conversation {conversation_id}")
-        return point_ids
 
-    def get_by_source_file(self, source_file: str) -> Optional[Dict[str, Any]]:
-        """Fetch a single summary row by source_file."""
-        sql = "SELECT * FROM summaries WHERE source_file = ? LIMIT 1"
+    # ------------------------------------------------------------------
+    # Segment summaries
+    # ------------------------------------------------------------------
+
+    def insert_segment_summary(self, data: Dict[str, Any]) -> str:
+        """Insert a segment summary row. Idempotent on segment_id.
+
+        Returns the segment_summary_id.
+        """
+        sql = """
+            INSERT OR IGNORE INTO segment_summaries (
+                segment_summary_id, segment_id, summary, bullets, action_items,
+                lang, status, warnings, provider, model, latency_ms, created_at
+            ) VALUES (
+                :segment_summary_id, :segment_id, :summary, :bullets, :action_items,
+                :lang, :status, :warnings, :provider, :model, :latency_ms, :created_at
+            )
+        """
+        segment_id = data["segment_id"]
+        row = {
+            "segment_summary_id": f"{segment_id}_ss",
+            "segment_id": segment_id,
+            "summary": data.get("summary") or "",
+            "bullets": json.dumps(data.get("bullets") or [], ensure_ascii=False),
+            "action_items": json.dumps(data.get("action_items") or [], ensure_ascii=False),
+            "lang": data.get("lang"),
+            "status": data.get("status") or "ok",
+            "warnings": json.dumps(data.get("warnings", []), ensure_ascii=False)
+            if data.get("warnings") else None,
+            "provider": data.get("provider") or "local",
+            "model": data.get("model") or "",
+            "latency_ms": data.get("latency_ms"),
+            "created_at": data.get("created_at") or _now_iso(),
+        }
+        with self._connect() as conn:
+            conn.execute(sql, row)
+        return row["segment_summary_id"]
+
+    def get_segment_summary(self, segment_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a segment summary by segment_id."""
+        sql = "SELECT * FROM segment_summaries WHERE segment_id = ?"
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
-            row = conn.execute(sql, (source_file,)).fetchone()
+            row = conn.execute(sql, (segment_id,)).fetchone()
         if row is None:
             return None
         r = dict(row)
@@ -295,158 +371,405 @@ class SummaryStore:
         r["warnings"] = json.loads(r["warnings"]) if r["warnings"] else []
         return r
 
-    def delete_by_source_file(self, source_file: str) -> Optional[str]:
-        """Delete a summary row by source_file and return its qdrant_point_id."""
-        row = self.get_by_source_file(source_file)
-        if row is None:
-            return None
-        qdrant_point_id = row.get("qdrant_point_id")
+    def delete_segment_summaries(self, conversation_id: str) -> None:
+        """Delete all segment summaries for a conversation."""
         with self._connect() as conn:
-            conn.execute("DELETE FROM summaries WHERE source_file = ?", (source_file,))
-        logger.info(f"Deleted summary row for source_file={source_file}")
-        return qdrant_point_id
+            conn.execute(
+                "DELETE FROM segment_summaries WHERE segment_id IN "
+                "(SELECT segment_id FROM segments WHERE conversation_id = ?)",
+                (conversation_id,),
+            )
 
-    def get_segment_rows_by_ids(
-        self, conversation_id: str, segment_ids: List[str]
-    ) -> List[Dict[str, Any]]:
-        """Fetch segment summary rows for specific segment_ids within a conversation."""
-        if not segment_ids:
-            return []
-        placeholders = ",".join("?" * len(segment_ids))
-        sql = f"""
-            SELECT * FROM summaries
-            WHERE parent_conversation_id = ? AND segment_id IN ({placeholders})
+    # ------------------------------------------------------------------
+    # Extracts
+    # ------------------------------------------------------------------
+
+    def insert_extract(self, data: Dict[str, Any]) -> str:
+        """Insert an extract row. Idempotent on segment_id (UNIQUE constraint).
+
+        Returns the extract_id.
         """
+        sql = """
+            INSERT OR IGNORE INTO extracts (
+                extract_id, segment_id, segment_index, parent_conversation_id,
+                provider, model, prompt_version, status, warnings, latency_ms, created_at
+            ) VALUES (
+                :extract_id, :segment_id, :segment_index, :parent_conversation_id,
+                :provider, :model, :prompt_version, :status, :warnings, :latency_ms, :created_at
+            )
+        """
+        segment_id = data["segment_id"]
+        extract_id = f"{segment_id}_x"
+        row = {
+            "extract_id": extract_id,
+            "segment_id": segment_id,
+            "segment_index": data.get("segment_index") or 0,
+            "parent_conversation_id": data["parent_conversation_id"],
+            "provider": data.get("provider") or "local",
+            "model": data.get("model") or "",
+            "prompt_version": data.get("prompt_version"),
+            "status": data.get("status") or "ok",
+            "warnings": json.dumps(data.get("warnings", []), ensure_ascii=False)
+            if data.get("warnings") else None,
+            "latency_ms": data.get("latency_ms"),
+            "created_at": data.get("created_at") or _now_iso(),
+        }
+        with self._connect() as conn:
+            conn.execute(sql, row)
+        return extract_id
+
+    def get_extract_by_segment(self, segment_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch the extract row for a segment."""
+        sql = "SELECT * FROM extracts WHERE segment_id = ?"
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(sql, [conversation_id] + segment_ids).fetchall()
-        result = []
-        for row in rows:
-            r = dict(row)
-            r["bullets"] = json.loads(r["bullets"] or "[]")
-            r["action_items"] = json.loads(r["action_items"] or "[]")
-            r["warnings"] = json.loads(r["warnings"]) if r["warnings"] else []
-            result.append(r)
-        return result
+            row = conn.execute(sql, (segment_id,)).fetchone()
+        if row is None:
+            return None
+        r = dict(row)
+        r["warnings"] = json.loads(r["warnings"]) if r["warnings"] else []
+        return r
 
-    def delete_segment_rows(
-        self, conversation_id: str, segment_ids: List[str]
-    ) -> List[str]:
-        """Delete segment summary rows and return their qdrant_point_ids."""
-        rows = self.get_segment_rows_by_ids(conversation_id, segment_ids)
-        point_ids = [r["qdrant_point_id"] for r in rows if r.get("qdrant_point_id")]
-        if segment_ids:
-            placeholders = ",".join("?" * len(segment_ids))
-            sql = f"""
-                DELETE FROM summaries
-                WHERE parent_conversation_id = ? AND segment_id IN ({placeholders})
-            """
-            with self._connect() as conn:
-                conn.execute(sql, [conversation_id] + segment_ids)
-        logger.info(
-            f"Deleted {len(rows)} segment rows for conversation {conversation_id}"
-        )
-        return point_ids
-
-    def delete_extract_rows(
+    def delete_extracts(
         self,
         conversation_id: str,
         segment_indices: Optional[List[int]] = None,
-    ) -> List[str]:
-        """Delete extract rows for a conversation and return qdrant_point_ids.
-
-        If segment_indices is given, only rows whose segment_index is in that
-        list are deleted. Otherwise all extract rows for the conversation are
-        deleted.
-        """
+    ) -> None:
+        """Delete extract rows (and cascade to statements + links) for a conversation."""
         with self._connect() as conn:
-            conn.row_factory = sqlite3.Row
             if segment_indices is not None:
                 placeholders = ",".join("?" * len(segment_indices))
-                rows = conn.execute(
-                    f"SELECT * FROM summaries WHERE parent_conversation_id = ? "
-                    f"AND source_kind = 'ai_chat_extract' "
-                    f"AND segment_index IN ({placeholders})",
-                    [conversation_id] + segment_indices,
-                ).fetchall()
-                point_ids = [r["qdrant_point_id"] for r in rows if r["qdrant_point_id"]]
                 conn.execute(
-                    f"DELETE FROM summaries WHERE parent_conversation_id = ? "
-                    f"AND source_kind = 'ai_chat_extract' "
+                    f"DELETE FROM extracts WHERE parent_conversation_id = ? "
                     f"AND segment_index IN ({placeholders})",
                     [conversation_id] + segment_indices,
                 )
             else:
-                rows = conn.execute(
-                    "SELECT * FROM summaries WHERE parent_conversation_id = ? "
-                    "AND source_kind = 'ai_chat_extract'",
-                    (conversation_id,),
-                ).fetchall()
-                point_ids = [r["qdrant_point_id"] for r in rows if r["qdrant_point_id"]]
                 conn.execute(
-                    "DELETE FROM summaries WHERE parent_conversation_id = ? "
-                    "AND source_kind = 'ai_chat_extract'",
+                    "DELETE FROM extracts WHERE parent_conversation_id = ?",
                     (conversation_id,),
                 )
-        logger.info(f"Deleted {len(rows)} extract rows for conversation {conversation_id}")
-        return point_ids
 
-    def delete_fragment_rows(self, conversation_id: str) -> List[str]:
-        """Delete all fragment rows for a conversation and return qdrant_point_ids."""
+    # ------------------------------------------------------------------
+    # Extract statements
+    # ------------------------------------------------------------------
+
+    def insert_statements(self, extract_id: str, statements: List[Dict[str, Any]]) -> None:
+        """Insert extract statement rows. Idempotent on (extract_id, statement_index)."""
+        sql = """
+            INSERT OR IGNORE INTO extract_statements (
+                statement_id, extract_id, statement_index, speaker, text
+            ) VALUES (:statement_id, :extract_id, :statement_index, :speaker, :text)
+        """
+        rows = []
+        for s in statements:
+            idx = s["statement_index"]
+            rows.append({
+                "statement_id": f"{extract_id}_st{idx:04d}",
+                "extract_id": extract_id,
+                "statement_index": idx,
+                "speaker": s["speaker"],
+                "text": s["text"],
+            })
+        if rows:
+            with self._connect() as conn:
+                conn.executemany(sql, rows)
+
+    def get_statements_for_extract(self, extract_id: str) -> List[Dict[str, Any]]:
+        """Return statements for an extract, ordered by statement_index."""
+        sql = """
+            SELECT * FROM extract_statements
+            WHERE extract_id = ?
+            ORDER BY statement_index ASC
+        """
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT * FROM summaries WHERE parent_conversation_id = ? "
-                "AND source_kind = 'ai_chat_fragment'",
-                (conversation_id,),
-            ).fetchall()
-            point_ids = [r["qdrant_point_id"] for r in rows if r["qdrant_point_id"]]
+            rows = conn.execute(sql, (extract_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Fragments
+    # ------------------------------------------------------------------
+
+    def insert_fragment(self, data: Dict[str, Any]) -> str:
+        """Insert a fragment row. Idempotent on (extract_id, fragment_index).
+
+        Returns the fragment_id.
+        """
+        sql = """
+            INSERT OR IGNORE INTO fragments (
+                fragment_id, extract_id, fragment_index, title, retrieval_text,
+                status, qdrant_point_id, embedded_at, embedding_model, created_at
+            ) VALUES (
+                :fragment_id, :extract_id, :fragment_index, :title, :retrieval_text,
+                :status, :qdrant_point_id, :embedded_at, :embedding_model, :created_at
+            )
+        """
+        extract_id = data["extract_id"]
+        frag_idx = data["fragment_index"]
+        fragment_id = f"{extract_id}_f{frag_idx:03d}"
+        row = {
+            "fragment_id": fragment_id,
+            "extract_id": extract_id,
+            "fragment_index": frag_idx,
+            "title": data.get("title"),
+            "retrieval_text": data["retrieval_text"],
+            "status": data.get("status") or "ok",
+            "qdrant_point_id": data.get("qdrant_point_id"),
+            "embedded_at": data.get("embedded_at"),
+            "embedding_model": data.get("embedding_model"),
+            "created_at": data.get("created_at") or _now_iso(),
+        }
+        with self._connect() as conn:
+            conn.execute(sql, row)
+        return fragment_id
+
+    def get_fragment(self, fragment_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single fragment row."""
+        sql = "SELECT * FROM fragments WHERE fragment_id = ?"
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(sql, (fragment_id,)).fetchone()
+        return dict(row) if row else None
+
+    def update_fragment_embedding(
+        self,
+        fragment_id: str,
+        qdrant_point_id: str,
+        embedding_model: str,
+    ) -> None:
+        """Write Qdrant point ID and embedding metadata back to the fragment row."""
+        embedded_at = _now_iso()
+        sql = """
+            UPDATE fragments
+            SET qdrant_point_id = ?, embedding_model = ?, embedded_at = ?
+            WHERE fragment_id = ?
+        """
+        with self._connect() as conn:
+            conn.execute(sql, (qdrant_point_id, embedding_model, embedded_at, fragment_id))
+        logger.debug(f"Fragment {fragment_id} updated: qdrant_point_id={qdrant_point_id}")
+
+    def get_fragments_for_conversation(self, conversation_id: str) -> List[Dict[str, Any]]:
+        """Fetch all fragment rows for a conversation (for --force cleanup)."""
+        sql = """
+            SELECT f.*
+            FROM fragments f
+            JOIN extracts e ON f.extract_id = e.extract_id
+            WHERE e.parent_conversation_id = ?
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (conversation_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_fragments(self, conversation_id: str) -> List[str]:
+        """Delete all fragment rows for a conversation; return their qdrant_point_ids."""
+        rows = self.get_fragments_for_conversation(conversation_id)
+        point_ids = [r["qdrant_point_id"] for r in rows if r.get("qdrant_point_id")]
+        with self._connect() as conn:
             conn.execute(
-                "DELETE FROM summaries WHERE parent_conversation_id = ? "
-                "AND source_kind = 'ai_chat_fragment'",
+                "DELETE FROM fragments WHERE extract_id IN "
+                "(SELECT extract_id FROM extracts WHERE parent_conversation_id = ?)",
                 (conversation_id,),
             )
-        logger.info(
-            f"Deleted {len(rows)} fragment rows for conversation {conversation_id}"
-        )
+        logger.info(f"Deleted {len(rows)} fragment rows for conversation {conversation_id}")
         return point_ids
 
-    def get_by_ids(self, summary_ids: List[int]) -> List[Dict[str, Any]]:
-        """Fetch summary rows by a list of IDs, preserving order."""
-        if not summary_ids:
+    # ------------------------------------------------------------------
+    # Fragment statement links
+    # ------------------------------------------------------------------
+
+    def get_link_count(self, fragment_id: str) -> int:
+        """Return the number of statement links for a fragment."""
+        sql = "SELECT COUNT(*) FROM fragment_statement_links WHERE fragment_id = ?"
+        with self._connect() as conn:
+            return conn.execute(sql, (fragment_id,)).fetchone()[0]
+
+    def insert_fragment_links(
+        self, fragment_id: str, statement_ids: List[str]
+    ) -> None:
+        """Insert link rows mapping a fragment to its ordered statements. Idempotent."""
+        sql = """
+            INSERT OR IGNORE INTO fragment_statement_links
+                (fragment_id, statement_id, position_in_fragment)
+            VALUES (:fragment_id, :statement_id, :position_in_fragment)
+        """
+        rows = [
+            {
+                "fragment_id": fragment_id,
+                "statement_id": sid,
+                "position_in_fragment": pos,
+            }
+            for pos, sid in enumerate(statement_ids)
+        ]
+        if rows:
+            with self._connect() as conn:
+                conn.executemany(sql, rows)
+
+    # ------------------------------------------------------------------
+    # Topic summaries
+    # ------------------------------------------------------------------
+
+    def insert_topic_summary(self, data: Dict[str, Any]) -> str:
+        """Insert a topic summary row. Idempotent on (conversation_id, topic_index).
+
+        Returns the topic_id.
+        """
+        sql = """
+            INSERT OR IGNORE INTO topic_summaries (
+                topic_id, conversation_id, topic_index, topic_segment_range,
+                summary, bullets, action_items, lang, status, warnings,
+                provider, model, latency_ms, created_at
+            ) VALUES (
+                :topic_id, :conversation_id, :topic_index, :topic_segment_range,
+                :summary, :bullets, :action_items, :lang, :status, :warnings,
+                :provider, :model, :latency_ms, :created_at
+            )
+        """
+        conv_id = data["parent_conversation_id"]
+        topic_idx = data["topic_index"]
+        topic_id = f"{conv_id}_t{topic_idx:03d}"
+        row = {
+            "topic_id": topic_id,
+            "conversation_id": conv_id,
+            "topic_index": topic_idx,
+            "topic_segment_range": data.get("topic_segment_range"),
+            "summary": data.get("summary") or "",
+            "bullets": json.dumps(data.get("bullets") or [], ensure_ascii=False),
+            "action_items": json.dumps(data.get("action_items") or [], ensure_ascii=False),
+            "lang": data.get("lang"),
+            "status": data.get("status") or "ok",
+            "warnings": json.dumps(data.get("warnings", []), ensure_ascii=False)
+            if data.get("warnings") else None,
+            "provider": data.get("provider") or "local",
+            "model": data.get("model") or "",
+            "latency_ms": data.get("latency_ms"),
+            "created_at": data.get("created_at") or _now_iso(),
+        }
+        with self._connect() as conn:
+            conn.execute(sql, row)
+        return topic_id
+
+    def insert_topic_segments(self, topic_id: str, segment_ids: List[str]) -> None:
+        """Insert topic_segments mapping rows. Idempotent."""
+        sql = """
+            INSERT OR IGNORE INTO topic_segments (topic_id, segment_id, position)
+            VALUES (:topic_id, :segment_id, :position)
+        """
+        rows = [
+            {"topic_id": topic_id, "segment_id": sid, "position": pos}
+            for pos, sid in enumerate(segment_ids)
+        ]
+        if rows:
+            with self._connect() as conn:
+                conn.executemany(sql, rows)
+
+    def delete_topic_summaries(self, conversation_id: str) -> None:
+        """Delete all topic summary rows (and cascade topic_segments) for a conversation."""
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM topic_summaries WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+
+    # ------------------------------------------------------------------
+    # Retrieval reconstruction
+    # ------------------------------------------------------------------
+
+    def get_fragments_with_statements(
+        self, fragment_ids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """Fetch full fragment records hydrated from the relational chain.
+
+        For each fragment, returns:
+          - fragment metadata
+          - ordered statements (via fragment_statement_links)
+          - parent extract metadata
+          - parent segment metadata (including segment_text)
+          - parent conversation metadata
+
+        Input order is preserved. Raises nothing — missing IDs are silently
+        omitted (matches get_by_ids pattern).
+        """
+        if not fragment_ids:
             return []
 
-        placeholders = ",".join("?" * len(summary_ids))
-        sql = f"SELECT * FROM summaries WHERE id IN ({placeholders})"
-
+        placeholders = ",".join("?" * len(fragment_ids))
+        sql = f"""
+            SELECT
+                f.fragment_id, f.extract_id, f.fragment_index, f.title,
+                f.retrieval_text, f.status AS fragment_status,
+                f.qdrant_point_id, f.embedded_at, f.embedding_model,
+                f.created_at AS fragment_created_at,
+                e.segment_id, e.segment_index, e.parent_conversation_id,
+                e.provider, e.model, e.status AS extract_status,
+                s.segment_text, s.conversation_date, s.start_position, s.end_position,
+                c.title AS conversation_title, c.source_platform,
+                fsl.statement_id, fsl.position_in_fragment,
+                st.statement_index, st.speaker, st.text AS statement_text
+            FROM fragments f
+            JOIN extracts e ON f.extract_id = e.extract_id
+            JOIN segments s ON e.segment_id = s.segment_id
+            JOIN conversations c ON e.parent_conversation_id = c.conversation_id
+            LEFT JOIN fragment_statement_links fsl ON fsl.fragment_id = f.fragment_id
+            LEFT JOIN extract_statements st ON st.statement_id = fsl.statement_id
+            WHERE f.fragment_id IN ({placeholders})
+            ORDER BY f.fragment_id, fsl.position_in_fragment ASC
+        """
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(sql, summary_ids).fetchall()
+            rows = conn.execute(sql, fragment_ids).fetchall()
 
-        id_to_row = {row["id"]: dict(row) for row in rows}
-        ordered = [id_to_row[sid] for sid in summary_ids if sid in id_to_row]
+        # Assemble: one dict per fragment_id
+        fragments: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            fid = row["fragment_id"]
+            if fid not in fragments:
+                fragments[fid] = {
+                    "fragment_id": fid,
+                    "extract_id": row["extract_id"],
+                    "fragment_index": row["fragment_index"],
+                    "title": row["title"],
+                    "retrieval_text": row["retrieval_text"],
+                    "status": row["fragment_status"],
+                    "qdrant_point_id": row["qdrant_point_id"],
+                    "embedded_at": row["embedded_at"],
+                    "embedding_model": row["embedding_model"],
+                    "created_at": row["fragment_created_at"],
+                    "segment_id": row["segment_id"],
+                    "segment_index": row["segment_index"],
+                    "parent_conversation_id": row["parent_conversation_id"],
+                    "provider": row["provider"],
+                    "model": row["model"],
+                    "segment_text": row["segment_text"],
+                    "conversation_date": row["conversation_date"],
+                    "conversation_title": row["conversation_title"],
+                    "source_platform": row["source_platform"],
+                    "statements": [],
+                }
+            if row["statement_id"] is not None:
+                fragments[fid]["statements"].append({
+                    "statement_id": row["statement_id"],
+                    "statement_index": row["statement_index"],
+                    "speaker": row["speaker"],
+                    "text": row["statement_text"],
+                    "position_in_fragment": row["position_in_fragment"],
+                })
 
-        for row in ordered:
-            row["bullets"] = json.loads(row["bullets"] or "[]")
-            row["action_items"] = json.loads(row["action_items"] or "[]")
-            row["warnings"] = json.loads(row["warnings"]) if row["warnings"] else []
-            row["statements"] = json.loads(row["statements"]) if row.get("statements") else []
-
-        return ordered
+        # Preserve input order
+        return [fragments[fid] for fid in fragment_ids if fid in fragments]
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
-        """Open a connection with WAL mode for better concurrency."""
         conn = sqlite3.connect(self.db_path)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
     def _init_db(self) -> None:
-        """Create tables and indexes if they don't exist, then stamp schema version."""
         with self._connect() as conn:
             conn.executescript(_DDL)
             conn.execute(

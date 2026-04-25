@@ -15,7 +15,8 @@ raw JSON in `inbox/ai_chat/chatgpt/raw/`.
 
 ```bash
 python -m jarvis.cli ingest chatgpt \
-  --file inbox/ai_chat/chatgpt/raw/<export>.json
+  --file inbox/ai_chat/chatgpt/raw/<export>.json \
+  --persist
 ```
 
 What happens:
@@ -27,7 +28,9 @@ What happens:
    Segment N ends with the user message that opens segment N+1
 6. Trailing unmatched user messages (no reply yet) are saved as `pending_tail`
 
-Re-running on an updated export is safe — messages are merged by ID, never duplicated.
+Re-running on an updated export is safe — messages are merged by ID, never duplicated. `--persist` is idempotent: SHA-256-keyed source file rows are never duplicated on re-run.
+
+**SQLite rows written:** `source_files` (raw export + normalized.json), `conversations`, `segments` (with full `segment_text` for citation rendering).
 
 ### Output layout
 
@@ -64,9 +67,11 @@ Re-run the same command after an interruption — only missing segments are proc
 **Partial runs:** use `--from-segment` / `--to-segment` to summarize a specific range.
 Rolling context is pre-seeded from existing summaries before the range start.
 
-**Force re-run:** `--force` wipes output files and SQLite/Qdrant records for the specified
+**Force re-run:** `--force` wipes output files and SQLite records for the specified
 range (or all segments if no range given), then re-summarizes. Segments outside the range are
 never touched.
+
+**SQLite rows written (with `--persist`):** `segment_summaries` — one row per segment, keyed on `segment_id`. No Qdrant writes at this stage.
 
 ### Output layout
 
@@ -124,11 +129,13 @@ python -m jarvis.cli detect-topics chatgpt \
 #   Topics detected: 12
 ```
 
-**Force re-run:** `--force` wipes all existing topic files and records for the conversation,
-then re-detects and re-summarizes from scratch.
+**Force re-run:** `--force` wipes all existing topic files and SQLite records for the
+conversation, then re-detects and re-summarizes from scratch.
 
 **Prerequisites:** segment summaries must exist in `OUTPUTS/<id>/segment_summaries/`.
 Run `summarize-segments` first.
+
+**SQLite rows written (with `--persist`):** `topic_summaries` + `topic_segments` (segment membership mapping). No Qdrant writes at this stage.
 
 ### Output layout
 
@@ -157,7 +164,8 @@ All segment summary fields, plus:
 
 ```bash
 python -m jarvis.cli extract-segments chatgpt \
-  --conversation-id <id>
+  --conversation-id <id> \
+  --persist
 ```
 
 Extracts all informational content from each segment as a clean list of attributed statements
@@ -216,6 +224,8 @@ attempt triggered) if any of these hold:
 
 After all 3 attempts fail validation, the extract receives `status: "partial"` with warnings.
 
+**SQLite rows written (with `--persist`):** `extracts` (one per segment) + `extract_statements` (one per attributed statement). Skips a segment if its extract row already exists — idempotent on re-run.
+
 ### Output layout
 
 ```
@@ -243,7 +253,8 @@ OUTPUTS/<conversation_id>/extracts/
 ```bash
 python -m jarvis.cli fragment-extracts chatgpt \
   --conversation-id <id> \
-  --persist
+  --persist \
+  --embed
 ```
 
 Groups extracted statements into topically coherent sub-units for retrieval. Each fragment
@@ -253,24 +264,34 @@ is embedded and stored in Qdrant.
 title + cleaned statement lines + compact archival notes for any archived block references.
 Raw block content (code, prompts, etc.) is never included in the retrieval text.
 
-**Traceability:** each fragment records `statement_start_index` / `statement_end_index`
-pointing back to the exact statement range in the extract record. The extract record holds
-the full `archived_blocks` list including `raw_text` for citation and debugging.
+**Traceability:** each fragment links back to its exact statements in `extract_statements` via
+`fragment_statement_links`. The extract record holds the full `archived_blocks` list including
+`raw_text` for citation and debugging.
+
+**`--persist` vs `--embed`:**
+- `--persist` alone — writes fragment rows and statement links to SQLite. Qdrant is not touched.
+- `--persist --embed` — additionally embeds each fragment's retrieval text and upserts to Qdrant. Writes `qdrant_point_id` back to the `fragments` table.
+- `--embed` without `--persist` — rejected with exit code 2.
+
+**SQLite rows written (with `--persist`):** `fragments` + `fragment_statement_links`. With `--embed`, also updates `fragments.qdrant_point_id` after successful Qdrant upsert.
+
+**Idempotency:** if a fragment row already exists and has a `qdrant_point_id`, it is skipped entirely. If it exists but has no `qdrant_point_id` and `--embed` is set, only the Qdrant indexing step runs (no duplicate insert).
+
+**Qdrant collection:** `jarvis_fragments`. Payload per point: `{fragment_id, parent_conversation_id, segment_id, conversation_date}`. Full fragment records are always fetched from SQLite.
 
 ---
 
 ## Retrieval
 
-After persisting segment and topic summaries, query across all data:
+After indexing fragments, query across all data:
 
 ```bash
 python -m jarvis.cli retrieve --query "why did we choose SQLite over Postgres?" --top-k 5
 ```
 
 **Tips:**
-- Specific content queries (implementation details, exact decisions) → segments score highest
-- Broad thematic queries (overall topic, high-level decisions) → topics score highest
-- Use `--top-k 10` to surface both segment and topic results in the same query
+- Queries hit fragment-level content — specific decisions, direct quotes, action items
+- Use `--top-k 10` for broader coverage
 - Queries work in any language — the embedding model is multilingual
 
 ---
@@ -286,8 +307,8 @@ python -m jarvis.cli answer "Why did we choose SQLite over Postgres?" --top-k 5
 
 What happens:
 1. Embeds the question with the embedding model
-2. Retrieves the top-k most relevant summaries from Qdrant
-3. Fetches full summary records (text + bullets) from SQLite
+2. Retrieves the top-k most relevant fragments from Qdrant
+3. Fetches full fragment records (text + linked statements + segment context) from SQLite via `get_fragments_with_statements`
 4. Builds a numbered context block with source citations
 5. Renders the `prompts/answer_question.md` template and calls the local LLM
 6. Prints the generated answer to stdout
@@ -295,5 +316,4 @@ What happens:
 The LLM is instructed to cite sources and to say so clearly if the context is insufficient —
 it will not fabricate information not present in the retrieved excerpts.
 
-**Prerequisites:** summaries must be persisted (`--persist` on `summarize-segments` or
-`detect-topics`). Ollama and Qdrant must both be running.
+**Prerequisites:** fragments must be indexed (`fragment-extracts --persist --embed` must have run). Ollama and Qdrant must both be running.

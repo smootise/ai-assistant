@@ -311,55 +311,43 @@ class TestDetectAndSummarize:
 class TestSummaryStoreTopicColumns:
     def _make_topic_record(self, topic_index: int = 0) -> Dict[str, Any]:
         return {
-            "source_file": f"topic_{topic_index:03d}.json",
-            "source_kind": "ai_chat_topic",
-            "provider": "local",
-            "model": "gemma4:31b",
-            "schema": "jarvis.summarization",
-            "schema_version": "1.0.0",
-            "status": "ok",
-            "confidence": 0.85,
+            "parent_conversation_id": "test-conv",
+            "topic_index": topic_index,
+            "topic_segment_range": "s000-s004",
             "summary": "Topic summary here",
             "bullets": ["decision A"],
             "action_items": [],
+            "provider": "local",
+            "model": "gemma4:31b",
+            "status": "ok",
             "created_at": "2026-04-17T00:00:00Z",
-            "topic_index": topic_index,
-            "topic_segment_range": "s000-s004",
-            "parent_conversation_id": "test-conv",
         }
 
     def test_topic_columns_stored_and_retrieved(self, tmp_path):
         store = SummaryStore(db_path=str(tmp_path / "test.db"))
-        record = self._make_topic_record(0)
-        row_id = store.insert_summary(record)
-        rows = store.get_topic_summaries_by_conversation("test-conv")
-        assert len(rows) == 1
-        assert rows[0]["topic_index"] == 0
-        assert rows[0]["topic_segment_range"] == "s000-s004"
-        assert rows[0]["id"] == row_id
+        store.insert_conversation({"conversation_id": "test-conv"})
+        topic_id = store.insert_topic_summary(self._make_topic_record(0))
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        row = conn.execute(
+            "SELECT topic_index, topic_segment_range, topic_id FROM topic_summaries WHERE topic_id = ?",
+            (topic_id,),
+        ).fetchone()
+        conn.close()
+        assert row is not None
+        assert row[0] == 0
+        assert row[1] == "s000-s004"
+        assert row[2] == topic_id
 
     def test_get_topic_summaries_by_conversation(self, tmp_path):
         store = SummaryStore(db_path=str(tmp_path / "test.db"))
+        store.insert_conversation({"conversation_id": "test-conv"})
         for i in range(3):
-            store.insert_summary(self._make_topic_record(i))
-        segment_record = {
-            "source_file": "segment.json",
-            "source_kind": "ai_chat_segment",
-            "provider": "local",
-            "model": "gemma4:31b",
-            "schema": "jarvis.summarization",
-            "schema_version": "1.0.0",
-            "status": "ok",
-            "confidence": 0.8,
-            "summary": "segment summary",
-            "bullets": [],
-            "action_items": [],
-            "created_at": "2026-04-17T00:00:00Z",
-            "parent_conversation_id": "test-conv",
-            "segment_id": "s000",
-            "segment_index": 0,
-        }
-        store.insert_summary(segment_record)
-        rows = store.get_topic_summaries_by_conversation("test-conv")
+            store.insert_topic_summary(self._make_topic_record(i))
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        rows = conn.execute(
+            "SELECT topic_index FROM topic_summaries WHERE conversation_id = ? ORDER BY topic_index",
+            ("test-conv",),
+        ).fetchall()
+        conn.close()
         assert len(rows) == 3
-        assert [r["topic_index"] for r in rows] == [0, 1, 2]
+        assert [r[0] for r in rows] == [0, 1, 2]

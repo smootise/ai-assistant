@@ -28,13 +28,17 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 - SQLite persistence layer (source of truth, schema v4)
 - Qdrant vector index (retrieval embeddings)
 - Semantic retrieval CLI (`retrieve` command)
-- RAG answer generation (`answer` command — pipes retrieved summaries as context into local LLM)
+- RAG answer generation (`answer` command — grounded in retrieved fragments)
 - Rename refactor: chunk→segment (ingestion unit), segment→topic (thematic grouping)
+- Extract pipeline: clean attributed statements per segment (`extract-segments --persist`)
+- Fragment pipeline: topically coherent retrieval units (`fragment-extracts --persist --embed`)
+- Relational SQLite schema v7 (10 tables; deterministic IDs; `INSERT OR IGNORE` idempotency)
+- Fragment-only Qdrant index (`jarvis_fragments`; full records reconstructed from SQLite)
+- Full ingest → extract → fragment → retrieve pipeline with `--persist` flags throughout
 
 ### Planned
-- Extract pipeline: clean attributed bullet statements from each segment (`extract-segments` command)
-- Fragment pipeline: topically coherent sub-units of an extract, the retrieval unit (`fragment-extracts` command)
 - Token-budget retrieval: replace flat `--top-k` with `--max-context-tokens` to handle variable fragment sizes
+- `summarize` (single-file) `--persist`: wire standalone files through the same ingest→extract→fragment pipeline
 - Web UI: browser-based interface to query JARVIS and view results
 - TrueNAS deployment: migrate JARVIS services (Ollama, Qdrant, backend) to run on TrueNAS
 - API integrations: Notion, Slack, and other data sources as ingestion adapters

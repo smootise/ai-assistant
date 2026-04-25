@@ -319,60 +319,57 @@ class TestSummarizeConversationSegments:
 
 
 class TestSummaryStoreSegmentColumns:
-    def _minimal_output(self, **extra) -> Dict[str, Any]:
-        data = {
+    def _seed_segment(self, store: SummaryStore, conv_id: str, segment_id: str, idx: int) -> None:
+        store.insert_conversation({"conversation_id": conv_id})
+        store.insert_segment({
+            "segment_id": segment_id,
+            "conversation_id": conv_id,
+            "segment_index": idx,
+            "start_position": 0,
+            "end_position": 1,
+            "segment_text": "text",
+        })
+
+    def _summary_data(self, segment_id: str) -> Dict[str, Any]:
+        return {
+            "segment_id": segment_id,
             "summary": "Test summary",
             "bullets": ["Bullet 1"],
             "action_items": [],
-            "confidence": 0.8,
             "provider": "local",
             "model": "test",
-            "schema": "jarvis.summarization",
-            "schema_version": "1.0.0",
             "status": "ok",
-            "source_file": "test.json",
-            "source_kind": "conversation",
             "created_at": "2026-01-01T00:00:00Z",
         }
-        data.update(extra)
-        return data
 
     def test_segment_columns_stored_and_retrieved(self, tmp_path):
         store = SummaryStore(str(tmp_path / "test.db"))
-        output_data = self._minimal_output(
-            source_kind="ai_chat_segment",
-            segment_id="conv123_s005",
-            segment_index=5,
-            parent_conversation_id="conv123",
-        )
-        row_id = store.insert_summary(output_data)
-        rows = store.get_by_ids([row_id])
-        assert rows[0]["segment_id"] == "conv123_s005"
-        assert rows[0]["segment_index"] == 5
-        assert rows[0]["parent_conversation_id"] == "conv123"
+        self._seed_segment(store, "conv123", "conv123_s005", 5)
+        ss_id = store.insert_segment_summary(self._summary_data("conv123_s005"))
+        row = store.get_segment_summary("conv123_s005")
+        assert row is not None
+        assert row["segment_id"] == "conv123_s005"
+        assert ss_id == "conv123_s005_ss"
 
     def test_get_segment_summaries_by_conversation(self, tmp_path):
         store = SummaryStore(str(tmp_path / "test.db"))
         for i in range(3):
-            store.insert_summary(self._minimal_output(
-                source_kind="ai_chat_segment",
-                segment_id=f"conv_s{i:03d}",
-                segment_index=i,
-                parent_conversation_id="conv",
-            ))
-        store.insert_summary(self._minimal_output(source_kind="conversation"))
+            seg_id = f"conv_s{i:03d}"
+            self._seed_segment(store, "conv", seg_id, i)
+            store.insert_segment_summary(self._summary_data(seg_id))
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        rows = conn.execute(
+            "SELECT segment_id FROM segment_summaries ORDER BY segment_summary_id"
+        ).fetchall()
+        conn.close()
+        assert len(rows) == 3
 
-        results = store.get_segment_summaries_by_conversation("conv")
-        assert len(results) == 3
-        assert [r["segment_index"] for r in results] == [0, 1, 2]
-
-    def test_conversation_summary_not_in_segment_query(self, tmp_path):
+    def test_segment_summary_not_found_returns_none(self, tmp_path):
         store = SummaryStore(str(tmp_path / "test.db"))
-        store.insert_summary(self._minimal_output(source_kind="conversation"))
-        results = store.get_segment_summaries_by_conversation("conv")
-        assert results == []
+        row = store.get_segment_summary("nonexistent_s000")
+        assert row is None
 
-    def test_schema_version_is_six(self, tmp_path):
+    def test_schema_version_is_seven(self, tmp_path):
         db_path = str(tmp_path / "test.db")
         SummaryStore(db_path)
         conn = sqlite3.connect(db_path)
@@ -381,4 +378,4 @@ class TestSummaryStoreSegmentColumns:
         ).fetchone()
         conn.close()
         assert row is not None
-        assert int(row[0]) == 6
+        assert int(row[0]) == 7
