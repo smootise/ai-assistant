@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}JARVIS{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  {% block head_extra %}{% endblock %}
 </head>
 <body>
 
@@ -16,6 +17,10 @@
      class="nav-link {% if request.endpoint and request.endpoint.startswith('sources.') %}active{% endif %}">Sources</a>
   <a href="{{ url_for('conversations.conversations_list') }}"
      class="nav-link {% if request.endpoint and request.endpoint.startswith('conversations.') %}active{% endif %}">Conversations</a>
+  <a href="{{ url_for('uploads.upload_form') }}"
+     class="nav-link {% if request.endpoint and request.endpoint.startswith('uploads.') %}active{% endif %}">Upload</a>
+  <a href="{{ url_for('jobs.jobs_list') }}"
+     class="nav-link {% if request.endpoint and request.endpoint.startswith('jobs.') %}active{% endif %}">Jobs</a>
 </nav>
 
 <div class="container">

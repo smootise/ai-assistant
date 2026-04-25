@@ -108,7 +108,7 @@ Ollama is required for every pipeline run. Qdrant is only required for `fragment
 ## SQLite Schema
 
 The database lives at `data/jarvis.db` (configurable via `JARVIS_DB_PATH`). Current schema
-version: **7**. Schema is applied fresh on startup — no migrations from prior versions (wipe
+version: **8**. Schema is applied fresh on startup — no migrations from prior versions (wipe
 and rebuild).
 
 Table hierarchy (each table has a deterministic `*_id` primary key):
@@ -124,6 +124,8 @@ source_files                       SHA-256-keyed; raw export + normalized.json m
               │           └── fragment_statement_links  →  extract_statements
               └── topic_summaries     LLM-generated per-topic summary
                     └── topic_segments  →  segments  (many-to-many)
+
+jobs                               upload + ingest job tracking (independent of the entity graph)
 ```
 
 ID determinism: `segment_id = f"{conv_id}_s{idx:03d}"`, `extract_id = f"{segment_id}_x"`,
@@ -134,10 +136,29 @@ ID determinism: `segment_id = f"{conv_id}_s{idx:03d}"`, `extract_id = f"{segment
 
 ---
 
-## Web Layer (V1 — Read-Only)
+## Jobs Layer
 
-A Flask + Jinja2 operator console (`src/jarvis/web/`) for browsing the entity graph in a
-browser. Read-only in V1 — sits above `SummaryStore` public methods, no Qdrant, no writes.
+The `jobs` table tracks upload + ingest operations triggered by the web UI. Each job has:
+`status ∈ {pending, running, succeeded, failed}`, ISO-8601 timestamps (`created_at`,
+`started_at`, `finished_at`), the input metadata (original filename, storage path), and
+either a result dict (conversation_id, source_file_id, segment_count) or an error traceback.
 
-See [docs/webapp.md](webapp.md) for the full route map, file preview rules, code layout, and
-extension guide.
+In V1 the ingest runs in a **daemon thread** inside the Flask process. A fresh `SummaryStore`
+connection is opened per thread (SQLite WAL allows concurrent readers and one writer). Jobs
+interrupted by a server shutdown remain stuck in `running` — a startup sweep is deferred.
+
+The `jobs` table is independent of the entity graph (source_files → conversations → …) and
+is never referenced by foreign keys from other tables.
+
+---
+
+## Web Layer
+
+A Flask + Jinja2 operator console (`src/jarvis/web/`) for browsing and ingesting data.
+Sits above `SummaryStore` public methods — never touches `_connect()`. No Qdrant in V1.
+
+V1 features: browse the source → conversation → segment → extract → fragment lineage;
+upload ChatGPT export files; track ingest jobs; inspect raw JSON/text artifacts.
+
+See [docs/webapp.md](webapp.md) for the full route map, file preview rules, upload safety
+rules, code layout, and extension guide.

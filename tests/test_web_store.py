@@ -21,6 +21,7 @@ def test_count_all_returns_expected_counts(store):
     assert counts["extracts"] == 1
     assert counts["extract_statements"] == 3
     assert counts["fragments"] == 2
+    assert counts["jobs"] == 0
 
 
 def test_count_all_empty_db(tmp_path):
@@ -123,3 +124,84 @@ def test_recent_records_empty_db(tmp_path):
     empty = SummaryStore(db_path=str(tmp_path / "empty.db"))
     recent = empty.recent_records(5)
     assert all(v == [] for v in recent.values())
+
+
+# ------------------------------------------------------------------
+# Job tracking
+# ------------------------------------------------------------------
+
+@pytest.fixture
+def job_store(tmp_path):
+    return SummaryStore(db_path=str(tmp_path / "jobs.db"))
+
+
+def test_create_job_returns_id(job_store):
+    job_id = job_store.create_job("ingest_chatgpt", {"file": "a.json"})
+    assert job_id.startswith("job_")
+    assert len(job_id) > 4
+
+
+def test_get_job_pending(job_store):
+    job_id = job_store.create_job("ingest_chatgpt", {"file": "a.json"})
+    job = job_store.get_job(job_id)
+    assert job is not None
+    assert job["status"] == "pending"
+    assert job["job_type"] == "ingest_chatgpt"
+    assert job["input_metadata"]["file"] == "a.json"
+    assert job["result"] is None
+    assert job["error"] is None
+    assert job["started_at"] is None
+    assert job["finished_at"] is None
+
+
+def test_mark_job_running(job_store):
+    job_id = job_store.create_job("ingest_chatgpt", {})
+    job_store.mark_job_running(job_id)
+    job = job_store.get_job(job_id)
+    assert job["status"] == "running"
+    assert job["started_at"] is not None
+
+
+def test_mark_job_succeeded(job_store):
+    job_id = job_store.create_job("ingest_chatgpt", {})
+    job_store.mark_job_running(job_id)
+    job_store.mark_job_succeeded(job_id, {"conversation_id": "c1", "segment_count": 2})
+    job = job_store.get_job(job_id)
+    assert job["status"] == "succeeded"
+    assert job["result"]["conversation_id"] == "c1"
+    assert job["finished_at"] is not None
+
+
+def test_mark_job_failed(job_store):
+    job_id = job_store.create_job("ingest_chatgpt", {})
+    job_store.mark_job_running(job_id)
+    job_store.mark_job_failed(job_id, "Traceback: ValueError")
+    job = job_store.get_job(job_id)
+    assert job["status"] == "failed"
+    assert "ValueError" in job["error"]
+    assert job["finished_at"] is not None
+
+
+def test_get_job_not_found(job_store):
+    assert job_store.get_job("nonexistent") is None
+
+
+def test_list_jobs_empty(job_store):
+    assert job_store.list_jobs() == []
+
+
+def test_list_jobs_order(job_store):
+    j1 = job_store.create_job("ingest_chatgpt", {"n": 1})
+    j2 = job_store.create_job("ingest_chatgpt", {"n": 2})
+    jobs = job_store.list_jobs()
+    ids = [j["job_id"] for j in jobs]
+    assert j1 in ids and j2 in ids
+    # newest first — j2 was created after j1
+    assert ids.index(j2) < ids.index(j1)
+
+
+def test_count_jobs(job_store):
+    assert job_store.count_jobs() == 0
+    job_store.create_job("ingest_chatgpt", {})
+    job_store.create_job("ingest_chatgpt", {})
+    assert job_store.count_jobs() == 2

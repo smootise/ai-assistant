@@ -1,7 +1,6 @@
 """CLI entry point for JARVIS."""
 
 import argparse
-import hashlib
 import json
 import logging
 import sys
@@ -14,14 +13,7 @@ from jarvis.extractor import SegmentExtractor
 from jarvis.fragmenter import Fragmenter
 from jarvis.topic_detector import TopicDetector
 from jarvis.embedder import EmbeddingClient
-from jarvis.ingest.chatgpt_parser import load_raw_export, parse_export
-from jarvis.ingest.segmenter import segment_conversation, save_segments
-from jarvis.ingest.normalizer import (
-    build_normalized,
-    load_normalized,
-    merge_normalized,
-    save_normalized,
-)
+from jarvis.ingest.pipeline import ingest_chatgpt
 from jarvis.memory import MemoryLayer
 from jarvis.ollama import OllamaClient
 from jarvis.output_writer import OutputWriter
@@ -50,26 +42,6 @@ def _build_memory_layer(config: dict) -> MemoryLayer:
         base_url=config["ollama_base_url"],
     )
     return MemoryLayer(store=store, vector_store=vector_store, embedder=embedder)
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _source_file_data(path: Path, source_kind: str) -> dict:
-    sha = _sha256_file(path)
-    return {
-        "source_file_id": sha,
-        "source_kind": source_kind,
-        "original_filename": path.name,
-        "storage_path": str(path),
-        "sha256": sha,
-        "size_bytes": path.stat().st_size,
-    }
 
 
 def cmd_summarize(args: argparse.Namespace, config: dict) -> int:
@@ -322,80 +294,18 @@ def cmd_ingest(args: argparse.Namespace, config: dict) -> int:
         logger.error("Only 'chatgpt' source is supported currently.")
         return 1
 
-    raw_path = Path(args.file)
-    if not raw_path.exists():
-        logger.error(f"Raw export file not found: {raw_path}")
-        return 1
-
     try:
-        logger.info(f"Loading raw export: {raw_path}")
-        raw = load_raw_export(str(raw_path))
-        messages = parse_export(raw)
-        logger.info(f"Parsed {len(messages)} visible messages")
-
-        conversation_id = raw.get("conversation_id", raw_path.stem)
-        base_dir = Path(args.output_dir)
-        conv_dir = base_dir / conversation_id
-        norm_path = conv_dir / "normalized.json"
-
-        existing = load_normalized(norm_path)
-        if existing:
-            logger.info("Existing normalized file found — merging")
-            normalized = merge_normalized(existing, messages)
-        else:
-            logger.info("No existing normalized file — building fresh")
-            normalized = build_normalized(raw, messages, str(raw_path))
-
-        save_normalized(normalized, norm_path)
-
-        segments_dir = conv_dir / "segments"
-        result = segment_conversation(normalized)
-        save_segments(
-            segments=result["segments"],
-            pending_tail=result["pending_tail"],
-            manifest_meta=result["manifest_meta"],
-            output_dir=segments_dir,
+        result = ingest_chatgpt(
+            raw_path=Path(args.file),
+            output_dir=Path(args.output_dir),
+            persist=getattr(args, "persist", False),
+            config=config,
         )
-
-        if getattr(args, "persist", False):
-            logger.info("Persisting source file metadata, conversation, and segments...")
-            memory = _build_memory_layer(config)
-
-            raw_file_data = _source_file_data(raw_path, "chatgpt_raw_export")
-            memory.persist_source_file(raw_file_data)
-
-            norm_file_data = _source_file_data(norm_path, "chatgpt_normalized")
-            memory.persist_source_file(norm_file_data)
-
-            # Derive conversation_date from first segment's first message
-            first_seg = result["segments"][0] if result["segments"] else {}
-            conv_date = first_seg.get("conversation_date")
-
-            memory.persist_conversation({
-                "conversation_id": conversation_id,
-                "raw_source_file_id": raw_file_data["source_file_id"],
-                "normalized_source_file_id": norm_file_data["source_file_id"],
-                "title": normalized.get("title"),
-                "conversation_date": conv_date,
-                "source_platform": normalized.get("source_platform", "chatgpt"),
-                "message_count": normalized.get("message_count"),
-                "imported_at": normalized.get("imported_at"),
-            })
-
-            for seg in result["segments"]:
-                memory.persist_segment(seg)
-
-            logger.info(
-                f"Persisted {len(result['segments'])} segment(s) for {conversation_id}"
-            )
-
-        print(f"\nIngest complete for: {normalized.get('title', conversation_id)}")
-        print(f"  Visible messages  : {normalized['message_count']}")
-        print(f"  Segments written  : {len(result['segments'])}")
-        if result["pending_tail"]:
-            print("  Pending tail      : 1 unmatched trailing user message")
-        print(f"  Normalized file   : {norm_path}")
-        print(f"  Segments directory: {segments_dir}")
+        conv_dir = Path(args.output_dir) / result["conversation_id"]
+        print(f"\nIngest complete for: {result['conversation_id']}")
+        print(f"  Segments written  : {result['segment_count']}")
+        print(f"  Normalized file   : {result['normalized_path']}")
+        print(f"  Segments directory: {conv_dir / 'segments'}")
         return 0
 
     except FileNotFoundError as e:

@@ -164,11 +164,11 @@ class TestFragmentReconstruction:
             ).fetchone()[0]
         assert count == 0
 
-    def test_schema_version_is_seven(self, tmp_path):
+    def test_schema_version_is_eight(self, tmp_path):
         store = _make_store(tmp_path)
         with store._connect() as conn:
             row = conn.execute(
                 "SELECT value FROM _jarvis_meta WHERE key = 'schema_version'"
             ).fetchone()
         assert row is not None
-        assert row[0] == "7"
+        assert row[0] == "8"

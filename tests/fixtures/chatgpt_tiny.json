@@ -1,0 +1,41 @@
+{
+  "conversation_id": "conv_test_tiny",
+  "title": "Tiny Test Conversation",
+  "create_time": 1700000000.0,
+  "update_time": 1700000100.0,
+  "current_node": "node_b",
+  "mapping": {
+    "node_root": {
+      "id": "node_root",
+      "parent": null,
+      "children": ["node_a"],
+      "message": null
+    },
+    "node_a": {
+      "id": "node_a",
+      "parent": "node_root",
+      "children": ["node_b"],
+      "message": {
+        "id": "node_a",
+        "author": {"role": "user"},
+        "content": {"content_type": "text", "parts": ["Hello, what is JARVIS?"]},
+        "create_time": 1700000000.0,
+        "recipient": "all",
+        "metadata": {}
+      }
+    },
+    "node_b": {
+      "id": "node_b",
+      "parent": "node_a",
+      "children": [],
+      "message": {
+        "id": "node_b",
+        "author": {"role": "assistant"},
+        "content": {"content_type": "text", "parts": ["JARVIS is a local AI assistant."]},
+        "create_time": 1700000050.0,
+        "recipient": "all",
+        "metadata": {}
+      }
+    }
+  }
+}

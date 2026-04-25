@@ -32,6 +32,8 @@ Re-running on an updated export is safe — messages are merged by ID, never dup
 
 **SQLite rows written:** `source_files` (raw export + normalized.json), `conversations`, `segments` (with full `segment_text` for citation rendering).
 
+**Reusable entrypoint:** the ingest orchestration is in `src/jarvis/ingest/pipeline.py:ingest_chatgpt()`. Both the CLI (`cmd_ingest` in `cli.py`) and the web upload flow (`web/ingest_runner.py`) call this function directly — no subprocess. The CLI adds the argparse glue + print output; the web runner adds job status tracking.
+
 ### Output layout
 
 ```

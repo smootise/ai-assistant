@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Upload — JARVIS{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="{{ url_for('dashboard.index') }}">Dashboard</a>
+  <span class="sep">›</span>
+  <span class="current">Upload</span>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Upload a data source</h1>
+  <p>Ingest a new export file into JARVIS. The file will be processed in the background.</p>
+</div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for category, message in messages %}
+    <div class="alert alert-{{ category }}">{{ message }}</div>
+  {% endfor %}
+{% endwith %}
+
+<div class="card">
+  <form method="POST" action="{{ url_for('uploads.upload_submit') }}" enctype="multipart/form-data">
+
+    <div style="margin-bottom:1.25rem;">
+      <label style="font-weight:600;display:block;margin-bottom:.5rem;">Source type</label>
+      <label style="display:flex;align-items:center;gap:.5rem;margin-bottom:.4rem;cursor:pointer;">
+        <input type="radio" name="source_type" value="chatgpt" checked>
+        ChatGPT export <span class="badge ok" style="margin-left:.25rem;">JSON</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:.5rem;color:var(--muted);cursor:not-allowed;">
+        <input type="radio" name="source_type" value="conversation" disabled>
+        Conversation file <span class="badge" style="margin-left:.25rem;">coming soon</span>
+      </label>
+    </div>
+
+    <div style="margin-bottom:1.25rem;">
+      <label for="file" style="font-weight:600;display:block;margin-bottom:.5rem;">File</label>
+      <input type="file" id="file" name="file" accept=".json"
+             style="font-size:.9rem;border:1px solid var(--border);border-radius:var(--radius);padding:.4rem .6rem;width:100%;max-width:480px;">
+      <p style="font-size:.8rem;color:var(--muted);margin-top:.35rem;">
+        Accepted: <code>.json</code> · Max size: 50 MB
+      </p>
+    </div>
+
+    <button type="submit"
+            style="background:var(--accent);color:#fff;border:none;border-radius:var(--radius);
+                   padding:.55rem 1.25rem;font-size:.9rem;font-weight:600;cursor:pointer;">
+      Upload and ingest
+    </button>
+
+  </form>
+</div>
+{% endblock %}

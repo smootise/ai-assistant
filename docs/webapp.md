@@ -2,11 +2,12 @@
 
 ## Overview
 
-The web app is a read-only operator console for browsing data stored by the JARVIS pipeline.
+The web app is an operator console for browsing and ingesting data into JARVIS.
 It runs locally at `http://localhost:5000` and requires no external services beyond a populated
 SQLite database (`data/jarvis.db`).
 
-V1 scope: navigation and browsing only. No uploads, pipeline invocations, or query features.
+V1 scope: browsing the data lineage + uploading ChatGPT export files for ingest.
+Not yet supported: extract/fragment/retrieve/answer via the UI.
 
 ---
 
@@ -38,6 +39,10 @@ The server binds to `127.0.0.1` only. It is not intended for network exposure.
 | `GET /extracts/<id>/raw` | File preview | `OUTPUTS/…/extracts/extract_NNN.json` |
 | `GET /fragments/<id>` | Fragment detail | `retrieval_text`; linked statements; parent chain |
 | `GET /fragments/<id>/raw` | File preview | `OUTPUTS/…/fragments/segment_NNN/fragment_NNN.json` |
+| `GET /upload` | Upload form | Source-type selector + file picker |
+| `POST /upload` | Upload handler | Saves file, creates job, launches ingest thread → 303 to `/jobs/<id>` |
+| `GET /jobs` | Jobs list | All ingest jobs, newest first |
+| `GET /jobs/<id>` | Job status | Status, timestamps, result links or error traceback |
 
 Missing linked records (e.g. a segment with no extract yet) render a placeholder message —
 pages never 500 on absent data.
@@ -53,6 +58,22 @@ Source → Conversation → Segment → Extract → Fragment
 ```
 
 Each page links up to its parent and down to its children where rows exist in SQLite.
+
+---
+
+## Upload safety
+
+Files are **never read from user-supplied paths**. The upload route:
+
+1. Validates `source_type` is in the server-side allowlist (`chatgpt` only for now).
+2. Sanitizes the filename via `werkzeug.utils.secure_filename`.
+3. Rejects non-`.json` extensions.
+4. Enforces a 50 MB size cap via Flask `MAX_CONTENT_LENGTH` (returns 413).
+5. Writes to a fixed destination: `inbox/ai_chat/chatgpt/raw/<UTC-timestamp>_<safe_name>.json`.
+6. Never reads back a path from the request.
+
+After saving, a `jobs` row is created and a daemon thread runs the ingest. The status page
+(`/jobs/<id>`) auto-refreshes every 2 seconds while the job is pending or running.
 
 ---
 
@@ -81,6 +102,7 @@ src/jarvis/web/
   app.py               Flask factory — registers blueprints, Jinja filters, store factory
   services.py          thin service layer — one function per page, returns plain dicts
   file_preview.py      ID-first whitelisted file reader
+  ingest_runner.py     module-level run_ingest_job() called from daemon threads
   routes/
     dashboard.py       GET /
     sources.py         GET /sources, /sources/<id>, /sources/<id>/raw
@@ -88,8 +110,10 @@ src/jarvis/web/
     segments.py        GET /segments/<id>, /segments/<id>/raw
     extracts.py        GET /extracts/<id>, /extracts/<id>/raw
     fragments.py       GET /fragments/<id>, /fragments/<id>/raw
+    uploads.py         GET /upload, POST /upload
+    jobs.py            GET /jobs, /jobs/<id>
   templates/
-    base.html          shared layout (nav, breadcrumb slot, content slot)
+    base.html          shared layout (nav, breadcrumb slot, content slot, head_extra slot)
     dashboard.html
     sources_list.html / source_detail.html
     conversations_list.html / conversation_detail.html
@@ -97,6 +121,8 @@ src/jarvis/web/
     extract_detail.html
     fragment_detail.html
     file_preview.html
+    upload.html
+    jobs_list.html / job_detail.html
     404.html
   static/
     styles.css         single stylesheet — system fonts, no framework

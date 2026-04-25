@@ -99,7 +99,7 @@ python -m jarvis.cli answer "Why did we choose Qdrant over Pinecone?"
 
 ## Web App
 
-JARVIS includes a read-only browser UI for exploring ingested data.
+JARVIS includes a browser UI for browsing ingested data and uploading new exports.
 
 ### Start the web server
 
@@ -113,9 +113,21 @@ The UI lets you:
 - View counts and recent records on the **Dashboard**
 - Browse **Sources**, **Conversations**, **Segments**, **Extracts**, and **Fragments**
 - Follow the full data lineage: source → conversation → segment → extract → fragment
-- Inspect raw JSON/text files for each entity (read-only, whitelist-restricted)
+- Inspect raw JSON/text files for each entity (whitelist-restricted)
+- **Upload** a ChatGPT export JSON and ingest it without using the CLI
+- **Track ingest jobs** at `/jobs` — status updates live as the job runs
 
-No uploads, pipeline actions, or query features in V1 — those are planned for V2.
+### Upload via web
+
+1. Open [http://localhost:5000/upload](http://localhost:5000/upload).
+2. Select **ChatGPT** as the source type.
+3. Choose your export `.json` file (max 50 MB).
+4. Click **Upload and ingest** — you are redirected to a live job status page.
+5. When the job succeeds, links to the new Conversation and Source appear.
+
+> **Note:** If you are upgrading from schema v7, delete `data/jarvis.db` once before
+> starting the server — schema v8 adds the `jobs` table. Re-run `--persist` steps to
+> rebuild the DB from your existing disk artifacts (all operations are idempotent).
 
 ---
 

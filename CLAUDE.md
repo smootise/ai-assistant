@@ -33,13 +33,14 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 - Rename refactor: chunk→segment (ingestion unit), segment→topic (thematic grouping)
 - Extract pipeline: clean attributed statements per segment (`extract-segments --persist`)
 - Fragment pipeline: topically coherent retrieval units (`fragment-extracts --persist --embed`)
-- Relational SQLite schema v7 (10 tables; deterministic IDs; `INSERT OR IGNORE` idempotency)
+- Relational SQLite schema v8 (11 tables: 10 entity tables + `jobs`; deterministic IDs; `INSERT OR IGNORE` idempotency)
 - Fragment-only Qdrant index (`jarvis_fragments`; full records reconstructed from SQLite)
 - Full ingest → extract → fragment → retrieve pipeline with `--persist` flags throughout
 - Web UI V1: read-only operator console (Flask + Jinja2); browsing source → conversation → segment → extract → fragment lineage; ID-first whitelisted file preview; `python -m jarvis.cli serve`
+- Web UI upload + ingest: upload ChatGPT exports via browser; background daemon thread runs ingest; `/jobs/<id>` status page with auto-refresh; schema v8 adds `jobs` table
 
 ### Planned
-- Web UI V2: uploads, job launching, retrieve/answer with citations
+- Web UI: extract/fragment/retrieve/answer jobs from the browser (job-launch flow for pipeline steps beyond ingest)
 - Token-budget retrieval: replace flat `--top-k` with `--max-context-tokens` to handle variable fragment sizes
 - `summarize` (single-file) `--persist`: wire standalone files through the same ingest→extract→fragment pipeline
 - TrueNAS deployment: migrate JARVIS services (Ollama, Qdrant, backend) to run on TrueNAS

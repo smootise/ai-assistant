@@ -4,9 +4,15 @@ Each function takes a SummaryStore and returns a plain dict for template renderi
 Missing linked records are normalized to None / [] — pages never raise from absent data.
 """
 
-from typing import Any, Dict, List, Optional
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from jarvis.store import SummaryStore
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_dashboard_data(store: SummaryStore) -> Dict[str, Any]:
@@ -81,3 +87,33 @@ def get_fragment_detail(store: SummaryStore, fragment_id: str) -> Optional[Dict[
     fragment = results[0]
     extract = store.get_extract(fragment["extract_id"])
     return {"fragment": fragment, "extract": extract}
+
+
+def save_upload(
+    file_storage: Any,
+    safe_name: str,
+    raw_dir: Path,
+) -> Tuple[Optional[Path], Dict[str, Any], Optional[str]]:
+    """Save an uploaded file to raw_dir with a UTC timestamp prefix.
+
+    Returns (saved_path, input_metadata, error_string). On error, saved_path is
+    None and error_string is set. On success, error_string is None.
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    filename = f"{ts}_{safe_name}"
+    dest = raw_dir / filename
+
+    try:
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        file_storage.save(str(dest))
+    except OSError as exc:
+        logger.error(f"Failed to save upload to {dest}: {exc}")
+        return None, {}, f"Could not save file: {exc}"
+
+    input_metadata = {
+        "original_filename": safe_name,
+        "stored_filename": filename,
+        "storage_path": str(dest),
+        "source_type": "chatgpt",
+    }
+    return dest, input_metadata, None
