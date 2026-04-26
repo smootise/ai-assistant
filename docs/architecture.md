@@ -108,7 +108,7 @@ Ollama is required for every pipeline run. Qdrant is only required for `fragment
 ## SQLite Schema
 
 The database lives at `data/jarvis.db` (configurable via `JARVIS_DB_PATH`). Current schema
-version: **7**. Schema is applied fresh on startup — no migrations from prior versions (wipe
+version: **8**. Schema is applied fresh on startup — no migrations from prior versions (wipe
 and rebuild).
 
 Table hierarchy (each table has a deterministic `*_id` primary key):
@@ -124,6 +124,8 @@ source_files                       SHA-256-keyed; raw export + normalized.json m
               │           └── fragment_statement_links  →  extract_statements
               └── topic_summaries     LLM-generated per-topic summary
                     └── topic_segments  →  segments  (many-to-many)
+
+jobs                               upload + ingest job tracking (independent of the entity graph)
 ```
 
 ID determinism: `segment_id = f"{conv_id}_s{idx:03d}"`, `extract_id = f"{segment_id}_x"`,
@@ -131,3 +133,38 @@ ID determinism: `segment_id = f"{conv_id}_s{idx:03d}"`, `extract_id = f"{segment
 `INSERT OR IGNORE` on stable IDs makes every `--persist` run idempotent.
 
 **Qdrant payload** per fragment point: `{fragment_id, parent_conversation_id, segment_id, conversation_date}`. All other data is in SQLite.
+
+---
+
+## Jobs Layer
+
+The `jobs` table tracks all pipeline operations triggered by the web UI. Each job has:
+`status ∈ {pending, running, succeeded, failed}`, ISO-8601 timestamps (`created_at`,
+`started_at`, `finished_at`), a `job_type` string, the input metadata (JSON), and either
+a result dict or an error traceback.
+
+Current `job_type` values: `ingest_chatgpt`, `extract_segments`, `fragment_extracts`.
+
+Each job runs in a **daemon thread** inside the Flask process via a dedicated runner module
+(`ingest_runner.py`, `extract_runner.py`, `fragment_runner.py`). Each runner opens a fresh
+`SummaryStore` connection (SQLite WAL allows concurrent readers and one writer) and calls
+pipeline classes directly — no subprocess. Jobs interrupted by a server shutdown remain
+stuck in `running` — a startup sweep is deferred.
+
+The `jobs` table is independent of the entity graph and is never referenced by foreign keys
+from other tables.
+
+---
+
+## Web Layer
+
+A Flask + Jinja2 operator console (`src/jarvis/web/`) for running and monitoring the pipeline
+from a browser. Sits above `SummaryStore` public methods — never touches `_connect()`.
+
+V1 features: browse the source → conversation → segment → extract → fragment lineage;
+upload ChatGPT export files; launch extract-segments and fragment-extracts for any conversation;
+track all pipeline jobs; inspect raw JSON/text artifacts. Qdrant is only touched by the
+fragment runner when `embed=True`.
+
+See [docs/webapp.md](webapp.md) for the full route map, job launch flow, validation rules,
+code layout, and extension guide.

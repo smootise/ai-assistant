@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Jobs — JARVIS{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="{{ url_for('dashboard.index') }}">Dashboard</a>
+  <span class="sep">›</span>
+  <span class="current">Jobs</span>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Jobs</h1>
+  <p>Upload and ingest jobs, newest first.</p>
+</div>
+
+{% if not jobs %}
+  <div class="empty-state">
+    <p>No jobs yet.</p>
+    <p><a href="{{ url_for('uploads.upload_form') }}">Upload a file</a> to get started.</p>
+  </div>
+{% else %}
+  <div class="card" style="padding:0;overflow:hidden;">
+    <table>
+      <thead>
+        <tr>
+          <th>Job</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th>Created</th>
+          <th>Finished</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in jobs %}
+        <tr>
+          <td>
+            <a href="{{ url_for('jobs.job_detail', job_id=job.job_id) }}" class="mono">
+              {{ job.job_id | short_id }}
+            </a>
+          </td>
+          <td>{{ job.job_type }}</td>
+          <td>
+            <span class="badge {% if job.status == 'succeeded' %}ok{% elif job.status == 'failed' %}degraded{% endif %}">
+              {{ job.status }}
+            </span>
+          </td>
+          <td class="mono" style="font-size:.8rem;">{{ job.created_at[:19] if job.created_at }}</td>
+          <td class="mono" style="font-size:.8rem;">{{ job.finished_at[:19] if job.finished_at else "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if jobs | length == limit %}
+  <div class="pagination">
+    {% if offset > 0 %}
+      <a href="{{ url_for('jobs.jobs_list', limit=limit, offset=[offset - limit, 0] | max) }}" class="action-link">← Previous</a>
+    {% endif %}
+    <a href="{{ url_for('jobs.jobs_list', limit=limit, offset=offset + limit) }}" class="action-link">Next →</a>
+  </div>
+  {% endif %}
+{% endif %}
+{% endblock %}

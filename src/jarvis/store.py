@@ -23,11 +23,12 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 7
+_SCHEMA_VERSION = 8
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS _jarvis_meta (
@@ -178,6 +179,20 @@ CREATE INDEX IF NOT EXISTS idx_seg_sum_segment     ON segment_summaries (segment
 CREATE INDEX IF NOT EXISTS idx_topic_sum_conv
     ON topic_summaries (conversation_id, topic_index);
 CREATE INDEX IF NOT EXISTS idx_topic_segs_topic    ON topic_segments (topic_id);
+
+-- Upload + ingest job tracking
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id          TEXT PRIMARY KEY,
+    job_type        TEXT NOT NULL,
+    status          TEXT NOT NULL CHECK(status IN ('pending','running','succeeded','failed')),
+    input_metadata  TEXT NOT NULL,
+    result          TEXT,
+    error           TEXT,
+    created_at      TEXT NOT NULL,
+    started_at      TEXT,
+    finished_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_at DESC);
 """
 
 # No migration path — DB is always wiped and rebuilt on schema changes.
@@ -758,6 +773,200 @@ class SummaryStore:
 
         # Preserve input order
         return [fragments[fid] for fid in fragment_ids if fid in fragments]
+
+    # ------------------------------------------------------------------
+    # Job tracking
+    # ------------------------------------------------------------------
+
+    def create_job(self, job_type: str, input_metadata: Dict[str, Any]) -> str:
+        """Create a new job row in 'pending' status. Returns the job_id."""
+        job_id = f"job_{uuid4().hex[:12]}"
+        now = _now_iso()
+        sql = """
+            INSERT INTO jobs (job_id, job_type, status, input_metadata, created_at)
+            VALUES (?, ?, 'pending', ?, ?)
+        """
+        with self._connect() as conn:
+            conn.execute(sql, (job_id, job_type, json.dumps(input_metadata), now))
+        return job_id
+
+    def mark_job_running(self, job_id: str) -> None:
+        sql = "UPDATE jobs SET status='running', started_at=? WHERE job_id=?"
+        with self._connect() as conn:
+            conn.execute(sql, (_now_iso(), job_id))
+
+    def mark_job_succeeded(self, job_id: str, result: Dict[str, Any]) -> None:
+        sql = "UPDATE jobs SET status='succeeded', result=?, finished_at=? WHERE job_id=?"
+        with self._connect() as conn:
+            conn.execute(sql, (json.dumps(result), _now_iso(), job_id))
+
+    def mark_job_failed(self, job_id: str, error: str) -> None:
+        sql = "UPDATE jobs SET status='failed', error=?, finished_at=? WHERE job_id=?"
+        with self._connect() as conn:
+            conn.execute(sql, (error, _now_iso(), job_id))
+
+    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        sql = "SELECT * FROM jobs WHERE job_id=?"
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(sql, (job_id,)).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["input_metadata"] = json.loads(d["input_metadata"]) if d["input_metadata"] else {}
+        d["result"] = json.loads(d["result"]) if d["result"] else None
+        return d
+
+    def list_jobs(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        sql = "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (limit, offset)).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["input_metadata"] = json.loads(d["input_metadata"]) if d["input_metadata"] else {}
+            d["result"] = json.loads(d["result"]) if d["result"] else None
+            result.append(d)
+        return result
+
+    def count_jobs(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()
+        return row[0] if row else 0
+
+    # ------------------------------------------------------------------
+    # Web read-only helpers (no writes, no Qdrant)
+    # ------------------------------------------------------------------
+
+    def count_all(self) -> Dict[str, int]:
+        """Return per-table row counts for the dashboard."""
+        tables = [
+            "source_files", "conversations", "segments",
+            "extracts", "fragments", "extract_statements", "jobs",
+        ]
+        counts: Dict[str, int] = {}
+        with self._connect() as conn:
+            for table in tables:
+                row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+                counts[table] = row[0] if row else 0
+        return counts
+
+    def list_source_files(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """Return source file rows, newest first."""
+        sql = "SELECT * FROM source_files ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (limit, offset)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_source_file(self, source_file_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single source file row by ID."""
+        sql = "SELECT * FROM source_files WHERE source_file_id = ?"
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(sql, (source_file_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_conversations(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """Return conversation rows, newest first."""
+        sql = "SELECT * FROM conversations ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (limit, offset)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_conversation(self, conversation_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single conversation row by ID."""
+        sql = "SELECT * FROM conversations WHERE conversation_id = ?"
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(sql, (conversation_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_conversations_for_source(self, source_file_id: str) -> List[Dict[str, Any]]:
+        """Return conversations linked to a source file (raw or normalized)."""
+        sql = """
+            SELECT * FROM conversations
+            WHERE raw_source_file_id = ? OR normalized_source_file_id = ?
+            ORDER BY created_at DESC
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (source_file_id, source_file_id)).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_segments_for_conversation(self, conversation_id: str) -> List[Dict[str, Any]]:
+        """Return segment rows for a conversation, ordered by segment_index."""
+        sql = """
+            SELECT * FROM segments
+            WHERE conversation_id = ?
+            ORDER BY segment_index ASC
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (conversation_id,)).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["message_ids"] = json.loads(d.get("message_ids_json") or "[]")
+            result.append(d)
+        return result
+
+    def get_extract(self, extract_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single extract row by ID."""
+        sql = "SELECT * FROM extracts WHERE extract_id = ?"
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(sql, (extract_id,)).fetchone()
+        if row is None:
+            return None
+        r = dict(row)
+        r["warnings"] = json.loads(r["warnings"]) if r["warnings"] else []
+        return r
+
+    def list_fragments_for_extract(self, extract_id: str) -> List[Dict[str, Any]]:
+        """Return fragment rows for an extract, ordered by fragment_index."""
+        sql = """
+            SELECT * FROM fragments
+            WHERE extract_id = ?
+            ORDER BY fragment_index ASC
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (extract_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_extracts_for_conversation(self, conversation_id: str) -> int:
+        """Return the number of extract rows for a conversation."""
+        sql = "SELECT COUNT(*) FROM extracts WHERE parent_conversation_id = ?"
+        with self._connect() as conn:
+            row = conn.execute(sql, (conversation_id,)).fetchone()
+        return row[0] if row else 0
+
+    def recent_records(self, n: int = 10) -> Dict[str, List[Dict[str, Any]]]:
+        """Return the n most-recent rows per entity table for the dashboard."""
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        queries = {
+            "source_files": "SELECT source_file_id AS id, original_filename AS label, "
+                            "created_at FROM source_files ORDER BY created_at DESC LIMIT ?",
+            "conversations": "SELECT conversation_id AS id, COALESCE(title, conversation_id) "
+                             "AS label, created_at FROM conversations "
+                             "ORDER BY created_at DESC LIMIT ?",
+            "segments": "SELECT segment_id AS id, "
+                        "('Seg #' || segment_index || ' — ' || conversation_id) AS label, "
+                        "created_at FROM segments ORDER BY created_at DESC LIMIT ?",
+            "extracts": "SELECT extract_id AS id, extract_id AS label, "
+                        "created_at FROM extracts ORDER BY created_at DESC LIMIT ?",
+            "fragments": "SELECT fragment_id AS id, fragment_id AS label, "
+                         "created_at FROM fragments ORDER BY created_at DESC LIMIT ?",
+        }
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            for key, sql in queries.items():
+                rows = conn.execute(sql, (n,)).fetchall()
+                result[key] = [dict(r) for r in rows]
+        return result
 
     # ------------------------------------------------------------------
     # Private helpers

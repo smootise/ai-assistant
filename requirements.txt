@@ -4,3 +4,4 @@ requests
 python-dotenv
 pyyaml
 qdrant-client
+Flask>=3.0

@@ -378,4 +378,4 @@ class TestSummaryStoreSegmentColumns:
         ).fetchone()
         conn.close()
         assert row is not None
-        assert int(row[0]) == 7
+        assert int(row[0]) == 8

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ source.original_filename }} — JARVIS{% endblock %}
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="{{ url_for('dashboard.index') }}">Dashboard</a>
+  <span class="sep">/</span>
+  <a href="{{ url_for('sources.sources_list') }}">Sources</a>
+  <span class="sep">/</span>
+  <span class="current">{{ source.original_filename }}</span>
+</div>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ source.original_filename }}</h1>
+  <p>Source file metadata</p>
+</div>
+
+<div class="card">
+  <h2>Metadata</h2>
+  <table class="meta-table">
+    <tr><td>ID</td><td class="mono">{{ source.source_file_id }}</td></tr>
+    <tr><td>Kind</td><td><span class="badge">{{ source.source_kind }}</span></td></tr>
+    <tr><td>Filename</td><td>{{ source.original_filename }}</td></tr>
+    <tr><td>Storage path</td><td class="mono">{{ source.storage_path or '—' }}</td></tr>
+    <tr><td>SHA-256</td><td class="mono">{{ source.sha256[:16] }}…</td></tr>
+    <tr><td>Size</td><td>{{ '{:,}'.format(source.size_bytes) + ' bytes' if source.size_bytes else '—' }}</td></tr>
+    <tr><td>Ingested at</td><td>{{ source.ingested_at or '—' }}</td></tr>
+    <tr><td>Created at</td><td>{{ source.created_at or '—' }}</td></tr>
+  </table>
+  <div style="margin-top:1rem;">
+    <a class="action-link" href="{{ url_for('sources.source_raw', source_id=source.source_file_id) }}">View raw file →</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Conversations</h2>
+  {% if conversations %}
+  <table>
+    <thead>
+      <tr><th>Title</th><th>Platform</th><th>Messages</th><th>Date</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for c in conversations %}
+      <tr>
+        <td><a href="{{ url_for('conversations.conversation_detail', conversation_id=c.conversation_id) }}">{{ c.title or c.conversation_id }}</a></td>
+        <td><span class="badge">{{ c.source_platform }}</span></td>
+        <td>{{ c.message_count or '—' }}</td>
+        <td class="mono">{{ c.conversation_date[:10] if c.conversation_date else '—' }}</td>
+        <td><a class="action-link" href="{{ url_for('conversations.conversation_detail', conversation_id=c.conversation_id) }}">View →</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state">
+    <p>No conversations linked to this source file.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

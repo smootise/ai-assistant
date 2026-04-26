@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Not Found — JARVIS{% endblock %}
+{% block content %}
+<div class="page-header" style="margin-top:3rem; text-align:center;">
+  <h1>404 — Not Found</h1>
+  <p>The record you're looking for doesn't exist in the database.</p>
+  <p style="margin-top:1rem;"><a href="{{ url_for('dashboard.index') }}">← Back to Dashboard</a></p>
+</div>
+{% endblock %}

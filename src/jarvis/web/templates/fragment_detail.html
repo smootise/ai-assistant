@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Fragment — {{ fragment.fragment_id|short_id }} — JARVIS{% endblock %}
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="{{ url_for('dashboard.index') }}">Dashboard</a>
+  <span class="sep">/</span>
+  <a href="{{ url_for('conversations.conversations_list') }}">Conversations</a>
+  {% if fragment.parent_conversation_id %}
+  <span class="sep">/</span>
+  <a href="{{ url_for('conversations.conversation_detail', conversation_id=fragment.parent_conversation_id) }}">{{ (fragment.conversation_title or fragment.parent_conversation_id)|truncate(30) }}</a>
+  {% endif %}
+  {% if fragment.segment_id %}
+  <span class="sep">/</span>
+  <a href="{{ url_for('segments.segment_detail', segment_id=fragment.segment_id) }}">Segment #{{ fragment.segment_index }}</a>
+  {% endif %}
+  {% if extract %}
+  <span class="sep">/</span>
+  <a href="{{ url_for('extracts.extract_detail', extract_id=extract.extract_id) }}">Extract</a>
+  {% endif %}
+  <span class="sep">/</span>
+  <span class="current">Fragment #{{ fragment.fragment_index }}</span>
+</div>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Fragment #{{ fragment.fragment_index }}{% if fragment.title %} — {{ fragment.title }}{% endif %}</h1>
+  <p class="mono">{{ fragment.fragment_id }}</p>
+</div>
+
+<div class="card">
+  <h2>Metadata</h2>
+  <table class="meta-table">
+    <tr><td>Fragment ID</td><td class="mono">{{ fragment.fragment_id }}</td></tr>
+    <tr><td>Extract</td><td>
+      {% if extract %}
+      <a href="{{ url_for('extracts.extract_detail', extract_id=extract.extract_id) }}">{{ extract.extract_id|short_id }}</a>
+      {% else %}
+      <span class="mono">{{ fragment.extract_id }}</span>
+      {% endif %}
+    </td></tr>
+    <tr><td>Segment</td><td>
+      {% if fragment.segment_id %}
+      <a href="{{ url_for('segments.segment_detail', segment_id=fragment.segment_id) }}">Segment #{{ fragment.segment_index }}</a>
+      {% else %}—{% endif %}
+    </td></tr>
+    <tr><td>Conversation</td><td>
+      {% if fragment.parent_conversation_id %}
+      <a href="{{ url_for('conversations.conversation_detail', conversation_id=fragment.parent_conversation_id) }}">{{ fragment.conversation_title or fragment.parent_conversation_id }}</a>
+      {% else %}—{% endif %}
+    </td></tr>
+    <tr><td>Status</td><td><span class="badge {{ fragment.status }}">{{ fragment.status }}</span></td></tr>
+    <tr><td>Embedded</td><td>{{ fragment.embedded_at or '—' }}</td></tr>
+    <tr><td>Embedding model</td><td>{{ fragment.embedding_model or '—' }}</td></tr>
+    <tr><td>Qdrant point ID</td><td class="mono">{{ fragment.qdrant_point_id or '—' }}</td></tr>
+    <tr><td>Created at</td><td>{{ fragment.created_at or '—' }}</td></tr>
+  </table>
+  <div style="margin-top:.75rem;">
+    <a class="action-link" href="{{ url_for('fragments.fragment_raw', fragment_id=fragment.fragment_id) }}">View raw file →</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Retrieval Text</h2>
+  <div class="segment-text">{{ fragment.retrieval_text }}</div>
+</div>
+
+<div class="card">
+  <h2>Linked Statements ({{ fragment.statements|length }})</h2>
+  {% if fragment.statements %}
+  <ul class="statements-list">
+    {% for st in fragment.statements %}
+    <li>
+      <span class="speaker">{{ st.speaker }}</span>
+      <span>{{ st.text }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty-state">
+    <p>No linked statements.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

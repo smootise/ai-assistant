@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Conversations — JARVIS{% endblock %}
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="{{ url_for('dashboard.index') }}">Dashboard</a>
+  <span class="sep">/</span>
+  <span class="current">Conversations</span>
+</div>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Conversations</h1>
+</div>
+
+<div class="card">
+{% if conversations %}
+  <table>
+    <thead>
+      <tr><th>Title</th><th>Platform</th><th>Messages</th><th>Date</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for c in conversations %}
+      <tr>
+        <td><a href="{{ url_for('conversations.conversation_detail', conversation_id=c.conversation_id) }}">{{ c.title or c.conversation_id }}</a></td>
+        <td><span class="badge">{{ c.source_platform }}</span></td>
+        <td>{{ c.message_count or '—' }}</td>
+        <td class="mono">{{ c.conversation_date[:10] if c.conversation_date else '—' }}</td>
+        <td><a class="action-link" href="{{ url_for('conversations.conversation_detail', conversation_id=c.conversation_id) }}">View →</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if conversations|length == limit %}
+  <div class="pagination">
+    {% if offset > 0 %}
+    <a class="action-link" href="{{ url_for('conversations.conversations_list', limit=limit, offset=[offset-limit, 0]|max) }}">← Prev</a>
+    {% endif %}
+    <a class="action-link" href="{{ url_for('conversations.conversations_list', limit=limit, offset=offset+limit) }}">Next →</a>
+  </div>
+  {% endif %}
+{% else %}
+  <div class="empty-state">
+    <p>No conversations recorded yet.</p>
+    <p>Run <code>python -m jarvis.cli ingest chatgpt --file &lt;export.json&gt; --persist</code> to get started.</p>
+  </div>
+{% endif %}
+</div>
+{% endblock %}

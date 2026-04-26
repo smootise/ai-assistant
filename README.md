@@ -97,7 +97,71 @@ python -m jarvis.cli answer "Why did we choose Qdrant over Pinecone?"
 
 ---
 
+## Web App
+
+JARVIS includes a browser UI for browsing ingested data and uploading new exports.
+
+### Start the web server
+
+```bash
+python -m jarvis.cli serve
+```
+
+Then open [http://localhost:5000](http://localhost:5000) in your browser.
+
+The UI lets you:
+- View counts and recent records on the **Dashboard**
+- Browse **Sources**, **Conversations**, **Segments**, **Extracts**, and **Fragments**
+- Follow the full data lineage: source → conversation → segment → extract → fragment
+- Inspect raw JSON/text files for each entity (whitelist-restricted)
+- **Upload** a ChatGPT export JSON and ingest it without using the CLI
+- **Run extraction** for a conversation (extract attributed statements per segment)
+- **Run fragmentation** for a conversation (group statements into retrieval units; optionally embed in Qdrant)
+- **Track all pipeline jobs** at `/jobs` — status updates live as each job runs
+
+### Upload and ingest via web
+
+1. Open [http://localhost:5000/upload](http://localhost:5000/upload).
+2. Select **ChatGPT** as the source type.
+3. Choose your export `.json` file (max 50 MB).
+4. Click **Upload and ingest** — you are redirected to a live job status page.
+5. When the job succeeds, links to the new Conversation and Source appear.
+
+### Extract and fragment via web
+
+1. From any **Conversation detail** page, click **Run extraction →**.
+2. Set optional segment range, leave **Persist to DB** checked, click **Run extraction**.
+3. The job status page auto-refreshes. On success, links to each extract appear.
+4. Back on the Conversation detail page, click **Run fragmentation →**.
+5. Leave **Persist to DB** and **Embed in Qdrant** checked (defaults), click **Run fragmentation**.
+6. On success, links to each fragment appear; fragments are now searchable via `retrieve`.
+
+> **Note:** Fragmentation requires extracts to exist first. The fragment form shows a warning
+> and blocks submission when no extracts are found for the conversation.
+
+> **Note:** If you are upgrading from schema v7, delete `data/jarvis.db` once before
+> starting the server — schema v8 adds the `jobs` table. Re-run `--persist` steps to
+> rebuild the DB from your existing disk artifacts (all operations are idempotent).
+
+---
+
 ## CLI Reference
+
+### `serve`
+
+Launch the JARVIS web UI.
+
+```bash
+python -m jarvis.cli serve [--host 127.0.0.1] [--port 5000] [--debug]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--host` | `127.0.0.1` | Bind address |
+| `--port` | `5000` | Bind port |
+| `--debug` | off | Enable Flask debug mode (auto-reload, verbose errors) |
+
+---
 
 ### `ingest chatgpt`
 
