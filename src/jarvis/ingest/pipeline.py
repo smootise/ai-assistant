@@ -49,6 +49,7 @@ def ingest_chatgpt(
     persist: bool,
     config: Dict[str, Any],
     memory: Optional[Any] = None,
+    store: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Run the full ChatGPT ingest pipeline for one export file.
 
@@ -89,35 +90,17 @@ def ingest_chatgpt(
     source_file_id = sha256_file(raw_path)
 
     if persist:
-        if memory is None:
-            from jarvis.embedder import EmbeddingClient
-            from jarvis.memory import MemoryLayer
-            from jarvis.store import SummaryStore
-            from jarvis.vector_store import VectorStore
-
-            store = SummaryStore(db_path=config["db_path"])
-            vector_store = VectorStore(
-                host=config["qdrant_host"],
-                port=config["qdrant_port"],
-            )
-            embedder = EmbeddingClient(
-                model=config["embedding_model"],
-                base_url=config["ollama_base_url"],
-            )
-            memory = MemoryLayer(store=store, vector_store=vector_store, embedder=embedder)
-
+        # Ingest only needs SQLite — Qdrant is never touched here.
+        # If a MemoryLayer is provided (e.g. for testing), use it as before.
+        # If a bare SummaryStore is provided, call it directly.
+        # Otherwise build a SummaryStore — no VectorStore or Ollama needed.
         logger.info("Persisting source file metadata, conversation, and segments...")
 
         raw_file_data = source_file_data(raw_path, "chatgpt_raw_export")
-        memory.persist_source_file(raw_file_data)
-
         norm_file_data = source_file_data(norm_path, "chatgpt_normalized")
-        memory.persist_source_file(norm_file_data)
-
         first_seg = result["segments"][0] if result["segments"] else {}
         conv_date = first_seg.get("conversation_date")
-
-        memory.persist_conversation({
+        conv_data = {
             "conversation_id": conversation_id,
             "raw_source_file_id": raw_file_data["source_file_id"],
             "normalized_source_file_id": norm_file_data["source_file_id"],
@@ -126,10 +109,22 @@ def ingest_chatgpt(
             "source_platform": normalized.get("source_platform", "chatgpt"),
             "message_count": normalized.get("message_count"),
             "imported_at": normalized.get("imported_at"),
-        })
+        }
 
-        for seg in result["segments"]:
-            memory.persist_segment(seg)
+        if memory is not None:
+            memory.persist_source_file(raw_file_data)
+            memory.persist_source_file(norm_file_data)
+            memory.persist_conversation(conv_data)
+            for seg in result["segments"]:
+                memory.persist_segment(seg)
+        else:
+            from jarvis.store import SummaryStore
+            _store = store if store is not None else SummaryStore(db_path=config["db_path"])
+            _store.insert_source_file(raw_file_data)
+            _store.insert_source_file(norm_file_data)
+            _store.insert_conversation(conv_data)
+            for seg in result["segments"]:
+                _store.insert_segment(seg)
 
         logger.info(f"Persisted {len(result['segments'])} segment(s) for {conversation_id}")
 
