@@ -449,21 +449,51 @@ class SummaryStore:
         self,
         conversation_id: str,
         segment_indices: Optional[List[int]] = None,
-    ) -> None:
-        """Delete extract rows (and cascade to statements + links) for a conversation."""
+    ) -> List[str]:
+        """Delete extract rows for a conversation, returning Qdrant point IDs of any
+        fragments that were removed so callers can clean the vector index.
+
+        Deletes fragments (+ fragment_statement_links via cascade) first to satisfy the
+        FK constraint on fragments.extract_id, then deletes the extracts (which cascades
+        to extract_statements).
+        """
         with self._connect() as conn:
             if segment_indices is not None:
                 placeholders = ",".join("?" * len(segment_indices))
-                conn.execute(
-                    f"DELETE FROM extracts WHERE parent_conversation_id = ? "
+                extract_id_rows = conn.execute(
+                    f"SELECT extract_id FROM extracts WHERE parent_conversation_id = ? "
                     f"AND segment_index IN ({placeholders})",
                     [conversation_id] + segment_indices,
-                )
+                ).fetchall()
             else:
-                conn.execute(
-                    "DELETE FROM extracts WHERE parent_conversation_id = ?",
+                extract_id_rows = conn.execute(
+                    "SELECT extract_id FROM extracts WHERE parent_conversation_id = ?",
                     (conversation_id,),
+                ).fetchall()
+
+            extract_ids = [r[0] for r in extract_id_rows]
+            point_ids: List[str] = []
+
+            if extract_ids:
+                ext_placeholders = ",".join("?" * len(extract_ids))
+                point_rows = conn.execute(
+                    f"SELECT qdrant_point_id FROM fragments "
+                    f"WHERE extract_id IN ({ext_placeholders}) "
+                    f"AND qdrant_point_id IS NOT NULL",
+                    extract_ids,
+                ).fetchall()
+                point_ids = [r[0] for r in point_rows]
+
+                conn.execute(
+                    f"DELETE FROM fragments WHERE extract_id IN ({ext_placeholders})",
+                    extract_ids,
                 )
+                conn.execute(
+                    f"DELETE FROM extracts WHERE extract_id IN ({ext_placeholders})",
+                    extract_ids,
+                )
+
+        return point_ids
 
     # ------------------------------------------------------------------
     # Extract statements
