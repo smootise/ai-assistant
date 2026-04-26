@@ -38,9 +38,10 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 - Full ingest → extract → fragment → retrieve pipeline with `--persist` flags throughout
 - Web UI V1: read-only operator console (Flask + Jinja2); browsing source → conversation → segment → extract → fragment lineage; ID-first whitelisted file preview; `python -m jarvis.cli serve`
 - Web UI upload + ingest: upload ChatGPT exports via browser; background daemon thread runs ingest; `/jobs/<id>` status page with auto-refresh; schema v8 adds `jobs` table
+- Web UI extract + fragment jobs: launch extract-segments and fragment-extracts from conversation detail page; reuses same job model; form validation (range, embed→persist, prereq guard); job_detail shows type-specific results with links to extracts/fragments
 
 ### Planned
-- Web UI: extract/fragment/retrieve/answer jobs from the browser (job-launch flow for pipeline steps beyond ingest)
+- Web UI: retrieve/answer jobs from the browser
 - Token-budget retrieval: replace flat `--top-k` with `--max-context-tokens` to handle variable fragment sizes
 - `summarize` (single-file) `--persist`: wire standalone files through the same ingest→extract→fragment pipeline
 - TrueNAS deployment: migrate JARVIS services (Ollama, Qdrant, backend) to run on TrueNAS

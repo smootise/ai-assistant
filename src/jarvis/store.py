@@ -937,6 +937,13 @@ class SummaryStore:
             rows = conn.execute(sql, (extract_id,)).fetchall()
         return [dict(r) for r in rows]
 
+    def count_extracts_for_conversation(self, conversation_id: str) -> int:
+        """Return the number of extract rows for a conversation."""
+        sql = "SELECT COUNT(*) FROM extracts WHERE parent_conversation_id = ?"
+        with self._connect() as conn:
+            row = conn.execute(sql, (conversation_id,)).fetchone()
+        return row[0] if row else 0
+
     def recent_records(self, n: int = 10) -> Dict[str, List[Dict[str, Any]]]:
         """Return the n most-recent rows per entity table for the dashboard."""
         result: Dict[str, List[Dict[str, Any]]] = {}

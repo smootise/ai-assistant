@@ -20,7 +20,9 @@ Future prompts will add: extract/fragment/retrieve/answer jobs from the UI.
 | `services.py` | Service layer. Each function accepts `SummaryStore` + args, returns plain dicts for templates. Never raises on missing data — normalizes to `None`/`[]`. `save_upload()` is the only place files are written. |
 | `file_preview.py` | ID-first whitelisted file reader. Resolves paths from SQLite entity metadata, never from user input. |
 | `ingest_runner.py` | Module-level `run_ingest_job()`. Called from a daemon thread; opens its own `SummaryStore` connection; marks job running → succeeded/failed. |
-| `routes/` | One blueprint per entity. Routes orchestrate: call service, pass to template. No business logic in routes. |
+| `extract_runner.py` | Module-level `run_extract_job(job_id, conversation_id, options, config)`. Same thread pattern as ingest. Calls `SegmentExtractor` + `MemoryLayer` directly. |
+| `fragment_runner.py` | Module-level `run_fragment_job(job_id, conversation_id, options, config)`. Calls `Fragmenter` + `MemoryLayer` directly. Guards `embed→persist`. |
+| `routes/` | One blueprint per entity + `pipeline_jobs.py` for extract/fragment launch. Routes orchestrate: validate → call service/runner → render or redirect. No business logic in routes. |
 | `templates/` | Jinja2 server-rendered HTML. Purely presentational — no logic beyond conditionals and loops. |
 | `static/` | Single CSS file. No JS framework, no build step. |
 
@@ -40,6 +42,16 @@ Future prompts will add: extract/fragment/retrieve/answer jobs from the UI.
 - Job state mutations (`mark_job_running`, `mark_job_succeeded`, `mark_job_failed`) go through `SummaryStore` public methods only.
 - The job status page (`/jobs/<id>`) auto-refreshes via `<meta http-equiv="refresh" content="2">` only while the job is `pending` or `running`.
 - In-flight jobs that are `running` when the server shuts down will remain stuck in `running` — this is a known V1 limitation. A startup sweep to fix orphaned running jobs is deferred.
+
+## Pipeline Job Rules (extract + fragment)
+
+- `job_type` values: `extract_segments`, `fragment_extracts` (free-form TEXT, no migration needed).
+- `input_metadata` shape — extract: `{conversation_id, from_segment, to_segment, force, persist}`; fragment: adds `embed`.
+- `result` shape — extract: `{conversation_id, segments_processed, extracts_persisted, extract_ids[], extract_ids_truncated}`; fragment: `{conversation_id, fragments_produced, fragments_persisted, embedded, skipped_segments[], fragment_ids[], fragment_ids_truncated}`. `extract_ids` / `fragment_ids` capped at 200 entries to bound result blob size.
+- **`embed` requires `persist`** — enforced at the route level (400 + flash) and as defense-in-depth inside the runner (`ValueError`).
+- **Fragment prereq guard** — fragment form page blocks submission (no submit button) when `store.count_extracts_for_conversation()` returns 0; POST also rejected with 400.
+- Deterministic IDs in results: `extract_id = f"{segment_id}_x"`, `fragment_id = f"{extract_id}_f{idx:03d}"`. Runners can build these without querying SQLite.
+- Force semantics are replicated exactly from `cli.py` — do not soften.
 
 ---
 

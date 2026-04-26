@@ -48,7 +48,8 @@ def get_conversation_detail(
     if conversation is None:
         return None
     segments = store.list_segments_for_conversation(conversation_id)
-    return {"conversation": conversation, "segments": segments}
+    has_extracts = store.count_extracts_for_conversation(conversation_id) > 0
+    return {"conversation": conversation, "segments": segments, "has_extracts": has_extracts}
 
 
 def get_segment_detail(store: SummaryStore, segment_id: str) -> Optional[Dict[str, Any]]:

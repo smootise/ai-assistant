@@ -138,27 +138,33 @@ ID determinism: `segment_id = f"{conv_id}_s{idx:03d}"`, `extract_id = f"{segment
 
 ## Jobs Layer
 
-The `jobs` table tracks upload + ingest operations triggered by the web UI. Each job has:
+The `jobs` table tracks all pipeline operations triggered by the web UI. Each job has:
 `status ∈ {pending, running, succeeded, failed}`, ISO-8601 timestamps (`created_at`,
-`started_at`, `finished_at`), the input metadata (original filename, storage path), and
-either a result dict (conversation_id, source_file_id, segment_count) or an error traceback.
+`started_at`, `finished_at`), a `job_type` string, the input metadata (JSON), and either
+a result dict or an error traceback.
 
-In V1 the ingest runs in a **daemon thread** inside the Flask process. A fresh `SummaryStore`
-connection is opened per thread (SQLite WAL allows concurrent readers and one writer). Jobs
-interrupted by a server shutdown remain stuck in `running` — a startup sweep is deferred.
+Current `job_type` values: `ingest_chatgpt`, `extract_segments`, `fragment_extracts`.
 
-The `jobs` table is independent of the entity graph (source_files → conversations → …) and
-is never referenced by foreign keys from other tables.
+Each job runs in a **daemon thread** inside the Flask process via a dedicated runner module
+(`ingest_runner.py`, `extract_runner.py`, `fragment_runner.py`). Each runner opens a fresh
+`SummaryStore` connection (SQLite WAL allows concurrent readers and one writer) and calls
+pipeline classes directly — no subprocess. Jobs interrupted by a server shutdown remain
+stuck in `running` — a startup sweep is deferred.
+
+The `jobs` table is independent of the entity graph and is never referenced by foreign keys
+from other tables.
 
 ---
 
 ## Web Layer
 
-A Flask + Jinja2 operator console (`src/jarvis/web/`) for browsing and ingesting data.
-Sits above `SummaryStore` public methods — never touches `_connect()`. No Qdrant in V1.
+A Flask + Jinja2 operator console (`src/jarvis/web/`) for running and monitoring the pipeline
+from a browser. Sits above `SummaryStore` public methods — never touches `_connect()`.
 
 V1 features: browse the source → conversation → segment → extract → fragment lineage;
-upload ChatGPT export files; track ingest jobs; inspect raw JSON/text artifacts.
+upload ChatGPT export files; launch extract-segments and fragment-extracts for any conversation;
+track all pipeline jobs; inspect raw JSON/text artifacts. Qdrant is only touched by the
+fragment runner when `embed=True`.
 
-See [docs/webapp.md](webapp.md) for the full route map, file preview rules, upload safety
-rules, code layout, and extension guide.
+See [docs/webapp.md](webapp.md) for the full route map, job launch flow, validation rules,
+code layout, and extension guide.

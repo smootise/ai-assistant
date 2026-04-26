@@ -48,6 +48,8 @@
 
 {% if job.status == 'succeeded' and job.result %}
   <h2>Result</h2>
+
+  {% if job.job_type == 'ingest_chatgpt' %}
   <div class="card">
     <table class="meta-table">
       <tr><td>Conversation</td><td>
@@ -67,6 +69,82 @@
       <tr><td>Segments</td><td>{{ job.result.get('segment_count', '—') }}</td></tr>
     </table>
   </div>
+
+  {% elif job.job_type == 'extract_segments' %}
+  <div class="card">
+    <table class="meta-table">
+      <tr><td>Conversation</td><td>
+        {% if job.result.get('conversation_id') %}
+          <a href="{{ url_for('conversations.conversation_detail', conversation_id=job.result.conversation_id) }}">
+            {{ job.result.conversation_id }}
+          </a>
+        {% else %}—{% endif %}
+      </td></tr>
+      <tr><td>Segments processed</td><td>{{ job.result.get('segments_processed', '—') }}</td></tr>
+      <tr><td>Extracts persisted</td><td>{{ job.result.get('extracts_persisted', '—') }}</td></tr>
+      <tr><td>From segment</td><td>{{ job.input_metadata.get('from_segment', '—') }}</td></tr>
+      <tr><td>To segment</td><td>{{ job.input_metadata.get('to_segment') if job.input_metadata.get('to_segment') is not none else 'last' }}</td></tr>
+      <tr><td>Persist</td><td>{{ 'yes' if job.input_metadata.get('persist') else 'no' }}</td></tr>
+      <tr><td>Force</td><td>{{ 'yes' if job.input_metadata.get('force') else 'no' }}</td></tr>
+    </table>
+  </div>
+  {% if job.result.get('extract_ids') %}
+  <div class="card">
+    <h2>Extracts{% if job.result.get('extract_ids_truncated') %} (first {{ job.result.extract_ids|length }} shown){% endif %}</h2>
+    <ul style="list-style:none;padding:0;margin:0;">
+      {% for eid in job.result.extract_ids %}
+      <li style="margin:0.25rem 0;">
+        <a class="action-link mono" href="{{ url_for('extracts.extract_detail', extract_id=eid) }}">{{ eid | short_id }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% elif job.job_type == 'fragment_extracts' %}
+  <div class="card">
+    <table class="meta-table">
+      <tr><td>Conversation</td><td>
+        {% if job.result.get('conversation_id') %}
+          <a href="{{ url_for('conversations.conversation_detail', conversation_id=job.result.conversation_id) }}">
+            {{ job.result.conversation_id }}
+          </a>
+        {% else %}—{% endif %}
+      </td></tr>
+      <tr><td>Fragments produced</td><td>{{ job.result.get('fragments_produced', '—') }}</td></tr>
+      <tr><td>Fragments persisted</td><td>{{ job.result.get('fragments_persisted', '—') }}</td></tr>
+      <tr><td>Embedded in Qdrant</td><td>{{ 'yes' if job.result.get('embedded') else 'no' }}</td></tr>
+      <tr><td>From segment</td><td>{{ job.input_metadata.get('from_segment', '—') }}</td></tr>
+      <tr><td>To segment</td><td>{{ job.input_metadata.get('to_segment') if job.input_metadata.get('to_segment') is not none else 'last' }}</td></tr>
+      <tr><td>Persist</td><td>{{ 'yes' if job.input_metadata.get('persist') else 'no' }}</td></tr>
+      <tr><td>Embed</td><td>{{ 'yes' if job.input_metadata.get('embed') else 'no' }}</td></tr>
+      <tr><td>Force</td><td>{{ 'yes' if job.input_metadata.get('force') else 'no' }}</td></tr>
+    </table>
+  </div>
+  {% if job.result.get('skipped_segments') %}
+  <div class="card">
+    <h2>Skipped segments</h2>
+    <ul style="list-style:none;padding:0;margin:0;">
+      {% for seg_id, reason in job.result.skipped_segments %}
+      <li style="margin:0.25rem 0;"><span class="mono">{{ seg_id }}</span>: {{ reason }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+  {% if job.result.get('fragment_ids') %}
+  <div class="card">
+    <h2>Fragments{% if job.result.get('fragment_ids_truncated') %} (first {{ job.result.fragment_ids|length }} shown){% endif %}</h2>
+    <ul style="list-style:none;padding:0;margin:0;">
+      {% for fid in job.result.fragment_ids %}
+      <li style="margin:0.25rem 0;">
+        <a class="action-link mono" href="{{ url_for('fragments.fragment_detail', fragment_id=fid) }}">{{ fid | short_id }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+  {% endif %}
+
 {% endif %}
 
 {% if job.status == 'failed' and job.error %}

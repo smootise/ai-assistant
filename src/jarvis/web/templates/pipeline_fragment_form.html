@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Run Fragmentation — {{ (conversation.title or conversation.conversation_id)|truncate(40) }} — JARVIS{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="{{ url_for('dashboard.index') }}">Dashboard</a>
+  <span class="sep">/</span>
+  <a href="{{ url_for('conversations.conversations_list') }}">Conversations</a>
+  <span class="sep">/</span>
+  <a href="{{ url_for('conversations.conversation_detail', conversation_id=conversation.conversation_id) }}">{{ (conversation.title or conversation.conversation_id)|truncate(30) }}</a>
+  <span class="sep">/</span>
+  <span class="current">Run Fragmentation</span>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Run Fragmentation</h1>
+  <p>Group extracted statements into topically coherent retrieval fragments.</p>
+</div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for category, message in messages %}
+    <div class="alert alert-{{ 'error' if category == 'error' else category }}">{{ message }}</div>
+  {% endfor %}
+{% endwith %}
+
+{% if not has_extracts %}
+<div class="alert alert-info">
+  <strong>No extracts found</strong> for this conversation.
+  Fragmentation requires extracts to exist first.
+  <a href="{{ url_for('pipeline_jobs.extract_form', conversation_id=conversation.conversation_id) }}">Run extraction →</a>
+</div>
+{% else %}
+
+<div class="card">
+  <table class="meta-table" style="margin-bottom:1rem;">
+    <tr><td>Conversation</td><td class="mono">{{ conversation.conversation_id }}</td></tr>
+    <tr><td>Title</td><td>{{ conversation.title or '—' }}</td></tr>
+  </table>
+
+  <form method="POST" action="{{ url_for('pipeline_jobs.fragment_submit', conversation_id=conversation.conversation_id) }}">
+    <table class="meta-table">
+      <tr>
+        <td><label for="from_segment">From segment</label></td>
+        <td><input type="number" id="from_segment" name="from_segment" min="0"
+                   placeholder="0 (default)" style="width:10rem;"></td>
+      </tr>
+      <tr>
+        <td><label for="to_segment">To segment</label></td>
+        <td><input type="number" id="to_segment" name="to_segment" min="0"
+                   placeholder="last (default)" style="width:10rem;"></td>
+      </tr>
+      <tr>
+        <td><label for="persist">Persist to DB</label></td>
+        <td><input type="checkbox" id="persist" name="persist" checked
+                   onchange="if(!this.checked) document.getElementById('embed').checked=false;"></td>
+      </tr>
+      <tr>
+        <td><label for="embed">Embed in Qdrant</label></td>
+        <td>
+          <input type="checkbox" id="embed" name="embed" checked
+                 onchange="if(this.checked) document.getElementById('persist').checked=true;">
+          <span style="font-size:0.8rem;color:var(--muted,#888);margin-left:0.5rem;">
+            Requires persist
+          </span>
+        </td>
+      </tr>
+    </table>
+
+    <details style="margin:1rem 0;">
+      <summary style="cursor:pointer;color:var(--muted,#888);font-size:0.85rem;">Advanced options</summary>
+      <table class="meta-table" style="margin-top:0.5rem;">
+        <tr>
+          <td><label for="force">Force re-run</label></td>
+          <td>
+            <input type="checkbox" id="force" name="force">
+            <span style="font-size:0.8rem;color:var(--muted,#888);margin-left:0.5rem;">
+              Wipes all existing fragments for this conversation before running
+            </span>
+          </td>
+        </tr>
+      </table>
+    </details>
+
+    <button type="submit"
+            style="background:var(--accent);color:#fff;border:none;padding:0.5rem 1.2rem;border-radius:4px;cursor:pointer;font-size:0.95rem;">
+      Run fragmentation
+    </button>
+    <a href="{{ url_for('conversations.conversation_detail', conversation_id=conversation.conversation_id) }}"
+       style="margin-left:1rem;color:var(--muted,#888);font-size:0.9rem;">Cancel</a>
+  </form>
+</div>
+
+{% endif %}
+{% endblock %}
