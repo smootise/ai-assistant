@@ -453,9 +453,10 @@ class SummaryStore:
         """Delete extract rows for a conversation, returning Qdrant point IDs of any
         fragments that were removed so callers can clean the vector index.
 
-        Deletes fragments (+ fragment_statement_links via cascade) first to satisfy the
-        FK constraint on fragments.extract_id, then deletes the extracts (which cascades
-        to extract_statements).
+        Delete order (required by FK constraints):
+          1. fragment_statement_links  (references extract_statements — no cascade)
+          2. fragments                 (references extracts — no cascade)
+          3. extracts                  (cascades to extract_statements)
         """
         with self._connect() as conn:
             if segment_indices is not None:
@@ -476,18 +477,32 @@ class SummaryStore:
 
             if extract_ids:
                 ext_placeholders = ",".join("?" * len(extract_ids))
-                point_rows = conn.execute(
-                    f"SELECT qdrant_point_id FROM fragments "
-                    f"WHERE extract_id IN ({ext_placeholders}) "
-                    f"AND qdrant_point_id IS NOT NULL",
+
+                # Collect fragment IDs and Qdrant point IDs before deletion
+                frag_rows = conn.execute(
+                    f"SELECT fragment_id, qdrant_point_id FROM fragments "
+                    f"WHERE extract_id IN ({ext_placeholders})",
                     extract_ids,
                 ).fetchall()
-                point_ids = [r[0] for r in point_rows]
+                frag_ids = [r[0] for r in frag_rows]
+                point_ids = [r[1] for r in frag_rows if r[1] is not None]
 
+                # 1. Delete fragment_statement_links (no cascade from extract_statements)
+                if frag_ids:
+                    frag_placeholders = ",".join("?" * len(frag_ids))
+                    conn.execute(
+                        f"DELETE FROM fragment_statement_links "
+                        f"WHERE fragment_id IN ({frag_placeholders})",
+                        frag_ids,
+                    )
+
+                # 2. Delete fragments (no cascade from extracts)
                 conn.execute(
                     f"DELETE FROM fragments WHERE extract_id IN ({ext_placeholders})",
                     extract_ids,
                 )
+
+                # 3. Delete extracts (cascades to extract_statements)
                 conn.execute(
                     f"DELETE FROM extracts WHERE extract_id IN ({ext_placeholders})",
                     extract_ids,
