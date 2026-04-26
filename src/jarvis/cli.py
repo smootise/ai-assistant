@@ -44,6 +44,10 @@ def _build_memory_layer(config: dict) -> MemoryLayer:
     return MemoryLayer(store=store, vector_store=vector_store, embedder=embedder)
 
 
+# Public alias — usable by the web layer without importing a private name
+build_memory_layer = _build_memory_layer
+
+
 def cmd_summarize(args: argparse.Namespace, config: dict) -> int:
     """Execute the summarize command."""
     logger = logging.getLogger(__name__)
@@ -130,26 +134,81 @@ def _apply_hybrid_cutoff(
     return result
 
 
+def run_retrieval(
+    memory: MemoryLayer,
+    query: str,
+    top_k: int,
+    min_results: int,
+    min_score: float,
+) -> tuple[list[dict], dict[str, float]]:
+    """Embed query, search Qdrant, hydrate from SQLite.
+
+    Returns (rows, scores) where rows is the list of fragment dicts from
+    get_fragments_with_statements and scores maps fragment_id → similarity score.
+    Returns ([], {}) when no hits pass the hybrid cutoff.
+    """
+    query_vector = memory.embedder.embed(query)
+    hits = memory.vector_store.search(query_vector=query_vector, top_k=top_k)
+    hits = _apply_hybrid_cutoff(hits, min_results, min_score)
+    if not hits:
+        return [], {}
+    fragment_ids = [fid for fid, _, _ in hits]
+    scores = {fid: score for fid, score, _ in hits}
+    rows = memory.store.get_fragments_with_statements(fragment_ids)
+    return rows, scores
+
+
+def generate_answer(
+    memory: MemoryLayer,
+    ollama: "OllamaClient",
+    query: str,
+    rows: list[dict],
+    prompts_dir: str,
+    user_name: str,
+    temperature: float,
+) -> tuple[str, bool, str]:
+    """Build context, render prompt, call LLM, return (answer, is_degraded, warning)."""
+    context_block = _build_context_block(rows)
+    user_name = (user_name or "").strip()
+    if user_name:
+        user_context = (
+            f"The person who owns this assistant is {user_name}. "
+            f"In the context excerpts, 'user' and '{user_name}' refer to the same person — "
+            f"the one speaking or being spoken about."
+        )
+    else:
+        user_context = (
+            "In the context excerpts, 'user' refers to the person who owns this assistant."
+        )
+    prompt_path = Path(prompts_dir) / "answer_question.md"
+    template = prompt_path.read_text(encoding="utf-8")
+    system_prompt = (
+        template
+        .replace("{question}", query)
+        .replace("{context_block}", context_block)
+        .replace("{user_context}", user_context)
+    )
+    raw, is_degraded, warning = ollama.chat(system_prompt, query, temperature=temperature)
+    answer = raw.strip()
+    if "## Answer" in answer:
+        answer = answer.split("## Answer", 1)[-1].strip()
+    return answer, is_degraded, warning
+
+
 def cmd_retrieve(args: argparse.Namespace, config: dict) -> int:
     """Execute the retrieve command."""
     logger = logging.getLogger(__name__)
 
     try:
         memory = _build_memory_layer(config)
-
         logger.info(f"Embedding query with model={config['embedding_model']}...")
-        query_vector = memory.embedder.embed(args.query)
+        rows, scores = run_retrieval(
+            memory, args.query, args.top_k, args.min_results, args.min_score
+        )
 
-        hits = memory.vector_store.search(query_vector=query_vector, top_k=args.top_k)
-        hits = _apply_hybrid_cutoff(hits, args.min_results, args.min_score)
-
-        if not hits:
+        if not rows:
             print("No results found.")
             return 0
-
-        fragment_ids = [fid for fid, _, _ in hits]
-        scores = {fid: score for fid, score, _ in hits}
-        rows = memory.store.get_fragments_with_statements(fragment_ids)
 
         print(f"\nTop {len(rows)} result(s) for: \"{args.query}\"\n")
         print("-" * 72)
@@ -216,41 +275,14 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
         )
 
         logger.info(f"Embedding query with model={config['embedding_model']}...")
-        query_vector = memory.embedder.embed(args.query)
-        hits = memory.vector_store.search(query_vector=query_vector, top_k=args.top_k)
-        hits = _apply_hybrid_cutoff(hits, args.min_results, args.min_score)
+        rows, _ = run_retrieval(memory, args.query, args.top_k, args.min_results, args.min_score)
 
-        if not hits:
+        if not rows:
             print("No relevant context found for your question.")
             return 0
 
-        fragment_ids = [fid for fid, _, _ in hits]
-        rows = memory.store.get_fragments_with_statements(fragment_ids)
-
-        context_block = _build_context_block(rows)
-
-        user_name = config.get("user_name", "").strip()
-        if user_name:
-            user_context = (
-                f"The person who owns this assistant is {user_name}. "
-                f"In the context excerpts, 'user' and '{user_name}' refer to the same person — "
-                f"the one speaking or being spoken about."
-            )
-        else:
-            user_context = (
-                "In the context excerpts, 'user' refers to the person who owns this assistant."
-            )
-
-        prompt_path = Path(config["prompts_dir"]) / "answer_question.md"
-        template = prompt_path.read_text(encoding="utf-8")
-        system_prompt = (
-            template
-            .replace("{question}", args.query)
-            .replace("{context_block}", context_block)
-            .replace("{user_context}", user_context)
-        )
-
         if args.verbose:
+            context_block = _build_context_block(rows)
             print(f"\nContext excerpts for: \"{args.query}\"\n")
             print("-" * 72)
             print(context_block)
@@ -258,16 +290,13 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
             print()
 
         logger.info(f"Generating answer with model={config['local_model_name']}...")
-        raw, is_degraded, warning = ollama.chat(
-            system_prompt, args.query, temperature=args.temperature
+        answer, is_degraded, warning = generate_answer(
+            memory, ollama, args.query, rows,
+            config["prompts_dir"], config.get("user_name", ""), args.temperature
         )
 
         if is_degraded:
             logger.warning(f"Degraded response: {warning}")
-
-        answer = raw.strip()
-        if "## Answer" in answer:
-            answer = answer.split("## Answer", 1)[-1].strip()
 
         print(f"\nAnswer to: \"{args.query}\"\n")
         print("-" * 72)

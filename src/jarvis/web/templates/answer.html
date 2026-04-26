@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Answer — JARVIS{% endblock %}
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="{{ url_for('dashboard.index') }}">Dashboard</a>
+  <span class="sep">/</span>
+  <span class="current">Answer</span>
+</div>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Answer a Question</h1>
+</div>
+
+<div class="card">
+  <form method="post" action="{{ url_for('answer.answer') }}">
+    <div class="form-row">
+      <label for="query">Question</label>
+      <input type="text" id="query" name="query" value="{{ query }}"
+             placeholder="Ask a question…" required autocomplete="off" style="width:100%;">
+    </div>
+    <div class="form-row" style="display:flex;gap:1.5rem;flex-wrap:wrap;">
+      <div>
+        <label for="top_k">Top K</label>
+        <input type="number" id="top_k" name="top_k" value="{{ top_k }}"
+               min="1" max="50" style="width:6rem;">
+      </div>
+      <div>
+        <label for="temperature">Temperature</label>
+        <input type="number" id="temperature" name="temperature" value="{{ temperature }}"
+               min="0.0" max="1.0" step="0.05" style="width:6rem;">
+      </div>
+    </div>
+    <div class="form-row">
+      <button type="submit" class="btn-primary">Generate Answer</button>
+      <span class="hint">May take 5–30 seconds depending on the model.</span>
+    </div>
+  </form>
+</div>
+
+{% if result %}
+  {% if result.error %}
+  <div class="alert alert-error">
+    <strong>Error:</strong> {{ result.error }}
+  </div>
+  {% endif %}
+
+  {% if result.is_degraded %}
+  <div class="alert alert-warning">
+    <strong>Warning:</strong> {{ result.warning or "Model returned a degraded response." }}
+  </div>
+  {% endif %}
+
+  {% if result.answer %}
+  <div class="card">
+    <h2>Answer</h2>
+    <p class="result-query-label">For: "{{ result.query }}"</p>
+    <pre class="answer-body">{{ result.answer }}</pre>
+  </div>
+  {% endif %}
+
+  {% if result.citations %}
+  <div class="card">
+    <h2>Sources ({{ result.citations|length }})</h2>
+    <ul class="citations-list">
+      {% for c in result.citations %}
+      <li>
+        <a href="{{ url_for('fragments.fragment_detail', fragment_id=c.fragment_id) }}">[{{ c.rank }}] {{ c.title or (c.fragment_id|short_id) }}</a>
+        {% if c.segment_id %}
+        — <a href="{{ url_for('segments.segment_detail', segment_id=c.segment_id) }}">segment {{ c.segment_id|short_id }}</a>
+        {% endif %}
+        {% if c.conversation_date %}
+        <span class="result-date">{{ c.conversation_date }}</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% elif not result.error %}
+  <div class="card">
+    <div class="empty-state">
+      <p>No fragments matched this question.</p>
+      <p>Try a different query or check that fragments have been embedded.</p>
+    </div>
+  </div>
+  {% endif %}
+{% endif %}
+{% endblock %}

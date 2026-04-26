@@ -73,6 +73,8 @@ def create_app(config: Dict[str, Any] | None = None) -> Flask:
     from jarvis.web.routes.uploads import bp as uploads_bp
     from jarvis.web.routes.jobs import bp as jobs_bp
     from jarvis.web.routes.pipeline_jobs import bp as pipeline_jobs_bp
+    from jarvis.web.routes.search import bp as search_bp
+    from jarvis.web.routes.answer import bp as answer_bp
 
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(sources_bp)
@@ -83,6 +85,8 @@ def create_app(config: Dict[str, Any] | None = None) -> Flask:
     app.register_blueprint(uploads_bp)
     app.register_blueprint(jobs_bp)
     app.register_blueprint(pipeline_jobs_bp)
+    app.register_blueprint(search_bp)
+    app.register_blueprint(answer_bp)
 
     @app.errorhandler(404)
     def not_found(e: Any):

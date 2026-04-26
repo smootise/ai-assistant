@@ -5,8 +5,7 @@
 The web app is an operator console for running and monitoring the JARVIS pipeline from a browser.
 It runs locally at `http://localhost:5000`.
 
-V1 scope: browse data lineage · upload + ingest · launch extract-segments · launch fragment-extracts · track all pipeline jobs.
-Not yet supported: retrieve/answer via the UI.
+V1 scope: browse data lineage · upload + ingest · launch extract-segments · launch fragment-extracts · search fragments by semantic query · generate RAG answers with citations · track all pipeline jobs.
 
 ---
 
@@ -46,6 +45,9 @@ The server binds to `127.0.0.1` only. It is not intended for network exposure.
 | `POST /conversations/<id>/extract` | Extract submit | Validates, creates job, starts daemon thread → 303 to `/jobs/<id>` |
 | `GET /conversations/<id>/fragment` | Fragment form | Launch fragment-extracts (blocked if no extracts exist) |
 | `POST /conversations/<id>/fragment` | Fragment submit | Validates (embed→persist, range, prereqs), creates job → 303 to `/jobs/<id>` |
+| `GET /search` | Search | Query form; results on same page (GET with `?query=&top_k=`) |
+| `GET /answer` | Answer form | Empty question form |
+| `POST /answer` | Answer result | Retrieves fragments, generates LLM answer, renders with citations |
 
 Missing linked records (e.g. a segment with no extract yet) render a placeholder message —
 pages never 500 on absent data.
@@ -157,6 +159,8 @@ src/jarvis/web/
     uploads.py         GET /upload, POST /upload
     jobs.py            GET /jobs, /jobs/<id>
     pipeline_jobs.py   GET+POST /conversations/<id>/extract, /conversations/<id>/fragment
+    search.py          GET /search
+    answer.py          GET+POST /answer
   templates/
     base.html          shared layout (nav, breadcrumb slot, content slot, head_extra slot)
     dashboard.html
@@ -170,6 +174,8 @@ src/jarvis/web/
     pipeline_extract_form.html
     pipeline_fragment_form.html
     jobs_list.html / job_detail.html
+    search.html
+    answer.html
     404.html
   static/
     styles.css         single stylesheet — system fonts, no framework
@@ -198,6 +204,47 @@ or services. Pipeline classes are invoked only from `*_runner.py`, never directl
 
 ---
 
+## Retrieve + Answer
+
+Both routes are **synchronous** — they block while Qdrant and Ollama respond. No job machinery.
+
+### Search (`GET /search`)
+
+Query form with two options: `query` (required) and `top_k` (default 10, max 50). Submitting
+appends them as query-string parameters so the URL is shareable.
+
+Each result shows:
+- Rank, similarity score (4 decimal places), fragment title
+- Snippet: fragment title + first 2 statements, trimmed to 160 characters
+- Links to the fragment detail page, parent extract, segment, and conversation
+- Conversation date
+
+Empty-state copy is shown when no fragments match. Qdrant / embedding errors render an inline
+error banner without a 500.
+
+### Answer (`POST /answer`)
+
+Form options: `query` (required), `top_k` (default 10, max 50), `temperature` (default 0.3).
+Model is fixed to `config["local_model_name"]` (no model picker in V1).
+
+The answer is rendered in a `<pre>` block that preserves line breaks. Below the answer, a
+citations list links each source fragment to its detail page with a `[N] title — segment` label.
+Clicking through to the fragment detail page leads to the full traceability chain:
+fragment → extract → segment → segment text.
+
+A degraded-response warning banner is shown when the model reports `is_degraded=True`.
+Any retrieval or LLM error renders an error banner without a 500.
+
+### Implementation notes
+
+- `services.run_search` and `services.run_answer` call `jarvis.cli.run_retrieval` and
+  `jarvis.cli.generate_answer` (public helpers extracted from the CLI). All Qdrant/Ollama
+  errors are caught and returned as a normalized `error` string — services never raise.
+- `min_results=3` and `min_score=0.50` are hardcoded defaults (not exposed in the form).
+- Qdrant is only read by the web layer for these two routes.
+
+---
+
 ## Adding another pipeline stage as a job
 
 To expose a new CLI pipeline stage (e.g. `summarize-segments`) as a web job:
@@ -216,8 +263,6 @@ To expose a new CLI pipeline stage (e.g. `summarize-segments`) as a web job:
    a job_detail rendering test for succeeded + failed states.
 7. **Docs** — update this file: routes table, job_type values, `input_metadata` shape.
 
-Planned additions:
-- **Retrieve/answer**: query form + citation drill-down using existing `retrieve` and `answer` CLI logic.
 
 ---
 
@@ -230,6 +275,9 @@ tests/test_web_file_preview.py    whitelist, traversal rejection, size cap, JSON
 tests/test_web_uploads.py         upload form, validation, job creation, thread spawn
 tests/test_web_jobs.py            job detail page — all statuses, auto-refresh logic
 tests/test_web_pipeline_jobs.py   extract + fragment forms, validation, job creation, job_detail rendering
+tests/test_web_search.py          search form, results, empty-state, Qdrant error handling
+tests/test_web_answer.py          answer form, happy path, degraded/error states, citations
+tests/test_cli_helpers.py         run_retrieval and generate_answer extracted helpers
 tests/fixtures/web_seed.py        seeds a minimal graph (1 source → 1 conv → 2 segs → 1 extract → 2 frags)
 ```
 
@@ -237,5 +285,6 @@ Run web tests only:
 
 ```bash
 pytest tests/test_web_store.py tests/test_web_routes.py tests/test_web_file_preview.py \
-       tests/test_web_uploads.py tests/test_web_jobs.py tests/test_web_pipeline_jobs.py -v
+       tests/test_web_uploads.py tests/test_web_jobs.py tests/test_web_pipeline_jobs.py \
+       tests/test_web_search.py tests/test_web_answer.py -v
 ```

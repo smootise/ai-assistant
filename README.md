@@ -117,6 +117,8 @@ The UI lets you:
 - **Upload** a ChatGPT export JSON and ingest it without using the CLI
 - **Run extraction** for a conversation (extract attributed statements per segment)
 - **Run fragmentation** for a conversation (group statements into retrieval units; optionally embed in Qdrant)
+- **Search** fragments by semantic query at `/search` — ranked results with scores and lineage links
+- **Answer** a question with RAG at `/answer` — LLM-generated answer with clickable citations traceable back to the source segment
 - **Track all pipeline jobs** at `/jobs` — status updates live as each job runs
 
 ### Upload and ingest via web
@@ -134,10 +136,21 @@ The UI lets you:
 3. The job status page auto-refreshes. On success, links to each extract appear.
 4. Back on the Conversation detail page, click **Run fragmentation →**.
 5. Leave **Persist to DB** and **Embed in Qdrant** checked (defaults), click **Run fragmentation**.
-6. On success, links to each fragment appear; fragments are now searchable via `retrieve`.
+6. On success, links to each fragment appear; fragments are now searchable via `retrieve` (CLI) or the **Search** page.
 
 > **Note:** Fragmentation requires extracts to exist first. The fragment form shows a warning
 > and blocks submission when no extracts are found for the conversation.
+
+### Search and Answer via web
+
+Once fragments are embedded in Qdrant:
+
+1. Open [http://localhost:5000/search](http://localhost:5000/search), enter a query, click **Search**.
+2. Results show rank, score, title, snippet, and links to fragment / extract / segment.
+3. Open [http://localhost:5000/answer](http://localhost:5000/answer), enter your question, click **Generate Answer**.
+4. The generated answer appears above a citations list. Each citation links to the fragment detail page, from where you can navigate to the extract, segment, and full segment text.
+
+> **Note:** Requires Qdrant to be running and fragments to be embedded (`fragment-extracts --embed`).
 
 > **Note:** If you are upgrading from schema v7, delete `data/jarvis.db` once before
 > starting the server — schema v8 adds the `jobs` table. Re-run `--persist` steps to

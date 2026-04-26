@@ -19,6 +19,10 @@
      class="nav-link {% if request.endpoint and request.endpoint.startswith('conversations.') %}active{% endif %}">Conversations</a>
   <a href="{{ url_for('uploads.upload_form') }}"
      class="nav-link {% if request.endpoint and request.endpoint.startswith('uploads.') %}active{% endif %}">Upload</a>
+  <a href="{{ url_for('search.search') }}"
+     class="nav-link {% if request.endpoint and request.endpoint.startswith('search.') %}active{% endif %}">Search</a>
+  <a href="{{ url_for('answer.answer') }}"
+     class="nav-link {% if request.endpoint and request.endpoint.startswith('answer.') %}active{% endif %}">Answer</a>
   <a href="{{ url_for('jobs.jobs_list') }}"
      class="nav-link {% if request.endpoint and request.endpoint.startswith('jobs.') %}active{% endif %}">Jobs</a>
 </nav>

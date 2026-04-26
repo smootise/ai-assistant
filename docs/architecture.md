@@ -163,8 +163,10 @@ from a browser. Sits above `SummaryStore` public methods — never touches `_con
 
 V1 features: browse the source → conversation → segment → extract → fragment lineage;
 upload ChatGPT export files; launch extract-segments and fragment-extracts for any conversation;
-track all pipeline jobs; inspect raw JSON/text artifacts. Qdrant is only touched by the
-fragment runner when `embed=True`.
+search fragments by semantic query; generate RAG answers with clickable citations;
+track all pipeline jobs; inspect raw JSON/text artifacts. The web layer reads from Qdrant
+only for the `/search` and `/answer` routes via the same `run_retrieval`/`generate_answer`
+helpers used by the CLI.
 
 See [docs/webapp.md](webapp.md) for the full route map, job launch flow, validation rules,
 code layout, and extension guide.
