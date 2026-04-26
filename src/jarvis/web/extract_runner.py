@@ -64,6 +64,7 @@ def run_extract_job(
                 from_segment=from_segment,
                 to_segment=to_segment,
                 persist=persist,
+                config=config,
             )
 
         ollama_client = OllamaClient(
@@ -133,6 +134,7 @@ def _wipe_extracts_for_force(
     from_segment: int,
     to_segment: Optional[int],
     persist: bool,
+    config: Dict[str, Any],
 ) -> None:
     """Delete existing extract files and DB rows for the forced range."""
     all_seg_indices = sorted(
@@ -154,7 +156,14 @@ def _wipe_extracts_for_force(
                     p.unlink()
 
     if persist:
-        store.delete_extracts(conversation_id, segment_indices=forced_indices)
+        point_ids = store.delete_extracts(conversation_id, segment_indices=forced_indices)
+        if point_ids:
+            try:
+                from jarvis.vector_store import VectorStore
+                vs = VectorStore(host=config["qdrant_host"], port=config["qdrant_port"])
+                vs.delete_points(point_ids)
+            except Exception:
+                pass
 
     logger.info(
         f"--force: wiped extracts {from_segment}–{effective_to} for {conversation_id}"

@@ -627,7 +627,15 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
 
             if getattr(args, "persist", False):
                 store = SummaryStore(db_path=config["db_path"])
-                store.delete_extracts(args.conversation_id, segment_indices=forced_indices)
+                point_ids = store.delete_extracts(
+                    args.conversation_id, segment_indices=forced_indices
+                )
+                if point_ids:
+                    try:
+                        vs = VectorStore(host=config["qdrant_host"], port=config["qdrant_port"])
+                        vs.delete_points(point_ids)
+                    except Exception:
+                        pass
 
             logger.info(
                 f"--force: wiped extracts {effective_from}–{effective_to} "
