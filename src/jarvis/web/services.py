@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from jarvis.store import SummaryStore
+from jarvis.cli import build_memory_layer, run_retrieval, generate_answer
+from jarvis.ollama import OllamaClient
 
 
 logger = logging.getLogger(__name__)
@@ -88,6 +90,125 @@ def get_fragment_detail(store: SummaryStore, fragment_id: str) -> Optional[Dict[
     fragment = results[0]
     extract = store.get_extract(fragment["extract_id"])
     return {"fragment": fragment, "extract": extract}
+
+
+def run_search(
+    config: Dict[str, Any],
+    query: str,
+    top_k: int = 10,
+    min_results: int = 3,
+    min_score: float = 0.50,
+) -> Dict[str, Any]:
+    """Run vector retrieval and return ranked fragment results.
+
+    Returns {"results": [...], "error": None|str}.
+    Each result has: rank, fragment_id, score, title, snippet, segment_id,
+    extract_id, parent_conversation_id, conversation_date.
+    """
+    try:
+        memory = build_memory_layer(config)
+        rows, scores = run_retrieval(memory, query, top_k, min_results, min_score)
+    except (ConnectionError, RuntimeError) as exc:
+        logger.error(f"Search failed: {exc}")
+        return {"results": [], "error": str(exc)}
+    except Exception as exc:
+        logger.exception(f"Unexpected search error: {exc}")
+        return {"results": [], "error": f"Unexpected error: {exc}"}
+
+    results = []
+    for rank, row in enumerate(rows, start=1):
+        fid = row["fragment_id"]
+        title = row.get("title") or ""
+        stmts = row.get("statements", [])
+        body = " / ".join(f"{s['speaker']}: {s['text']}" for s in stmts[:2])
+        raw_snippet = f"[{title}] {body}" if title else body
+        snippet = raw_snippet[:160].replace("\n", " ")
+        if len(raw_snippet) > 160:
+            snippet += "..."
+        results.append({
+            "rank": rank,
+            "fragment_id": fid,
+            "score": scores.get(fid, 0.0),
+            "title": title,
+            "snippet": snippet,
+            "segment_id": row.get("segment_id"),
+            "extract_id": row.get("extract_id"),
+            "parent_conversation_id": row.get("parent_conversation_id"),
+            "conversation_date": row.get("conversation_date"),
+        })
+    return {"results": results, "error": None}
+
+
+def run_answer(
+    config: Dict[str, Any],
+    query: str,
+    top_k: int = 10,
+    min_results: int = 3,
+    min_score: float = 0.50,
+    temperature: float = 0.3,
+) -> Dict[str, Any]:
+    """Run retrieval then generate an LLM answer with citations.
+
+    Returns {"query", "answer", "citations", "is_degraded", "warning", "error"}.
+    citations: [{rank, fragment_id, title, segment_id, conversation_date}].
+    """
+    base: Dict[str, Any] = {
+        "query": query,
+        "answer": "",
+        "citations": [],
+        "is_degraded": False,
+        "warning": "",
+        "error": None,
+    }
+    try:
+        memory = build_memory_layer(config)
+        rows, _ = run_retrieval(memory, query, top_k, min_results, min_score)
+    except (ConnectionError, RuntimeError) as exc:
+        logger.error(f"Retrieval failed: {exc}")
+        return {**base, "error": str(exc)}
+    except Exception as exc:
+        logger.exception(f"Unexpected retrieval error: {exc}")
+        return {**base, "error": f"Unexpected error: {exc}"}
+
+    if not rows:
+        return base
+
+    citations = [
+        {
+            "rank": i,
+            "fragment_id": row["fragment_id"],
+            "title": row.get("title") or "",
+            "segment_id": row.get("segment_id"),
+            "conversation_date": row.get("conversation_date"),
+        }
+        for i, row in enumerate(rows, start=1)
+    ]
+
+    try:
+        ollama = OllamaClient(
+            base_url=config["ollama_base_url"],
+            model=config["local_model_name"],
+            timeout=config["ollama_timeout"],
+        )
+        answer, is_degraded, warning = generate_answer(
+            memory, ollama, query, rows,
+            config["prompts_dir"], config.get("user_name", ""), temperature
+        )
+    except (ConnectionError, RuntimeError) as exc:
+        logger.error(f"Answer generation failed: {exc}")
+        return {**base, "citations": citations, "error": str(exc)}
+    except Exception as exc:
+        logger.exception(f"Unexpected answer error: {exc}")
+        return {**base, "citations": citations, "error": f"Unexpected error: {exc}"}
+
+    return {
+        "query": query,
+        "answer": answer,
+        "citations": citations,
+        "is_degraded": is_degraded,
+        "warning": warning,
+        "error": None,
+    }
 
 
 def save_upload(

@@ -7,8 +7,7 @@ design decisions for the JARVIS read-only operator console.
 
 ## V1 Scope
 
-V1 includes a **read-only browser console** plus an **upload + ingest flow**. No Qdrant reads.
-Future prompts will add: extract/fragment/retrieve/answer jobs from the UI.
+V1 includes: browse lineage · upload + ingest · extract-segments job · fragment-extracts job · search (retrieve) · answer (RAG with citations) · job tracking. Complete.
 
 ---
 
@@ -22,6 +21,8 @@ Future prompts will add: extract/fragment/retrieve/answer jobs from the UI.
 | `ingest_runner.py` | Module-level `run_ingest_job()`. Called from a daemon thread; opens its own `SummaryStore` connection; marks job running → succeeded/failed. |
 | `extract_runner.py` | Module-level `run_extract_job(job_id, conversation_id, options, config)`. Same thread pattern as ingest. Calls `SegmentExtractor` + `MemoryLayer` directly. |
 | `fragment_runner.py` | Module-level `run_fragment_job(job_id, conversation_id, options, config)`. Calls `Fragmenter` + `MemoryLayer` directly. Guards `embed→persist`. |
+| `routes/search.py` | `GET /search` — synchronous fragment retrieval. Calls `services.run_search`. |
+| `routes/answer.py` | `GET+POST /answer` — synchronous RAG. Calls `services.run_answer`. POST to avoid browser replay. |
 | `routes/` | One blueprint per entity + `pipeline_jobs.py` for extract/fragment launch. Routes orchestrate: validate → call service/runner → render or redirect. No business logic in routes. |
 | `templates/` | Jinja2 server-rendered HTML. Purely presentational — no logic beyond conditionals and loops. |
 | `static/` | Single CSS file. No JS framework, no build step. |
@@ -32,7 +33,15 @@ Future prompts will add: extract/fragment/retrieve/answer jobs from the UI.
 
 - **Always go through `SummaryStore` public methods.** Never import `_connect()` or raw SQL from routes or services.
 - New read queries belong in `store.py` as public `SummaryStore` methods (not in routes/services).
-- Qdrant is never queried by the web layer.
+- Qdrant is queried only by `services.run_search` and `services.run_answer` via the CLI helpers `run_retrieval` / `generate_answer`. No other route touches Qdrant.
+
+## Retrieve + Answer Rules
+
+- Both routes are **synchronous** — no background jobs. Ollama latency (5–30s) is acceptable for V1.
+- `services.run_search` and `services.run_answer` call `jarvis.cli.run_retrieval` and
+  `jarvis.cli.generate_answer` directly. Do not duplicate retrieval or answer logic.
+- Services swallow all `ConnectionError` / `RuntimeError` / unexpected exceptions and return them as an `"error"` string in the result dict. Routes never need to catch these.
+- `min_results=3` and `min_score=0.50` are fixed defaults — not exposed in the V1 form.
 
 ## Upload + Ingest Rules
 
