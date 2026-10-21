@@ -10,7 +10,8 @@ and non-obvious design decisions that must not be re-litigated without good reas
 | Module | Responsibility |
 |---|---|
 | `cli.py` | Entry point for all CLI commands. Wires config → clients → domain logic. |
-| `config.py` | Loads ENV + config.yaml, returns a single config dict. |
+| `config.py` | Reads ENV + config.yaml + profiles.yaml without environment mutation; returns the effective config dict. |
+| `profiles.py` | Frozen profile context, read-only storage validation, temporary personal-only runtime guard. |
 | `ollama.py` | `OllamaClient` — inference via Ollama HTTP API. |
 | `embedder.py` | `EmbeddingClient` — embeddings via Ollama. `build_embedding_text()` for retrieval. |
 | `summarizer.py` | Single-file conversation summarization. |

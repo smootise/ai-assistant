@@ -356,17 +356,33 @@ The answer is grounded in the retrieved summaries — the LLM cites sources wher
 
 Precedence: **CLI flag > ENV (`.env`) > `config.yaml`**
 
+Profile selection: **`--profile` > process `JARVIS_PROFILE` > `.env` > `personal`**.
+Inspect the resolved configuration without creating storage or contacting services:
+
+```bash
+python -m jarvis.cli config show
+python -m jarvis.cli --profile mom config show
+```
+
+Profiles are registered in `profiles.yaml`. Phase 1 supports **inspection only** for `mom`
+and other non-personal profiles; processing and serving remain personal-only. Personal's
+existing database, collection, inbox, outputs, and environment overrides remain in place.
+Configuration paths resolve against the repository root, independently of the working directory.
+See [Profiles](docs/profiles.md) for validation rules, limitations, and the mandatory backup
+checkpoint before deployment against existing personal data.
+
 | Variable | Default | Description |
 |---|---|---|
+| `JARVIS_PROFILE` | `personal` | Profile selection; overridden by global `--profile` |
 | `JARVIS_PROVIDER` | `local` | `local` \| `openai` \| `benchmark` |
 | `LOCAL_MODEL_NAME` | `gemma4:31b` | Ollama model for inference |
 | `OPENAI_API_KEY` | — | Required only for `openai`/`benchmark`. Never commit. |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Cloud model name |
-| `JARVIS_OUTPUT_ROOT` | `OUTPUTS` | Root directory for output artifacts |
+| `JARVIS_OUTPUT_ROOT` | `OUTPUTS` | Personal profile's root directory for output artifacts |
 | `JARVIS_LOG_LEVEL` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
 | `EMBEDDING_MODEL` | `qwen3-embedding` | Ollama embedding model |
-| `JARVIS_DB_PATH` | `data/jarvis.db` | SQLite database path |
+| `JARVIS_DB_PATH` | `data/jarvis.db` | Personal profile's SQLite database path |
 | `QDRANT_HOST` | `localhost` | Qdrant server host |
 | `QDRANT_PORT` | `6333` | Qdrant server port |
 

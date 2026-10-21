@@ -7,6 +7,7 @@ from typing import Any, Dict
 from flask import Flask
 
 from jarvis.config import load_config
+from jarvis.profiles import require_personal_runtime
 from jarvis.store import SummaryStore
 
 
@@ -18,6 +19,7 @@ def create_app(config: Dict[str, Any] | None = None) -> Flask:
     """
     if config is None:
         config = load_config()
+    require_personal_runtime(config)
 
     template_dir = Path(__file__).parent / "templates"
     static_dir = Path(__file__).parent / "static"

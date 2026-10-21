@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Optional
 
 from jarvis.segment_summarizer import SegmentSummarizer
-from jarvis.config import load_config
+from jarvis.config import format_config, load_config
+from jarvis.profiles import ConfigurationError, require_personal_runtime
 from jarvis.extractor import SegmentExtractor
 from jarvis.fragmenter import Fragmenter
 from jarvis.topic_detector import TopicDetector
@@ -935,7 +936,16 @@ def main() -> int:
         "--retries", type=int, default=1, metavar="N",
         help="Number of retries on LLM parse failure (default: 1, use 0 to fail fast)",
     )
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help="Profile name (CLI > JARVIS_PROFILE > personal); non-personal is inspection-only",
+    )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    config_parser = subparsers.add_parser("config", help="Inspect configuration without writes")
+    config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
+    config_subparsers.add_parser("show", help="Validate and display resolved configuration")
 
     # -- summarize --------------------------------------------------------
     summarize_parser = subparsers.add_parser(
@@ -1189,7 +1199,14 @@ def main() -> int:
         parser.print_help()
         return 1
 
-    config = load_config()
+    try:
+        config = load_config(profile=args.profile)
+        if args.command == "config":
+            print(format_config(config))
+            return 0
+        require_personal_runtime(config)
+    except ConfigurationError as exc:
+        parser.error(str(exc))
     setup_logging("DEBUG" if args.debug else config["log_level"])
 
     if args.command == "summarize":

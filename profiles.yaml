@@ -1,0 +1,10 @@
+# Personal inherits the existing config.yaml and personal .env overrides.
+# Phase 1 permits configuration inspection only for non-personal profiles.
+profiles:
+  personal: {}
+  mom:
+    db_path: data/profiles/mom/jarvis.db
+    qdrant_collection: jarvis_mom_fragments
+    inbox_root: data/profiles/mom/inbox
+    output_root: data/profiles/mom/OUTPUTS
+    user_name: ""

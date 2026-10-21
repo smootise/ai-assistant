@@ -18,6 +18,11 @@ Raw sources                       Ollama (inference + embedding)
 
 ## Storage Layers
 
+Profile configuration and read-only inspection are available in Phase 1. Personal retains its
+existing resources; non-personal processing and serving remain blocked pending storage/pipeline
+integration. See [Profiles](profiles.md) for the registry, validation rules, and mandatory
+backup/compatibility checkpoint before real-data deployment. No SQLite schema change is included.
+
 Three layers, each with a distinct role:
 
 | Layer | Technology | Role |
