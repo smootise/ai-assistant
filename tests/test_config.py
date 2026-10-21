@@ -257,3 +257,90 @@ def test_malformed_environment_fails_without_echoing_secrets(profile_repo: Path)
     with pytest.raises(ConfigurationError, match="Invalid .env") as error:
         load_config()
     assert "unterminated-secret" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("contents", "expected_local", "expected_openai"),
+    [
+        (
+            "base: &base {local: inherited, openai: inherited-openai}\n"
+            "defaults:\n  model:\n    <<: *base\n    local: explicit\n",
+            "explicit",
+            "inherited-openai",
+        ),
+        (
+            "first: &first {local: first}\n"
+            "second: &second {local: second, openai: second-openai}\n"
+            "defaults:\n  model:\n    <<: [*first, *second]\n",
+            "first",
+            "second-openai",
+        ),
+        (
+            "base: &base {local: inherited, openai: inherited-openai}\n"
+            "override: &override {<<: *base, local: override}\n"
+            "defaults: {model: *override}\n",
+            "override",
+            "inherited-openai",
+        ),
+        (
+            "base: &base {local: inherited, openai: inherited-openai}\n"
+            "defaults: {model: {local: explicit, <<: *base}}\n",
+            "explicit",
+            "inherited-openai",
+        ),
+    ],
+)
+def test_yaml_merges_preserve_standard_precedence(
+    profile_repo: Path, contents: str, expected_local: str, expected_openai: str
+) -> None:
+    (profile_repo / "config.yaml").write_text(contents, encoding="utf-8")
+    resolved = load_config()
+    assert resolved["local_model_name"] == expected_local
+    assert resolved["openai_model"] == expected_openai
+    assert not (profile_repo / "data").exists()
+
+
+def test_profile_yaml_merge_allows_explicit_storage_overrides(profile_repo: Path) -> None:
+    (profile_repo / "profiles.yaml").write_text(
+        "profiles:\n"
+        "  personal: &personal\n"
+        "    db_path: data/jarvis.db\n"
+        "    qdrant_collection: jarvis_fragments\n"
+        "    inbox_root: inbox\n"
+        "    output_root: OUTPUTS\n"
+        "    user_name: Personal owner\n"
+        "  mom:\n"
+        "    <<: *personal\n"
+        "    db_path: data/profiles/mom/jarvis.db\n"
+        "    qdrant_collection: jarvis_mom_fragments\n"
+        "    inbox_root: data/profiles/mom/inbox\n"
+        "    output_root: data/profiles/mom/OUTPUTS\n"
+        "    user_name: Mom\n",
+        encoding="utf-8",
+    )
+    resolved = load_config("mom")
+    assert resolved["db_path"] == str(profile_repo / "data/profiles/mom/jarvis.db")
+    assert resolved["qdrant_collection"] == "jarvis_mom_fragments"
+    assert resolved["user_name"] == "Mom"
+    assert not (profile_repo / "data").exists()
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        "defaults: {model: {local: first, local: second}}\n",
+        "base: &base {local: first, local: second}\ndefaults: {model: {<<: *base}}\n",
+        "base: &base {local: inherited}\n"
+        "defaults: {model: {<<: *base, local: first, local: second}}\n",
+        "base: &base {local: inherited}\n" "defaults: {model: {<<: *base, <<: *base}}\n",
+        "base: &base {local: inherited}\n"
+        "defaults: {model: {<<: *base, nested: {field: first, field: second}}}\n",
+    ],
+)
+def test_explicit_yaml_duplicates_are_rejected_even_with_merges(
+    profile_repo: Path, contents: str
+) -> None:
+    (profile_repo / "config.yaml").write_text(contents, encoding="utf-8")
+    with pytest.raises(ConfigurationError, match="unique string keys"):
+        load_config()
+    assert not (profile_repo / "data").exists()

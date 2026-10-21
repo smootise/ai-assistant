@@ -22,7 +22,7 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 > Update this section at the end of any session where meaningful progress is made.
 
 ### Done
-- Profile Phase 1: validated `profiles.yaml`, immutable resolved profile context, read-only `config show`, and temporary non-personal CLI/web runtime guards. Later profile integration remains pending review.
+- Profile Phase 1: validated `profiles.yaml`, immutable resolved profile context, read-only `config show`, and temporary non-personal CLI/web runtime guards. Review fixes reserve database/sidecar file boundaries and preserve valid YAML merges while rejecting explicit duplicates. Later profile integration remains pending review.
 - Repo, CI/CD setup
 - ChatGPT export ingestion (normalize → segment)
 - Segment summarization with rolling context window (resume-safe, `--force` support)

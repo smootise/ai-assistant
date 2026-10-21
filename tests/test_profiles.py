@@ -226,3 +226,87 @@ def test_runtime_guard_preserves_legacy_config_and_blocks_new_profiles(tmp_path:
         require_personal_runtime({"qdrant_collection": "custom_fragments"})
     with pytest.raises(ConfigurationError, match="inspection-only"):
         require_personal_runtime({"repo_root": tmp_path, "inbox_root": tmp_path / "custom"})
+
+
+@pytest.mark.parametrize("owner", ["personal", "mom"])
+@pytest.mark.parametrize("same_profile", [True, False])
+@pytest.mark.parametrize("field", ["inbox_root", "output_root"])
+@pytest.mark.parametrize("suffix", ["", "-wal", "-shm", "-journal"])
+@pytest.mark.parametrize("relation", ["equal", "ancestor", "descendant"])
+def test_reserved_database_files_conflict_with_managed_roots(
+    tmp_path: Path, owner: str, same_profile: bool, field: str, suffix: str, relation: str
+) -> None:
+    data = registry()
+    other = owner if same_profile else ("mom" if owner == "personal" else "personal")
+    database = tmp_path / "reserved" / "jarvis.db"
+    reserved = Path(f"{database}{suffix}")
+    root = {
+        "equal": reserved,
+        "ancestor": reserved.parent,
+        "descendant": reserved / "nested",
+    }[relation]
+    data["profiles"][owner]["db_path"] = str(database)
+    data["profiles"][other][field] = str(root)
+
+    with pytest.raises(ConfigurationError, match="Storage conflict") as error:
+        resolve_profiles(data, tmp_path, personal_defaults(), {})
+    assert f"profile '{owner}'" in str(error.value)
+    assert f"profile '{other}'" in str(error.value)
+    assert str(root.resolve()) in str(error.value)
+    conflicting_file = database if relation == "ancestor" else reserved
+    assert str(conflicting_file.resolve()) in str(error.value)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("owner", ["personal", "mom"])
+@pytest.mark.parametrize("suffix", ["", "-wal", "-shm", "-journal"])
+def test_database_files_cannot_be_ancestors_of_other_database_files(
+    tmp_path: Path, owner: str, suffix: str
+) -> None:
+    data = registry()
+    other = "mom" if owner == "personal" else "personal"
+    database = tmp_path / "reserved" / "jarvis.db"
+    reserved = Path(f"{database}{suffix}")
+    nested_database = reserved / "nested.db"
+    data["profiles"][owner]["db_path"] = str(database)
+    data["profiles"][other]["db_path"] = str(nested_database)
+
+    with pytest.raises(ConfigurationError, match="Storage conflict") as error:
+        resolve_profiles(data, tmp_path, personal_defaults(), {})
+    for name in (owner, other):
+        assert f"profile '{name}'" in str(error.value)
+    assert str(reserved.resolve()) in str(error.value)
+    assert str(nested_database.resolve()) in str(error.value)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_existing_sidecar_directory_is_rejected(tmp_path: Path, suffix: str) -> None:
+    reserved = tmp_path / f"data/jarvis.db{suffix}"
+    reserved.mkdir(parents=True)
+    with pytest.raises(ConfigurationError, match="not a file"):
+        resolve_profiles(registry(), tmp_path, personal_defaults(), {})
+    assert list(reserved.iterdir()) == []
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_sidecar_cannot_alias_its_own_database(tmp_path: Path, suffix: str) -> None:
+    database = tmp_path / "personal.db"
+    database.write_bytes(b"synthetic database sentinel")
+    os.link(database, Path(f"{database}{suffix}"))
+    data = registry()
+    data["profiles"]["personal"]["db_path"] = str(database)
+    with pytest.raises(ConfigurationError, match="Storage conflict"):
+        resolve_profiles(data, tmp_path, personal_defaults(), {})
+    assert database.read_bytes() == b"synthetic database sentinel"
+
+
+def test_database_parents_and_similar_sibling_names_remain_available(tmp_path: Path) -> None:
+    data = registry()
+    data["profiles"]["personal"]["output_root"] = "data/jarvis.db-wal-outputs"
+    data["profiles"]["mom"]["db_path"] = "data/mom.db"
+    resolved = resolve_profiles(data, tmp_path, personal_defaults(), {})
+    assert resolved["personal"].db_path == tmp_path / "data/jarvis.db"
+    assert resolved["mom"].db_path == tmp_path / "data/mom.db"
+    assert resolved["personal"].output_root == tmp_path / "data/jarvis.db-wal-outputs"
+    assert list(tmp_path.iterdir()) == []

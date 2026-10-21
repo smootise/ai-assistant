@@ -17,15 +17,31 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
-    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
-        self.flatten_mapping(node)
-        result = {}
-        for key_node, value_node in node.value:
-            key = self.construct_object(key_node, deep=deep)
-            if not isinstance(key, str) or key in result:
-                raise ConfigurationError("YAML mappings require unique string keys")
-            result[key] = self.construct_object(value_node, deep=deep)
-        return result
+    def __init__(self, stream: Any) -> None:
+        super().__init__(stream)
+        self._checked_mappings: set[yaml.MappingNode] = set()
+
+    def flatten_mapping(self, node: yaml.MappingNode) -> None:
+        # Flattening mutates shared anchor nodes; check their explicit keys only once.
+        if node not in self._checked_mappings:
+            keys: set[str] = set()
+            merge_seen = False
+            for key_node, _ in node.value:
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    if merge_seen:
+                        raise ConfigurationError("YAML mappings require unique string keys")
+                    merge_seen = True
+                    continue
+                key = (
+                    key_node.value
+                    if key_node.tag == "tag:yaml.org,2002:value"
+                    else self.construct_object(key_node)
+                )
+                if not isinstance(key, str) or key in keys:
+                    raise ConfigurationError("YAML mappings require unique string keys")
+                keys.add(key)
+            self._checked_mappings.add(node)
+        super().flatten_mapping(node)
 
 
 def _read_yaml(path: Path, required: bool = False) -> dict[str, Any]:

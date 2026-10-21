@@ -94,28 +94,37 @@ def _conflict(first: ProfileContext, left: Path, second: ProfileContext, right: 
     )
 
 
+def _overlaps(first: Path, second: Path) -> bool:
+    return _contains(first, second) or _contains(second, first) or _same_path(first, second)
+
+
 def _validate_storage(profiles: Mapping[str, ProfileContext]) -> None:
+    database_files = {name: _database_files(profile) for name, profile in profiles.items()}
     for profile in profiles.values():
-        for path in (profile.db_path, profile.inbox_root, profile.output_root):
+        reserved_files = database_files[profile.name]
+        for path in (*reserved_files, profile.inbox_root, profile.output_root):
             for parent in path.parents:
                 if parent.exists() and not parent.is_dir():
                     raise ConfigurationError(
                         f"Profile '{profile.name}' path has a non-directory parent: {path}"
                     )
-        if profile.db_path.exists() and not profile.db_path.is_file():
-            raise ConfigurationError(
-                f"Profile '{profile.name}' database is not a file: {profile.db_path}"
-            )
+        for db_file in reserved_files:
+            if db_file.exists() and not db_file.is_file():
+                raise ConfigurationError(
+                    f"Profile '{profile.name}' database or sidecar is not a file: {db_file}"
+                )
+        for left, right in combinations(reserved_files, 2):
+            if _overlaps(left, right):
+                _conflict(profile, left, profile, right)
         for root in (profile.inbox_root, profile.output_root):
             if root.exists() and not root.is_dir():
                 raise ConfigurationError(
                     f"Profile '{profile.name}' storage root is not a directory: {root}"
                 )
-            if _contains(root, profile.db_path):
-                _conflict(profile, root, profile, profile.db_path)
-        if _contains(profile.inbox_root, profile.output_root) or _contains(
-            profile.output_root, profile.inbox_root
-        ):
+            for db_file in reserved_files:
+                if _overlaps(root, db_file):
+                    _conflict(profile, root, profile, db_file)
+        if _overlaps(profile.inbox_root, profile.output_root):
             _conflict(profile, profile.inbox_root, profile, profile.output_root)
 
     for first, second in combinations(profiles.values(), 2):
@@ -124,18 +133,18 @@ def _validate_storage(profiles: Mapping[str, ProfileContext]) -> None:
                 f"Profiles '{first.name}' and '{second.name}' share Qdrant collection "
                 f"'{first.qdrant_collection}'"
             )
-        for left in _database_files(first):
-            for right in _database_files(second):
-                if _same_path(left, right):
+        for left in database_files[first.name]:
+            for right in database_files[second.name]:
+                if _overlaps(left, right):
                     _conflict(first, left, second, right)
         for left in (first.inbox_root, first.output_root):
             for right in (second.inbox_root, second.output_root):
-                if _contains(left, right) or _contains(right, left) or _same_path(left, right):
+                if _overlaps(left, right):
                     _conflict(first, left, second, right)
         for owner, other in ((first, second), (second, first)):
             for root in (other.inbox_root, other.output_root):
-                for db_file in _database_files(owner):
-                    if _contains(root, db_file):
+                for db_file in database_files[owner.name]:
+                    if _overlaps(root, db_file):
                         _conflict(owner, db_file, other, root)
 
 

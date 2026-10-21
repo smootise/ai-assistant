@@ -109,3 +109,37 @@ def test_web_factory_blocks_non_personal_before_creating_directories(
     ):
         create_app(config)
     assert not (profile_repo / "data").exists()
+
+
+@pytest.mark.parametrize("suffix", ["", "-wal", "-shm", "-journal"])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("arguments", [["config", "show"], ["serve"]])
+def test_reserved_file_conflict_fails_before_storage_or_client_creation(
+    profile_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    suffix: str,
+    nested: bool,
+    arguments: list[str],
+) -> None:
+    root = f"data/jarvis.db{suffix}" + ("/OUTPUTS" if nested else "")
+    monkeypatch.setenv("JARVIS_OUTPUT_ROOT", root)
+    monkeypatch.setattr(sys, "argv", ["jarvis", *arguments])
+    with ExitStack() as stack:
+        for target in (
+            "jarvis.cli.SummaryStore",
+            "jarvis.cli.VectorStore",
+            "jarvis.cli.OllamaClient",
+            "jarvis.cli.EmbeddingClient",
+            "jarvis.cli.cmd_serve",
+            "jarvis.web.app.create_app",
+            "requests.sessions.Session.request",
+        ):
+            stack.enter_context(patch(target, side_effect=AssertionError(target)))
+        stack.enter_context(patch.object(Path, "mkdir", side_effect=AssertionError("mkdir")))
+        stack.enter_context(patch.object(sqlite3, "connect", side_effect=AssertionError("SQLite")))
+        with pytest.raises(SystemExit) as error:
+            cli.main()
+    assert error.value.code == 2
+    assert "Storage conflict" in capsys.readouterr().err
+    assert not (profile_repo / "data").exists()

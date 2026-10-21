@@ -64,12 +64,16 @@ inactive profile conflicts. Validation is read-only and completes before process
 It rejects malformed registries, duplicate YAML keys, missing/invalid fields, duplicate
 collections, database/sidecar collisions, overlapping managed storage, and invalid path types.
 Paths are resolved before comparison, including Windows casing, symlinks/junctions, and existing
-database hardlinks. Error messages identify conflicting profiles and resolved paths.
+database hardlinks. Error messages identify conflicting profiles and resolved paths. YAML anchors
+and merges retain standard precedence; repeated explicit keys in a mapping remain invalid.
 
 The database is a file boundary rather than ownership of its parent directory:
 `data/jarvis.db` may coexist with `data/profiles/mom/jarvis.db`. A profile's inbox/output trees
-must be separate from one another and from its database. Windows ambiguous drive-relative,
-reserved, alternate-stream, and trailing-dot/space paths are rejected.
+must be separate from one another and from its database and SQLite sidecars (`-wal`, `-shm`,
+`-journal`). These file locations are reserved even when absent: managed directories cannot
+equal, contain, or sit beneath them, and reserved files cannot contain other reserved files.
+Windows ambiguous drive-relative, reserved, alternate-stream, and trailing-dot/space paths are
+rejected.
 
 In Phase 1, custom personal inboxes and collection names can be inspected but cannot be used
 for processing: the legacy runtime still reconstructs those resources. Existing personal
