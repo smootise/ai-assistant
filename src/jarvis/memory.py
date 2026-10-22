@@ -10,12 +10,12 @@ Responsibility split:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from functools import cached_property
+from typing import Any, Callable, Dict, List, Optional
 
 from jarvis.embedder import EmbeddingClient
 from jarvis.store import SummaryStore
 from jarvis.vector_store import VectorStore
-
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +26,31 @@ class MemoryLayer:
     def __init__(
         self,
         store: SummaryStore,
-        vector_store: VectorStore,
-        embedder: EmbeddingClient,
-    ):
+        vector_store: Optional[VectorStore] = None,
+        embedder: Optional[EmbeddingClient] = None,
+        *,
+        vector_store_factory: Optional[Callable[[], VectorStore]] = None,
+        embedder_factory: Optional[Callable[[], EmbeddingClient]] = None,
+    ) -> None:
         self.store = store
-        self.vector_store = vector_store
-        self.embedder = embedder
+        self._vector_store_factory = vector_store_factory
+        self._embedder_factory = embedder_factory
+        if vector_store is not None:
+            self.vector_store = vector_store
+        if embedder is not None:
+            self.embedder = embedder
+
+    @cached_property
+    def vector_store(self) -> VectorStore:
+        if self._vector_store_factory is None:
+            raise RuntimeError("No vector store configured for this memory layer")
+        return self._vector_store_factory()
+
+    @cached_property
+    def embedder(self) -> EmbeddingClient:
+        if self._embedder_factory is None:
+            raise RuntimeError("No embedding client configured for this memory layer")
+        return self._embedder_factory()
 
     # ------------------------------------------------------------------
     # Ingest-stage persistence

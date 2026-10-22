@@ -4,6 +4,11 @@ Full reference for the ingestion → summarization → topic detection pipeline.
 For command flags and quickstart examples, see [README.md](../README.md).
 For system design, see [architecture.md](architecture.md).
 
+SQLite-only persistence does not contact Qdrant or construct an embedding client. This includes
+segment summaries, extracts/statements, and fragments/links without `--embed`, in CLI and web jobs.
+Topic detection uses its embedding service directly but does not need Qdrant. Indexing, retrieval,
+and explicit vector cleanup still require Qdrant; destructive `--force` behavior is unchanged.
+
 ---
 
 ## Step 1 — Ingest

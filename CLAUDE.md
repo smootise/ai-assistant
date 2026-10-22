@@ -22,6 +22,7 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 > Update this section at the end of any session where meaningful progress is made.
 
 ### Done
+- Phase 2 review fix: defer memory-layer Qdrant/embedding clients until first use so SQLite-only CLI and web persistence works without Qdrant; remove the unused topic-detection Qdrant probe. Destructive cleanup and later phases remain deferred.
 - Profile Phase 2: profile-aware SQLite/Qdrant clients, centralized client factories, independent embedding Ollama endpoint, and optional remote Qdrant URL/API key. Existing v8 databases validate read-only; new databases keep v8. Non-personal runtime guards remain until pipeline/web isolation. Synthetic tests only; implementation awaits review before deployment or later phases.
 - Profile Phase 1: validated `profiles.yaml`, immutable resolved profile context, read-only `config show`, and temporary non-personal CLI/web runtime guards. Review fixes reserve database/sidecar file boundaries and preserve valid YAML merges while rejecting explicit duplicates. Later profile integration remains pending review.
 - Repo, CI/CD setup

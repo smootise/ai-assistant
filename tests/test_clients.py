@@ -20,6 +20,8 @@ def test_resolved_profile_routes_both_stores(profile_repo: Path, profile: str) -
     config = load_config(profile)
     with patch("jarvis.clients.VectorStore") as vectors, patch("jarvis.clients.EmbeddingClient"):
         memory = build_memory_layer(config)
+        vectors.assert_not_called()
+        assert memory.vector_store is vectors.return_value
     assert memory.store.db_path == config["profile_context"].db_path
     vectors.assert_called_once_with(
         host="localhost",

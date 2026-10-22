@@ -36,6 +36,9 @@ Three layers, each with a distinct role:
 ---
 
 All application client construction goes through `jarvis.clients` using the resolved configuration.
+Memory clients open SQLite immediately and construct Qdrant and embedding clients only on first
+use, then reuse them. SQLite-only persistence in CLI commands and web jobs does not require Qdrant
+or an embedding service. Topic detection embeds summary text directly without a Qdrant probe.
 Each SQLite client uses its profile's database path; each Qdrant client uses its profile's collection.
 Personal remains `jarvis_fragments`; mom is `jarvis_mom_fragments`. Collections are created lazily
 only when absent and are never automatically reset. Point IDs and payloads are unchanged.

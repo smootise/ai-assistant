@@ -77,6 +77,9 @@ Use `jarvis.clients` for application client construction. Embeddings use
 `embedding_ollama_base_url` (fallback `ollama_base_url`); inference uses `ollama_base_url`.
 Qdrant supports optional `qdrant_url`/`qdrant_api_key`, with legacy host/port when URL is absent.
 Never include raw Qdrant errors or API keys in logs, configuration display, or job errors.
+Memory clients capture resolved configuration and create Qdrant/embedding clients lazily on first
+use. SQLite-only persistence must not contact either service. Explicitly injected clients remain
+supported; destructive cleanup construction and behavior are unchanged.
 
 ---
 
@@ -163,9 +166,9 @@ that opens segment N+1. `pending_tail.json` must never be passed to the summariz
 
 ## Local Services
 
-Both must be running before any backend command works:
+Service requirements depend on the operation:
 
-- **Ollama** (`ollama serve`) — required for inference and embedding on every run
-- **Qdrant** (`docker run -p 6333:6333 qdrant/qdrant`) — required only for `--persist` and `retrieve`
+- **Ollama** (`ollama serve`) — required when inference or embedding is performed
+- **Qdrant** (`docker run -p 6333:6333 qdrant/qdrant`) — required for indexing, retrieval/answer, and explicit vector cleanup; SQLite-only persistence does not require it
 
 Neither starts automatically.

@@ -94,6 +94,9 @@ PST ingestion and optional source copying are outside this feature.
 resolved configuration. CLI commands, Flask request stores, ingestion persistence, and background
 runners use these factories; they never reload the profile from the environment inside a job.
 Legacy personal configuration dictionaries retain their original defaults.
+Memory construction captures the supplied configuration and defers Qdrant/embedding clients until
+their first use. Summarization, extraction, and fragment persistence without embedding can write
+SQLite while Qdrant is unavailable, including web jobs. Explicit vector cleanup is unchanged.
 
 `VectorStore(collection_name=...)` routes collection lookup, dimension validation, lazy creation,
 upserts, searches, and point deletions to that collection. The direct-constructor default remains

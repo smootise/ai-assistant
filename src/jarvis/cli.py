@@ -5,7 +5,6 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
 
 from jarvis.segment_summarizer import SegmentSummarizer
 from jarvis.memory import MemoryLayer
@@ -25,7 +24,6 @@ from jarvis.ingest.pipeline import ingest_chatgpt
 from jarvis.output_writer import OutputWriter
 from jarvis.ollama import OllamaClient
 from jarvis.summarizer import ConversationSummarizer
-from jarvis.vector_store import VectorStore
 
 
 def setup_logging(log_level: str) -> None:
@@ -490,12 +488,6 @@ def cmd_detect_topics(args: argparse.Namespace, config: dict) -> int:
         embedder = create_embedding_client(config)
         ollama_client = create_ollama_client(config)
 
-        vector_store: Optional[VectorStore] = None
-        try:
-            vector_store = create_vector_store(config)
-        except Exception:
-            logger.info("Qdrant not reachable — will embed on the fly")
-
         detector = TopicDetector(
             embedder=embedder,
             ollama_client=ollama_client,
@@ -503,7 +495,6 @@ def cmd_detect_topics(args: argparse.Namespace, config: dict) -> int:
             schema=config["schema"],
             schema_version=config["schema_version"],
             threshold=args.threshold,
-            vector_store=vector_store,
         )
 
         results = detector.detect_and_summarize(
