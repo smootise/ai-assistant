@@ -81,7 +81,7 @@ def test_answer_get_empty_form(tmp_path):
     assert "citations-list" not in body
 
 
-@patch("jarvis.web.services.OllamaClient")
+@patch("jarvis.clients.OllamaClient")
 @patch("jarvis.web.services.run_retrieval")
 @patch("jarvis.web.services.build_memory_layer")
 def test_answer_happy_path(mock_bml, mock_retrieval, mock_ollama_cls, tmp_path):
@@ -118,7 +118,7 @@ def test_answer_empty_hits(mock_bml, mock_retrieval, tmp_path):
     assert "No fragments matched" in body
 
 
-@patch("jarvis.web.services.OllamaClient")
+@patch("jarvis.clients.OllamaClient")
 @patch("jarvis.web.services.run_retrieval")
 @patch("jarvis.web.services.build_memory_layer")
 def test_answer_degraded_response(mock_bml, mock_retrieval, mock_ollama_cls, tmp_path):
@@ -139,7 +139,7 @@ def test_answer_degraded_response(mock_bml, mock_retrieval, mock_ollama_cls, tmp
     assert "Partial answer." in body
 
 
-@patch("jarvis.web.services.OllamaClient")
+@patch("jarvis.clients.OllamaClient")
 @patch("jarvis.web.services.run_retrieval")
 @patch("jarvis.web.services.build_memory_layer")
 def test_answer_ollama_error(mock_bml, mock_retrieval, mock_ollama_cls, tmp_path):

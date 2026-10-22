@@ -62,7 +62,7 @@ def _mock_memory(hits, rows):
     return memory
 
 
-@patch("jarvis.cli.OllamaClient")
+@patch("jarvis.clients.OllamaClient")
 @patch("jarvis.cli._build_memory_layer")
 def test_answer_happy_path(mock_build_memory, mock_ollama_cls, tmp_path, capsys):
     hits = [(1, 0.9, "pt1"), (2, 0.8, "pt2")]
@@ -88,7 +88,7 @@ def test_answer_happy_path(mock_build_memory, mock_ollama_cls, tmp_path, capsys)
     mock_ollama.chat.assert_called_once()
 
 
-@patch("jarvis.cli.OllamaClient")
+@patch("jarvis.clients.OllamaClient")
 @patch("jarvis.cli._build_memory_layer")
 def test_answer_no_hits(mock_build_memory, mock_ollama_cls, tmp_path, capsys):
     mock_build_memory.return_value = _mock_memory([], [])
@@ -101,7 +101,7 @@ def test_answer_no_hits(mock_build_memory, mock_ollama_cls, tmp_path, capsys):
     mock_ollama_cls.return_value.chat.assert_not_called()
 
 
-@patch("jarvis.cli.OllamaClient")
+@patch("jarvis.clients.OllamaClient")
 @patch("jarvis.cli._build_memory_layer")
 def test_answer_degraded_response(mock_build_memory, mock_ollama_cls, tmp_path, caplog):
     hits = [(1, 0.9, "pt1")]
@@ -122,7 +122,7 @@ def test_answer_degraded_response(mock_build_memory, mock_ollama_cls, tmp_path, 
     assert "Degraded response" in caplog.text
 
 
-@patch("jarvis.cli.OllamaClient")
+@patch("jarvis.clients.OllamaClient")
 @patch("jarvis.cli._build_memory_layer")
 def test_answer_connection_error(mock_build_memory, mock_ollama_cls):
     mock_build_memory.side_effect = ConnectionError("Qdrant unreachable")

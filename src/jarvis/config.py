@@ -12,6 +12,7 @@ from dotenv.main import DotEnv
 from dotenv.parser import parse_stream
 
 from jarvis.profiles import ConfigurationError, resolve_path, resolve_profiles
+from jarvis.endpoints import validate_qdrant_endpoint
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -194,6 +195,26 @@ def load_config(profile: str | None = None) -> Dict[str, Any]:
     for key, value in config.items():
         if key not in non_string_fields and not isinstance(value, str):
             raise ConfigurationError(f"Configuration '{key}' must be a string")
+    embedding_endpoint = environment.get(
+        "EMBEDDING_OLLAMA_BASE_URL", ollama.get("embedding_base_url", "")
+    )
+    if not isinstance(embedding_endpoint, str):
+        raise ConfigurationError("Configuration 'embedding_ollama_base_url' must be a string")
+    config["embedding_ollama_base_url"] = embedding_endpoint or config["ollama_base_url"]
+    config["qdrant_url"] = environment.get("QDRANT_URL", memory.get("qdrant_url", ""))
+    config["qdrant_api_key"] = environment.get("QDRANT_API_KEY", "")
+    for key in ("embedding_ollama_base_url", "qdrant_url", "qdrant_api_key"):
+        if not isinstance(config[key], str):
+            raise ConfigurationError(f"Configuration '{key}' must be a string")
+    if config["qdrant_url"]:
+        conflict = any(key in environment for key in ("QDRANT_HOST", "QDRANT_PORT"))
+        if "QDRANT_URL" not in environment:
+            conflict |= any(key in memory for key in ("qdrant_host", "qdrant_port"))
+        if conflict:
+            raise ConfigurationError("QDRANT_URL cannot be combined with QDRANT_HOST/QDRANT_PORT")
+        validate_qdrant_endpoint(config["qdrant_url"], None, None)
+    else:
+        validate_qdrant_endpoint(None, config["qdrant_host"], config["qdrant_port"])
     return config
 
 
@@ -225,6 +246,7 @@ def format_config(config: Mapping[str, Any]) -> str:
         ("Raw upload directory", "inbox_raw_dir"),
         ("Output root", "output_root"),
         ("Qdrant collection", "qdrant_collection"),
+        ("Qdrant URL", "qdrant_url"),
         ("Qdrant host", "qdrant_host"),
         ("Qdrant port", "qdrant_port"),
         ("Provider", "provider"),
@@ -232,6 +254,7 @@ def format_config(config: Mapping[str, Any]) -> str:
         ("OpenAI model", "openai_model"),
         ("Embedding model", "embedding_model"),
         ("Ollama endpoint", "ollama_base_url"),
+        ("Embedding Ollama endpoint", "embedding_ollama_base_url"),
         ("Ollama timeout (seconds)", "ollama_timeout"),
         ("Prompts directory", "prompts_dir"),
         ("Samples directory", "samples_dir"),
@@ -243,7 +266,7 @@ def format_config(config: Mapping[str, Any]) -> str:
     lines = []
     for label, key in fields:
         value = str(config[key])
-        if key in {"ollama_base_url", "qdrant_host"}:
+        if key in {"ollama_base_url", "embedding_ollama_base_url", "qdrant_host", "qdrant_url"}:
             value = _redact_url(value)
         lines.append(f"{label}: {value}")
     return "\n".join(lines)

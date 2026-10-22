@@ -174,7 +174,7 @@ def test_display_uses_allowlist_and_redacts_url_credentials(
     monkeypatch.setenv(
         "OLLAMA_BASE_URL", "http://alice:password@localhost:11434/?token=hidden#secret"
     )
-    monkeypatch.setenv("QDRANT_HOST", "bob:credential@localhost")
+    monkeypatch.setenv("QDRANT_HOST", "localhost")
     config = load_config("mom")
     config["unexpected_secret"] = "do-not-display"
     output = format_config(config)
@@ -344,3 +344,131 @@ def test_explicit_yaml_duplicates_are_rejected_even_with_merges(
     with pytest.raises(ConfigurationError, match="unique string keys"):
         load_config()
     assert not (profile_repo / "data").exists()
+
+
+def test_distributed_settings_precedence_and_secret_display(
+    profile_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (profile_repo / "config.yaml").write_text(
+        "defaults:\n  ollama:\n    embedding_base_url: http://yaml-embed:11434\n"
+        "  memory:\n    qdrant_host: legacy\n    qdrant_port: 6333\n",
+        encoding="utf-8",
+    )
+    (profile_repo / ".env").write_text(
+        "EMBEDDING_OLLAMA_BASE_URL=http://file-embed:11434\n"
+        "QDRANT_URL=https://qdrant.example/proxy\nQDRANT_API_KEY=file-synthetic-key\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EMBEDDING_OLLAMA_BASE_URL", "http://env-embed:11434")
+    monkeypatch.setenv("QDRANT_API_KEY", "environment-synthetic-key")
+    config = load_config()
+    assert config["embedding_ollama_base_url"] == "http://env-embed:11434"
+    assert config["qdrant_url"] == "https://qdrant.example/proxy"
+    assert config["qdrant_api_key"] == "environment-synthetic-key"
+    display = format_config(config)
+    assert config["qdrant_url"] in display
+    assert config["embedding_ollama_base_url"] in display
+    assert "synthetic-key" not in display
+    assert "qdrant_api_key" not in display
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "localhost:6333",
+        "ftp://example.com",
+        "https://",
+        "https://example.com:bad",
+        "https://example.com:65536",
+        "https://example.com:0",
+        "https://example.com:",
+        "https://name:private-key@example.com",
+        "https://example.com/?api_key=private-key",
+        "https://example.com/#private-key",
+        "https://exa mple.com",
+        "https://bad_host",
+        "https://[broken",
+        "https://example.com\\private-key",
+        "https://example.com\n",
+    ],
+)
+def test_invalid_remote_endpoint_is_rejected_without_echoing_credentials(
+    profile_repo: Path, monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    monkeypatch.setenv("QDRANT_URL", url)
+    monkeypatch.setenv("QDRANT_API_KEY", "private-key")
+    with pytest.raises(ConfigurationError) as error:
+        load_config()
+    assert "private-key" not in str(error.value)
+    assert not (profile_repo / "data").exists()
+
+
+@pytest.mark.parametrize("variable,value", [("QDRANT_HOST", "localhost"), ("QDRANT_PORT", "6333")])
+def test_conflicting_remote_and_legacy_environment_endpoints(
+    profile_repo: Path, monkeypatch: pytest.MonkeyPatch, variable: str, value: str
+) -> None:
+    monkeypatch.setenv("QDRANT_URL", "https://qdrant.example")
+    monkeypatch.setenv(variable, value)
+    with pytest.raises(ConfigurationError, match="cannot be combined"):
+        load_config()
+
+
+def test_yaml_remote_endpoint_and_conflict(profile_repo: Path) -> None:
+    path = profile_repo / "config.yaml"
+    path.write_text("defaults: {memory: {qdrant_url: 'https://qdrant.example'}}", encoding="utf-8")
+    assert load_config()["qdrant_url"] == "https://qdrant.example"
+    path.write_text(
+        "defaults: {memory: {qdrant_url: 'https://qdrant.example', qdrant_host: localhost}}",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigurationError, match="cannot be combined"):
+        load_config()
+
+
+@pytest.mark.parametrize(
+    "host", ["http://localhost", "host:6333", "name:private-key@host", "", "bad host"]
+)
+def test_malformed_legacy_hosts_are_rejected(
+    profile_repo: Path, monkeypatch: pytest.MonkeyPatch, host: str
+) -> None:
+    monkeypatch.setenv("QDRANT_HOST", host)
+    with pytest.raises(ConfigurationError, match="QDRANT_HOST") as error:
+        load_config()
+    assert "private-key" not in str(error.value)
+
+
+def test_new_defaults_preserve_personal_configuration(profile_repo: Path) -> None:
+    config = load_config()
+    assert config["embedding_ollama_base_url"] == config["ollama_base_url"]
+    assert config["qdrant_url"] == config["qdrant_api_key"] == ""
+    assert config["qdrant_host"] == "localhost"
+    assert config["qdrant_port"] == 6333
+    assert config["db_path"] == str(profile_repo / "data/jarvis.db")
+    assert config["qdrant_collection"] == "jarvis_fragments"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:6333",
+        "https://qdrant.example",
+        "https://qdrant.example/proxy/",
+        "https://[::1]:6333",
+        "http://192.0.2.1:6333",
+    ],
+)
+def test_valid_remote_endpoint_modes(
+    profile_repo: Path, monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    monkeypatch.setenv("QDRANT_URL", url)
+    assert load_config()["qdrant_url"] == url
+
+
+@pytest.mark.parametrize("value", [None, [], False, 0])
+def test_invalid_yaml_embedding_endpoint(profile_repo: Path, value: Any) -> None:
+    (profile_repo / "config.yaml").write_text(
+        yaml.safe_dump({"defaults": {"ollama": {"embedding_base_url": value}}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigurationError, match="embedding_ollama_base_url"):
+        load_config()

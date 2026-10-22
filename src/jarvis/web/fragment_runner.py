@@ -10,13 +10,14 @@ import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from jarvis.embedder import EmbeddingClient
 from jarvis.fragmenter import Fragmenter
-from jarvis.memory import MemoryLayer
-from jarvis.ollama import OllamaClient
+from jarvis.clients import (
+    build_memory_layer as _build_memory_layer,
+    create_summary_store,
+    create_vector_store,
+    create_ollama_client,
+)
 from jarvis.store import SummaryStore
-from jarvis.vector_store import VectorStore
-
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ def run_fragment_job(
                   persist (bool), embed (bool).
     Called from a daemon thread spawned by the pipeline_jobs route.
     """
-    store = SummaryStore(db_path=config["db_path"])
+    store = create_summary_store(config)
     store.mark_job_running(job_id)
     logger.info(f"Job {job_id}: starting fragment for conversation {conversation_id}")
 
@@ -55,8 +56,7 @@ def run_fragment_job(
 
         if not extract_dir.exists():
             raise FileNotFoundError(
-                f"Extracts directory not found: {extract_dir}. "
-                "Run extract-segments first."
+                f"Extracts directory not found: {extract_dir}. " "Run extract-segments first."
             )
 
         if force:
@@ -67,11 +67,7 @@ def run_fragment_job(
                 config=config,
             )
 
-        ollama_client = OllamaClient(
-            model=config["local_model_name"],
-            base_url=config["ollama_base_url"],
-            timeout=config["ollama_timeout"],
-        )
+        ollama_client = create_ollama_client(config)
         fragmenter = Fragmenter(
             ollama_client=ollama_client,
             prompts_dir=config["prompts_dir"],
@@ -110,16 +106,13 @@ def run_fragment_job(
                         frag_stmts = output_data["statements"]
                         if isinstance(frag_stmts[0].get("statement_index"), int):
                             statement_ids = [
-                                f"{extract_id}_st{s['statement_index']:04d}"
-                                for s in frag_stmts
+                                f"{extract_id}_st{s['statement_index']:04d}" for s in frag_stmts
                             ]
                         else:
                             db_stmts = memory.store.get_statements_for_extract(extract_id)
                             text_to_id = {s["text"]: s["statement_id"] for s in db_stmts}
                             statement_ids = [
-                                text_to_id[s["text"]]
-                                for s in frag_stmts
-                                if s["text"] in text_to_id
+                                text_to_id[s["text"]] for s in frag_stmts if s["text"] in text_to_id
                             ]
                         if statement_ids:
                             memory.store.insert_fragment_links(fragment_id, statement_ids)
@@ -136,9 +129,7 @@ def run_fragment_job(
                     output_data=output_data, extract_id=extract_id
                 )
                 if embed:
-                    memory.index_fragment_in_qdrant(
-                        fragment_id=fid, output_data=output_data
-                    )
+                    memory.index_fragment_in_qdrant(fragment_id=fid, output_data=output_data)
                 fragment_ids.append(fid)
                 fragments_persisted += 1
 
@@ -172,11 +163,8 @@ def _wipe_fragments_for_force(
     """Delete existing fragment files, DB rows, and Qdrant points for the conversation."""
     point_ids = store.delete_fragments(conversation_id)
     if point_ids:
-        try:
-            vs = VectorStore(host=config["qdrant_host"], port=config["qdrant_port"])
-            vs.delete_points(point_ids)
-        except Exception:
-            pass
+        vs = create_vector_store(config)
+        vs.delete_points(point_ids)
 
     if fragment_dir.exists():
         for seg_dir in fragment_dir.glob("segment_*"):
@@ -184,16 +172,3 @@ def _wipe_fragments_for_force(
                 shutil.rmtree(seg_dir)
 
     logger.info(f"--force: wiped existing fragments for {conversation_id}")
-
-
-def _build_memory_layer(config: Dict[str, Any]) -> MemoryLayer:
-    store = SummaryStore(db_path=config["db_path"])
-    vector_store = VectorStore(
-        host=config["qdrant_host"],
-        port=config["qdrant_port"],
-    )
-    embedder = EmbeddingClient(
-        model=config["embedding_model"],
-        base_url=config["ollama_base_url"],
-    )
-    return MemoryLayer(store=store, vector_store=vector_store, embedder=embedder)

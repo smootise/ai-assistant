@@ -206,13 +206,13 @@ def resolve_profiles(
 def require_personal_runtime(config: Mapping[str, Any]) -> None:
     if config.get("profile_name", "personal") != "personal":
         raise ConfigurationError(
-            "Phase 1 supports non-personal profiles only for 'config show'; "
+            "Phase 2 supports non-personal profiles only for 'config show'; "
             "processing and serving require profile 'personal'"
         )
-    # The legacy runtime still reconstructs its inbox and uses a fixed collection.
+    # Pipeline and web isolation remain pending; retain the rollout boundary.
     if config.get("qdrant_collection", "jarvis_fragments") != "jarvis_fragments":
-        raise ConfigurationError("Custom personal collections are inspection-only in Phase 1")
+        raise ConfigurationError("Custom personal collections are inspection-only in Phase 2")
     if "inbox_root" in config:
         expected = (Path(config["repo_root"]) / "inbox").resolve()
         if not _same_path(Path(config["inbox_root"]), expected):
-            raise ConfigurationError("Custom personal inboxes are inspection-only in Phase 1")
+            raise ConfigurationError("Custom personal inboxes are inspection-only in Phase 2")

@@ -20,11 +20,12 @@ Table hierarchy:
 import json
 import logging
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
-
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +196,34 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_at DESC);
 """
 
-# No migration path — DB is always wiped and rebuilt on schema changes.
+
+class DatabaseCompatibilityError(ValueError):
+    """The existing database cannot be used safely with schema v8."""
+
+
+def _schema_contract(conn: sqlite3.Connection) -> dict[str, Any]:
+    contract = {}
+    for (table,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'"):
+        quoted = '"' + table.replace('"', '""') + '"'
+        columns = {row[1]: tuple(row[2:]) for row in conn.execute(f"PRAGMA table_info({quoted})")}
+        foreign_keys = {
+            tuple(row[2:]) for row in conn.execute(f"PRAGMA foreign_key_list({quoted})")
+        }
+        unique_keys = set()
+        for index in conn.execute(f"PRAGMA index_list({quoted})"):
+            if index[2] and not index[4]:
+                name = '"' + index[1].replace('"', '""') + '"'
+                unique_keys.add(tuple(row[2] for row in conn.execute(f"PRAGMA index_info({name})")))
+        contract[table] = (columns, foreign_keys, unique_keys)
+    return contract
+
+
+@lru_cache(maxsize=1)
+def _v8_contract() -> dict[str, Any]:
+    # DDL is used only in this disposable reference and genuinely new files.
+    with closing(sqlite3.connect(":memory:")) as conn:
+        conn.executescript(_DDL)
+        return _schema_contract(conn)
 
 
 def _now_iso() -> str:
@@ -205,10 +233,27 @@ def _now_iso() -> str:
 class SummaryStore:
     """Relational SQLite store for all JARVIS pipeline records."""
 
-    def __init__(self, db_path: str):
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+    def __init__(self, db_path: str) -> None:
+        self.db_path = Path(db_path).resolve()
+        if not self.db_path.exists():
+            if any(
+                Path(f"{self.db_path}{suffix}").exists() for suffix in ("-wal", "-shm", "-journal")
+            ):
+                raise DatabaseCompatibilityError(
+                    "Cannot initialize SQLite database with existing sidecar files"
+                )
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                # Exclusive creation prevents an existence-check race from initializing a file
+                # another process has created in the meantime.
+                with self.db_path.open("xb"):
+                    pass
+            except FileExistsError:
+                self._validate_db()
+            else:
+                self._init_db()
+        else:
+            self._validate_db()
 
     # ------------------------------------------------------------------
     # Source files
@@ -361,8 +406,11 @@ class SummaryStore:
             "action_items": json.dumps(data.get("action_items") or [], ensure_ascii=False),
             "lang": data.get("lang"),
             "status": data.get("status") or "ok",
-            "warnings": json.dumps(data.get("warnings", []), ensure_ascii=False)
-            if data.get("warnings") else None,
+            "warnings": (
+                json.dumps(data.get("warnings", []), ensure_ascii=False)
+                if data.get("warnings")
+                else None
+            ),
             "provider": data.get("provider") or "local",
             "model": data.get("model") or "",
             "latency_ms": data.get("latency_ms"),
@@ -424,8 +472,11 @@ class SummaryStore:
             "model": data.get("model") or "",
             "prompt_version": data.get("prompt_version"),
             "status": data.get("status") or "ok",
-            "warnings": json.dumps(data.get("warnings", []), ensure_ascii=False)
-            if data.get("warnings") else None,
+            "warnings": (
+                json.dumps(data.get("warnings", []), ensure_ascii=False)
+                if data.get("warnings")
+                else None
+            ),
             "latency_ms": data.get("latency_ms"),
             "created_at": data.get("created_at") or _now_iso(),
         }
@@ -524,13 +575,15 @@ class SummaryStore:
         rows = []
         for s in statements:
             idx = s["statement_index"]
-            rows.append({
-                "statement_id": f"{extract_id}_st{idx:04d}",
-                "extract_id": extract_id,
-                "statement_index": idx,
-                "speaker": s["speaker"],
-                "text": s["text"],
-            })
+            rows.append(
+                {
+                    "statement_id": f"{extract_id}_st{idx:04d}",
+                    "extract_id": extract_id,
+                    "statement_index": idx,
+                    "speaker": s["speaker"],
+                    "text": s["text"],
+                }
+            )
         if rows:
             with self._connect() as conn:
                 conn.executemany(sql, rows)
@@ -645,9 +698,7 @@ class SummaryStore:
         with self._connect() as conn:
             return conn.execute(sql, (fragment_id,)).fetchone()[0]
 
-    def insert_fragment_links(
-        self, fragment_id: str, statement_ids: List[str]
-    ) -> None:
+    def insert_fragment_links(self, fragment_id: str, statement_ids: List[str]) -> None:
         """Insert link rows mapping a fragment to its ordered statements. Idempotent."""
         sql = """
             INSERT OR IGNORE INTO fragment_statement_links
@@ -699,8 +750,11 @@ class SummaryStore:
             "action_items": json.dumps(data.get("action_items") or [], ensure_ascii=False),
             "lang": data.get("lang"),
             "status": data.get("status") or "ok",
-            "warnings": json.dumps(data.get("warnings", []), ensure_ascii=False)
-            if data.get("warnings") else None,
+            "warnings": (
+                json.dumps(data.get("warnings", []), ensure_ascii=False)
+                if data.get("warnings")
+                else None
+            ),
             "provider": data.get("provider") or "local",
             "model": data.get("model") or "",
             "latency_ms": data.get("latency_ms"),
@@ -736,9 +790,7 @@ class SummaryStore:
     # Retrieval reconstruction
     # ------------------------------------------------------------------
 
-    def get_fragments_with_statements(
-        self, fragment_ids: List[str]
-    ) -> List[Dict[str, Any]]:
+    def get_fragments_with_statements(self, fragment_ids: List[str]) -> List[Dict[str, Any]]:
         """Fetch full fragment records hydrated from the relational chain.
 
         For each fragment, returns:
@@ -808,13 +860,15 @@ class SummaryStore:
                     "statements": [],
                 }
             if row["statement_id"] is not None:
-                fragments[fid]["statements"].append({
-                    "statement_id": row["statement_id"],
-                    "statement_index": row["statement_index"],
-                    "speaker": row["speaker"],
-                    "text": row["statement_text"],
-                    "position_in_fragment": row["position_in_fragment"],
-                })
+                fragments[fid]["statements"].append(
+                    {
+                        "statement_id": row["statement_id"],
+                        "statement_index": row["statement_index"],
+                        "speaker": row["speaker"],
+                        "text": row["statement_text"],
+                        "position_in_fragment": row["position_in_fragment"],
+                    }
+                )
 
         # Preserve input order
         return [fragments[fid] for fid in fragment_ids if fid in fragments]
@@ -887,8 +941,13 @@ class SummaryStore:
     def count_all(self) -> Dict[str, int]:
         """Return per-table row counts for the dashboard."""
         tables = [
-            "source_files", "conversations", "segments",
-            "extracts", "fragments", "extract_statements", "jobs",
+            "source_files",
+            "conversations",
+            "segments",
+            "extracts",
+            "fragments",
+            "extract_statements",
+            "jobs",
         ]
         counts: Dict[str, int] = {}
         with self._connect() as conn:
@@ -994,17 +1053,17 @@ class SummaryStore:
         result: Dict[str, List[Dict[str, Any]]] = {}
         queries = {
             "source_files": "SELECT source_file_id AS id, original_filename AS label, "
-                            "created_at FROM source_files ORDER BY created_at DESC LIMIT ?",
+            "created_at FROM source_files ORDER BY created_at DESC LIMIT ?",
             "conversations": "SELECT conversation_id AS id, COALESCE(title, conversation_id) "
-                             "AS label, created_at FROM conversations "
-                             "ORDER BY created_at DESC LIMIT ?",
+            "AS label, created_at FROM conversations "
+            "ORDER BY created_at DESC LIMIT ?",
             "segments": "SELECT segment_id AS id, "
-                        "('Seg #' || segment_index || ' — ' || conversation_id) AS label, "
-                        "created_at FROM segments ORDER BY created_at DESC LIMIT ?",
+            "('Seg #' || segment_index || ' — ' || conversation_id) AS label, "
+            "created_at FROM segments ORDER BY created_at DESC LIMIT ?",
             "extracts": "SELECT extract_id AS id, extract_id AS label, "
-                        "created_at FROM extracts ORDER BY created_at DESC LIMIT ?",
+            "created_at FROM extracts ORDER BY created_at DESC LIMIT ?",
             "fragments": "SELECT fragment_id AS id, fragment_id AS label, "
-                         "created_at FROM fragments ORDER BY created_at DESC LIMIT ?",
+            "created_at FROM fragments ORDER BY created_at DESC LIMIT ?",
         }
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
@@ -1018,16 +1077,58 @@ class SummaryStore:
     # ------------------------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = sqlite3.connect(f"{self.db_path.as_uri()}?mode=rw", uri=True)
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
+    def _validate_db(self) -> None:
+        try:
+            with closing(sqlite3.connect(f"{self.db_path.as_uri()}?mode=ro", uri=True)) as conn:
+                conn.execute("PRAGMA query_only=ON")
+                version = conn.execute(
+                    "SELECT value FROM _jarvis_meta WHERE key = 'schema_version'"
+                ).fetchall()
+                if version != [(str(_SCHEMA_VERSION),)]:
+                    raise DatabaseCompatibilityError("SQLite database requires schema version 8")
+                jobs_sql = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'"
+                ).fetchone()
+                # SQLite's structural PRAGMAs do not expose CHECK constraints.
+                status_check = "check(statusin('pending','running','succeeded','failed'))"
+                if not jobs_sql or status_check not in "".join(jobs_sql[0].lower().split()):
+                    raise DatabaseCompatibilityError(
+                        "Incompatible SQLite v8 jobs status constraint"
+                    )
+                actual = _schema_contract(conn)
+                for table, (columns, foreign_keys, unique_keys) in _v8_contract().items():
+                    if table not in actual:
+                        raise DatabaseCompatibilityError(
+                            f"SQLite v8 schema is missing table: {table}"
+                        )
+                    found_columns, found_fks, found_unique = actual[table]
+                    if (
+                        any(found_columns.get(name) != spec for name, spec in columns.items())
+                        or not foreign_keys <= found_fks
+                        or not unique_keys <= found_unique
+                        or any(
+                            spec[1] and spec[2] is None
+                            for name, spec in found_columns.items()
+                            if name not in columns
+                        )
+                    ):
+                        raise DatabaseCompatibilityError(f"Incompatible SQLite v8 table: {table}")
+        except (sqlite3.Error, OSError):
+            raise DatabaseCompatibilityError(
+                "Cannot open a compatible SQLite v8 database"
+            ) from None
+
     def _init_db(self) -> None:
-        with self._connect() as conn:
-            conn.executescript(_DDL)
-            conn.execute(
-                "INSERT OR REPLACE INTO _jarvis_meta (key, value) VALUES ('schema_version', ?)",
-                (str(_SCHEMA_VERSION),),
-            )
+        with closing(self._connect()) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            with conn:
+                conn.executescript(_DDL)
+                conn.execute(
+                    "INSERT INTO _jarvis_meta (key, value) VALUES ('schema_version', ?)",
+                    (str(_SCHEMA_VERSION),),
+                )
         logger.debug(f"SQLite store ready at {self.db_path}")

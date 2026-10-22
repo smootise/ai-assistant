@@ -11,10 +11,14 @@ V1 scope: browse data lineage · upload + ingest · launch extract-segments · l
 
 ## Starting the server
 
-During profile Phase 1, serving is personal-only, including the app factory and convenience
+During profile Phase 2, serving remains personal-only, including the app factory and convenience
 entrypoint. Inspect another profile with `python -m jarvis.cli --profile mom config show`.
 Profile-bound web operations and active-profile labels remain deferred; see
 [Profiles](profiles.md) for the rollout boundary and real-data backup checkpoint.
+
+Request stores and background runners use the shared `jarvis.clients` factories with the supplied
+resolved configuration. Search/answer and pipeline embeddings respect the independent embedding
+endpoint; all Qdrant clients receive the selected collection and remote connection settings.
 
 ```bash
 python -m jarvis.cli serve                     # default: 127.0.0.1:5000

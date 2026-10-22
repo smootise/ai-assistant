@@ -8,6 +8,7 @@ from flask import Flask
 
 from jarvis.config import load_config
 from jarvis.profiles import require_personal_runtime
+from jarvis.clients import create_summary_store
 from jarvis.store import SummaryStore
 
 
@@ -61,7 +62,7 @@ def create_app(config: Dict[str, Any] | None = None) -> Flask:
 
     # Store factory — routes call this to get a fresh store per request
     def get_store() -> SummaryStore:
-        return SummaryStore(db_path)
+        return create_summary_store(config)
 
     app.config["GET_STORE"] = get_store
 

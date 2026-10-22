@@ -1,7 +1,8 @@
-# Profiles — Phase 1
+# Profiles — Phases 1 and 2
 
 Phase 1 resolves and validates profiles and provides read-only configuration inspection.
-It does not enable non-personal ingestion, processing, retrieval, background jobs, or serving.
+Phase 2 adds profile-aware SQLite/Qdrant clients, shared client factories, and independent
+service endpoints. Non-personal ingestion, processing, retrieval, background jobs, and serving remain guarded.
 Those operations fail before dispatch when a non-personal profile is selected. The Flask app
 factory applies the same guard, including the `python -m jarvis.web` entrypoint.
 
@@ -17,7 +18,8 @@ argument, process `JARVIS_PROFILE`, `.env` `JARVIS_PROFILE`, then `personal`. Un
 selections fail rather than falling back. Configuration errors produce CLI exit status 2.
 
 The command displays the selected profile, resolved storage and prompt/sample paths, collection,
-shared service/model settings, output settings, logging level, and profile identity. It uses an
+shared service/model settings (including both Ollama endpoints and the Qdrant URL), output
+settings, logging level, and profile identity. It uses an
 explicit allowlist, omits secrets, and redacts URL user information, queries, and fragments.
 It does not create managed directories, open databases, construct service clients, or contact
 Ollama/Qdrant. It does not inspect database compatibility or service availability.
@@ -75,13 +77,54 @@ equal, contain, or sit beneath them, and reserved files cannot contain other res
 Windows ambiguous drive-relative, reserved, alternate-stream, and trailing-dot/space paths are
 rejected.
 
-In Phase 1, custom personal inboxes and collection names can be inspected but cannot be used
-for processing: the legacy runtime still reconstructs those resources. Existing personal
+Custom personal inboxes and collection names can be inspected but remain guarded for
+processing until pipeline and web isolation are complete. Existing personal
 database/output overrides continue to work. Directory-override confinement, pipeline path
-guards, external-source provenance, collection routing, SQLite compatibility checks, and
+guards, external-source provenance, and
 profile-bound web operations remain deferred. Existing `--force` cleanup defects are not fixed
-in Phase 1; they require separately reviewable changesets and dedicated regression tests.
+in this phase; they require separately reviewable changesets and dedicated regression tests.
+Phase 2 routes cleanup calls to the selected collection and propagates Qdrant failures rather
+than reporting success. It does not change cleanup ordering, range selection, or cross-store
+atomicity: earlier file/SQLite cleanup may already have occurred when a service failure is reported.
 PST ingestion and optional source copying are outside this feature.
+
+## Phase 2 storage and service construction
+
+`jarvis.clients` builds SQLite, Qdrant, embedding, inference, and memory clients from the supplied
+resolved configuration. CLI commands, Flask request stores, ingestion persistence, and background
+runners use these factories; they never reload the profile from the environment inside a job.
+Legacy personal configuration dictionaries retain their original defaults.
+
+`VectorStore(collection_name=...)` routes collection lookup, dimension validation, lazy creation,
+upserts, searches, and point deletions to that collection. The direct-constructor default remains
+`jarvis_fragments`. Personal keeps that collection; mom uses `jarvis_mom_fragments`. Point UUID
+generation and payloads are unchanged. Existing collections are never cleared or recreated.
+Deletion waits for Qdrant completion, and service failures propagate with sanitized messages.
+
+`SummaryStore(db_path)` retains schema v8 and its public interface. A missing file is created
+exclusively and initialized with the existing DDL. An existing file is opened read-only for
+version and structural compatibility checks, without DDL, metadata writes, or journal-mode
+changes on that file. Validation checks required tables, columns, primary/unique keys, and
+foreign keys against a disposable in-memory v8 reference. Harmless extra tables, indexes,
+metadata, and compatible extra columns are accepted. Empty files, invalid SQLite, unsupported
+versions, missing/incompatible required structures, and orphaned SQLite sidecars fail unchanged.
+Later operations use
+`mode=rw` so a removed database is never silently recreated.
+
+Inference uses `OLLAMA_BASE_URL`; `EMBEDDING_OLLAMA_BASE_URL` optionally selects a separate
+embedding server and otherwise defaults to inference. YAML equivalent: `defaults.ollama.embedding_base_url`.
+The embedding model is unchanged; endpoint selection never starts re-embedding.
+
+`QDRANT_URL` optionally selects an HTTP(S) endpoint, including a reverse-proxy path.
+`QDRANT_API_KEY` comes only from process environment or the untracked `.env` and is excluded
+from configuration display and service error output. URLs with credentials, queries, or fragments
+are rejected. Do not combine URL and host/port variables in environment/`.env`. An environment
+URL overrides YAML host/port defaults; within YAML choose either `defaults.memory.qdrant_url`
+or host/port. Without a URL, existing `QDRANT_HOST`/`QDRANT_PORT` behavior is preserved.
+
+Tests use synthetic SQLite files and mocked Qdrant/Ollama services. Suite-wide guards block
+unmocked Qdrant construction, outbound socket connections, and SQLite paths outside pytest's
+temporary tree; configuration loading uses a synthetic repository rather than the clone's `.env`.
 
 ## Mandatory checkpoint before real-data deployment
 
@@ -102,5 +145,5 @@ changing their schema or metadata, tolerate harmless additional objects, and rej
 databases unchanged. No database or existing collection may be deleted, recreated, or migrated
 as part of this feature. Do not use the legacy database-deleting rebuild script for verification.
 
-Phase 1 must be reviewed with its test results before subsequent work. Cleanup fixes remain
+Each phase must be reviewed with its test results before subsequent work. Cleanup fixes remain
 separate review units; commits and pushes require explicit authorization.

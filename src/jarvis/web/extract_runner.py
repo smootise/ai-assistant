@@ -9,13 +9,14 @@ import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from jarvis.embedder import EmbeddingClient
 from jarvis.extractor import SegmentExtractor
-from jarvis.memory import MemoryLayer
-from jarvis.ollama import OllamaClient
+from jarvis.clients import (
+    build_memory_layer as _build_memory_layer,
+    create_summary_store,
+    create_vector_store,
+    create_ollama_client,
+)
 from jarvis.store import SummaryStore
-from jarvis.vector_store import VectorStore
-
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ def run_extract_job(
     options keys: from_segment (int), to_segment (int|None), force (bool), persist (bool).
     Called from a daemon thread spawned by the pipeline_jobs route.
     """
-    store = SummaryStore(db_path=config["db_path"])
+    store = create_summary_store(config)
     store.mark_job_running(job_id)
     logger.info(f"Job {job_id}: starting extract for conversation {conversation_id}")
 
@@ -67,11 +68,7 @@ def run_extract_job(
                 config=config,
             )
 
-        ollama_client = OllamaClient(
-            model=config["local_model_name"],
-            base_url=config["ollama_base_url"],
-            timeout=config["ollama_timeout"],
-        )
+        ollama_client = create_ollama_client(config)
         extractor = SegmentExtractor(
             ollama_client=ollama_client,
             prompts_dir=config["prompts_dir"],
@@ -143,7 +140,8 @@ def _wipe_extracts_for_force(
         if f.name != "pending_tail.json"
     )
     effective_to = (
-        to_segment if to_segment is not None
+        to_segment
+        if to_segment is not None
         else (max(all_seg_indices) if all_seg_indices else from_segment)
     )
     forced_indices = list(range(from_segment, effective_to + 1))
@@ -158,26 +156,7 @@ def _wipe_extracts_for_force(
     if persist:
         point_ids = store.delete_extracts(conversation_id, segment_indices=forced_indices)
         if point_ids:
-            try:
-                from jarvis.vector_store import VectorStore
-                vs = VectorStore(host=config["qdrant_host"], port=config["qdrant_port"])
-                vs.delete_points(point_ids)
-            except Exception:
-                pass
+            vs = create_vector_store(config)
+            vs.delete_points(point_ids)
 
-    logger.info(
-        f"--force: wiped extracts {from_segment}–{effective_to} for {conversation_id}"
-    )
-
-
-def _build_memory_layer(config: Dict[str, Any]) -> MemoryLayer:
-    store = SummaryStore(db_path=config["db_path"])
-    vector_store = VectorStore(
-        host=config["qdrant_host"],
-        port=config["qdrant_port"],
-    )
-    embedder = EmbeddingClient(
-        model=config["embedding_model"],
-        base_url=config["ollama_base_url"],
-    )
-    return MemoryLayer(store=store, vector_store=vector_store, embedder=embedder)
+    logger.info(f"--force: wiped extracts {from_segment}–{effective_to} for {conversation_id}")

@@ -8,17 +8,22 @@ from pathlib import Path
 from typing import Optional
 
 from jarvis.segment_summarizer import SegmentSummarizer
+from jarvis.memory import MemoryLayer
+from jarvis.clients import (
+    build_memory_layer as _build_memory_layer,
+    create_summary_store,
+    create_vector_store,
+    create_embedding_client,
+    create_ollama_client,
+)
 from jarvis.config import format_config, load_config
 from jarvis.profiles import ConfigurationError, require_personal_runtime
 from jarvis.extractor import SegmentExtractor
 from jarvis.fragmenter import Fragmenter
 from jarvis.topic_detector import TopicDetector
-from jarvis.embedder import EmbeddingClient
 from jarvis.ingest.pipeline import ingest_chatgpt
-from jarvis.memory import MemoryLayer
-from jarvis.ollama import OllamaClient
 from jarvis.output_writer import OutputWriter
-from jarvis.store import SummaryStore
+from jarvis.ollama import OllamaClient
 from jarvis.summarizer import ConversationSummarizer
 from jarvis.vector_store import VectorStore
 
@@ -30,19 +35,6 @@ def setup_logging(log_level: str) -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-
-
-def _build_memory_layer(config: dict) -> MemoryLayer:
-    store = SummaryStore(db_path=config["db_path"])
-    vector_store = VectorStore(
-        host=config["qdrant_host"],
-        port=config["qdrant_port"],
-    )
-    embedder = EmbeddingClient(
-        model=config["embedding_model"],
-        base_url=config["ollama_base_url"],
-    )
-    return MemoryLayer(store=store, vector_store=vector_store, embedder=embedder)
 
 
 # Public alias — usable by the web layer without importing a private name
@@ -77,11 +69,7 @@ def cmd_summarize(args: argparse.Namespace, config: dict) -> int:
         elif json_path.exists():
             pass  # OutputWriter will overwrite; no DB record to clean up
 
-        ollama_client = OllamaClient(
-            model=config["local_model_name"],
-            base_url=config["ollama_base_url"],
-            timeout=config["ollama_timeout"],
-        )
+        ollama_client = create_ollama_client(config)
         output_writer = OutputWriter(output_root=str(output_root))
         summarizer = ConversationSummarizer(
             ollama_client=ollama_client,
@@ -121,9 +109,7 @@ def cmd_summarize(args: argparse.Namespace, config: dict) -> int:
         return 1
 
 
-def _apply_hybrid_cutoff(
-    hits: list, min_results: int, min_score: float
-) -> list:
+def _apply_hybrid_cutoff(hits: list, min_results: int, min_score: float) -> list:
     """Return at least min_results hits, then continue while score >= min_score."""
     result = []
     for i, hit in enumerate(hits):
@@ -184,8 +170,7 @@ def generate_answer(
     prompt_path = Path(prompts_dir) / "answer_question.md"
     template = prompt_path.read_text(encoding="utf-8")
     system_prompt = (
-        template
-        .replace("{question}", query)
+        template.replace("{question}", query)
         .replace("{context_block}", context_block)
         .replace("{user_context}", user_context)
     )
@@ -211,7 +196,7 @@ def cmd_retrieve(args: argparse.Namespace, config: dict) -> int:
             print("No results found.")
             return 0
 
-        print(f"\nTop {len(rows)} result(s) for: \"{args.query}\"\n")
+        print(f'\nTop {len(rows)} result(s) for: "{args.query}"\n')
         print("-" * 72)
 
         for rank, row in enumerate(rows, start=1):
@@ -220,9 +205,7 @@ def cmd_retrieve(args: argparse.Namespace, config: dict) -> int:
 
             title = row.get("title") or ""
             stmts = row.get("statements", [])
-            body = " / ".join(
-                f"{s['speaker']}: {s['text']}" for s in stmts[:2]
-            )
+            body = " / ".join(f"{s['speaker']}: {s['text']}" for s in stmts[:2])
             raw_preview = f"[{title}] {body}" if title else body
             preview = raw_preview[:160].replace("\n", " ")
             if len(raw_preview) > 160:
@@ -269,11 +252,7 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
     logger = logging.getLogger(__name__)
     try:
         memory = _build_memory_layer(config)
-        ollama = OllamaClient(
-            base_url=config["ollama_base_url"],
-            model=config["local_model_name"],
-            timeout=config["ollama_timeout"],
-        )
+        ollama = create_ollama_client(config)
 
         logger.info(f"Embedding query with model={config['embedding_model']}...")
         rows, _ = run_retrieval(memory, args.query, args.top_k, args.min_results, args.min_score)
@@ -284,7 +263,7 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
 
         if args.verbose:
             context_block = _build_context_block(rows)
-            print(f"\nContext excerpts for: \"{args.query}\"\n")
+            print(f'\nContext excerpts for: "{args.query}"\n')
             print("-" * 72)
             print(context_block)
             print("-" * 72)
@@ -292,14 +271,19 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
 
         logger.info(f"Generating answer with model={config['local_model_name']}...")
         answer, is_degraded, warning = generate_answer(
-            memory, ollama, args.query, rows,
-            config["prompts_dir"], config.get("user_name", ""), args.temperature
+            memory,
+            ollama,
+            args.query,
+            rows,
+            config["prompts_dir"],
+            config.get("user_name", ""),
+            args.temperature,
         )
 
         if is_degraded:
             logger.warning(f"Degraded response: {warning}")
 
-        print(f"\nAnswer to: \"{args.query}\"\n")
+        print(f'\nAnswer to: "{args.query}"\n')
         print("-" * 72)
         print(answer)
         print()
@@ -372,8 +356,7 @@ def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
     try:
         if args.force:
             segment_files = sorted(
-                f for f in segments_dir.glob("segment_*.json")
-                if f.name != "pending_tail.json"
+                f for f in segments_dir.glob("segment_*.json") if f.name != "pending_tail.json"
             )
             affected_segment_ids = []
             for sf in segment_files:
@@ -391,7 +374,7 @@ def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
                         p.unlink()
 
             if args.persist:
-                store = SummaryStore(db_path=config["db_path"])
+                store = create_summary_store(config)
                 store.delete_segment_summaries(args.conversation_id)
 
             logger.info(
@@ -399,11 +382,7 @@ def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
                 f"(range [{from_segment}, {'end' if to_segment is None else to_segment}])"
             )
 
-        ollama_client = OllamaClient(
-            model=config["local_model_name"],
-            base_url=config["ollama_base_url"],
-            timeout=config["ollama_timeout"],
-        )
+        ollama_client = create_ollama_client(config)
         summarizer = SegmentSummarizer(
             ollama_client=ollama_client,
             prompts_dir=config["prompts_dir"],
@@ -453,8 +432,10 @@ def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
             )
 
         print(f"\nSegment summarization complete for: {args.conversation_id}")
-        print(f"  Segments processed: {len(results)} ({new_count} new, "
-              f"{len(results) - new_count} from disk)")
+        print(
+            f"  Segments processed: {len(results)} ({new_count} new, "
+            f"{len(results) - new_count} from disk)"
+        )
         print(f"  Total latency     : {total_latency}ms")
         print(f"  Output directory  : {segment_summaries_dir}")
         return 0
@@ -502,28 +483,16 @@ def cmd_detect_topics(args: argparse.Namespace, config: dict) -> int:
                 for f in topic_summaries_dir.glob("topic_*"):
                     f.unlink()
             if args.persist:
-                store = SummaryStore(db_path=config["db_path"])
+                store = create_summary_store(config)
                 store.delete_topic_summaries(args.conversation_id)
-            logger.info(
-                f"--force: wiped existing topic summaries for {args.conversation_id}"
-            )
+            logger.info(f"--force: wiped existing topic summaries for {args.conversation_id}")
 
-        embedder = EmbeddingClient(
-            model=config["embedding_model"],
-            base_url=config["ollama_base_url"],
-        )
-        ollama_client = OllamaClient(
-            model=config["local_model_name"],
-            base_url=config["ollama_base_url"],
-            timeout=config["ollama_timeout"],
-        )
+        embedder = create_embedding_client(config)
+        ollama_client = create_ollama_client(config)
 
         vector_store: Optional[VectorStore] = None
         try:
-            vector_store = VectorStore(
-                host=config["qdrant_host"],
-                port=config["qdrant_port"],
-            )
+            vector_store = create_vector_store(config)
         except Exception:
             logger.info("Qdrant not reachable — will embed on the fly")
 
@@ -593,7 +562,7 @@ def cmd_detect_topics(args: argparse.Namespace, config: dict) -> int:
         for i, (_, data) in enumerate(results):
             first_sentence = (data.get("summary") or "").split(".")[0]
             seg_range = data.get("topic_segment_range", "?")
-            print(f"  Topic {i} ({seg_range}): \"{first_sentence}.\"")
+            print(f'  Topic {i} ({seg_range}): "{first_sentence}."')
         print(f"  Output directory  : {topic_summaries_dir}")
         return 0
 
@@ -643,7 +612,8 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
             )
             effective_from = from_segment
             effective_to = (
-                to_segment if to_segment is not None
+                to_segment
+                if to_segment is not None
                 else (max(all_seg_indices) if all_seg_indices else from_segment)
             )
             forced_indices = list(range(effective_from, effective_to + 1))
@@ -656,27 +626,20 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
                             p.unlink()
 
             if getattr(args, "persist", False):
-                store = SummaryStore(db_path=config["db_path"])
+                store = create_summary_store(config)
                 point_ids = store.delete_extracts(
                     args.conversation_id, segment_indices=forced_indices
                 )
                 if point_ids:
-                    try:
-                        vs = VectorStore(host=config["qdrant_host"], port=config["qdrant_port"])
-                        vs.delete_points(point_ids)
-                    except Exception:
-                        pass
+                    vs = create_vector_store(config)
+                    vs.delete_points(point_ids)
 
             logger.info(
                 f"--force: wiped extracts {effective_from}–{effective_to} "
                 f"for {args.conversation_id}"
             )
 
-        ollama_client = OllamaClient(
-            model=config["local_model_name"],
-            base_url=config["ollama_base_url"],
-            timeout=config["ollama_timeout"],
-        )
+        ollama_client = create_ollama_client(config)
         extractor = SegmentExtractor(
             ollama_client=ollama_client,
             prompts_dir=config["prompts_dir"],
@@ -701,7 +664,8 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
         new_count = sum(1 for _, d in results if not d.get("_from_disk"))
         skipped = [
             (d["segment_id"], d.get("warnings", []))
-            for _, d in results if d.get("status") == "skipped"
+            for _, d in results
+            if d.get("status") == "skipped"
         ]
 
         if getattr(args, "persist", False):
@@ -719,13 +683,14 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
                 memory.persist_extract_with_statements(output_data)
                 persisted += 1
             logger.info(
-                f"Persisted {persisted} extracts "
-                f"({len(results) - persisted} already existed)"
+                f"Persisted {persisted} extracts " f"({len(results) - persisted} already existed)"
             )
 
         print(f"\nExtraction complete for: {args.conversation_id}")
-        print(f"  Segments processed: {len(results)} ({new_count} new, "
-              f"{len(results) - new_count} from disk)")
+        print(
+            f"  Segments processed: {len(results)} ({new_count} new, "
+            f"{len(results) - new_count} from disk)"
+        )
         if skipped:
             print(f"  Skipped           : {len(skipped)}")
             for seg_id, warnings in skipped:
@@ -761,8 +726,7 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
 
     if not extract_dir.exists():
         logger.error(
-            f"Extracts directory not found: {extract_dir}. "
-            "Run 'extract-segments' first."
+            f"Extracts directory not found: {extract_dir}. " "Run 'extract-segments' first."
         )
         return 1
 
@@ -770,28 +734,20 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
 
     try:
         if args.force:
-            store = SummaryStore(db_path=config["db_path"])
+            store = create_summary_store(config)
             point_ids = store.delete_fragments(args.conversation_id)
             if point_ids:
-                try:
-                    vs = VectorStore(host=config["qdrant_host"], port=config["qdrant_port"])
-                    vs.delete_points(point_ids)
-                except Exception:
-                    pass
+                vs = create_vector_store(config)
+                vs.delete_points(point_ids)
             if fragment_dir.exists():
                 import shutil
+
                 for seg_dir in fragment_dir.glob("segment_*"):
                     if seg_dir.is_dir():
                         shutil.rmtree(seg_dir)
-            logger.info(
-                f"--force: wiped existing fragments for {args.conversation_id}"
-            )
+            logger.info(f"--force: wiped existing fragments for {args.conversation_id}")
 
-        ollama_client = OllamaClient(
-            model=config["local_model_name"],
-            base_url=config["ollama_base_url"],
-            timeout=config["ollama_timeout"],
-        )
+        ollama_client = create_ollama_client(config)
         fragmenter = Fragmenter(
             ollama_client=ollama_client,
             prompts_dir=config["prompts_dir"],
@@ -843,29 +799,22 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
                         # Try deterministic path first (statement_index present)
                         if isinstance(frag_stmts[0].get("statement_index"), int):
                             statement_ids = [
-                                f"{extract_id}_st{s['statement_index']:04d}"
-                                for s in frag_stmts
+                                f"{extract_id}_st{s['statement_index']:04d}" for s in frag_stmts
                             ]
                         else:
                             # Fall back: match by text against SQLite extract_statements
                             db_stmts = memory.store.get_statements_for_extract(extract_id)
                             text_to_id = {s["text"]: s["statement_id"] for s in db_stmts}
                             statement_ids = [
-                                text_to_id[s["text"]]
-                                for s in frag_stmts
-                                if s["text"] in text_to_id
+                                text_to_id[s["text"]] for s in frag_stmts if s["text"] in text_to_id
                             ]
                         if statement_ids:
                             memory.store.insert_fragment_links(fragment_id, statement_ids)
-                            logger.debug(
-                                f"Repaired {len(statement_ids)} links for {fragment_id}"
-                            )
+                            logger.debug(f"Repaired {len(statement_ids)} links for {fragment_id}")
 
                     # Check Qdrant status
                     if args.embed and not existing.get("qdrant_point_id"):
-                        logger.debug(
-                            f"Already in SQLite, indexing in Qdrant: {fragment_id}"
-                        )
+                        logger.debug(f"Already in SQLite, indexing in Qdrant: {fragment_id}")
                         memory.index_fragment_in_qdrant(
                             fragment_id=fragment_id, output_data=output_data
                         )
@@ -878,9 +827,7 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
                     output_data=output_data, extract_id=extract_id
                 )
                 if args.embed:
-                    memory.index_fragment_in_qdrant(
-                        fragment_id=frag_id, output_data=output_data
-                    )
+                    memory.index_fragment_in_qdrant(fragment_id=frag_id, output_data=output_data)
                 persisted += 1
 
             skipped_count = len(results) - persisted
@@ -929,11 +876,16 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--debug", action="store_true", default=False,
+        "--debug",
+        action="store_true",
+        default=False,
         help="Set log level to DEBUG for this run",
     )
     parser.add_argument(
-        "--retries", type=int, default=1, metavar="N",
+        "--retries",
+        type=int,
+        default=1,
+        metavar="N",
         help="Number of retries on LLM parse failure (default: 1, use 0 to fail fast)",
     )
     parser.add_argument(
@@ -948,18 +900,20 @@ def main() -> int:
     config_subparsers.add_parser("show", help="Validate and display resolved configuration")
 
     # -- summarize --------------------------------------------------------
-    summarize_parser = subparsers.add_parser(
-        "summarize", help="Summarize a conversation file"
-    )
+    summarize_parser = subparsers.add_parser("summarize", help="Summarize a conversation file")
     summarize_parser.add_argument(
         "--file", "-f", required=True, help="Path to input JSON conversation file"
     )
     summarize_parser.add_argument(
-        "--persist", action="store_true", default=False,
+        "--persist",
+        action="store_true",
+        default=False,
         help="(Deprecated no-op) Persistence will be re-added in a future commit.",
     )
     summarize_parser.add_argument(
-        "--force", action="store_true", default=False,
+        "--force",
+        action="store_true",
+        default=False,
         help="Wipe existing output files before re-running",
     )
 
@@ -971,15 +925,24 @@ def main() -> int:
         "--query", "-q", required=True, help="Natural-language search query"
     )
     retrieve_parser.add_argument(
-        "--top-k", type=int, default=10, dest="top_k",
+        "--top-k",
+        type=int,
+        default=10,
+        dest="top_k",
         help="Maximum number of results to return (default: 10)",
     )
     retrieve_parser.add_argument(
-        "--min-results", type=int, default=3, dest="min_results",
+        "--min-results",
+        type=int,
+        default=3,
+        dest="min_results",
         help="Minimum results to return regardless of score (default: 3)",
     )
     retrieve_parser.add_argument(
-        "--min-score", type=float, default=0.50, dest="min_score",
+        "--min-score",
+        type=float,
+        default=0.50,
+        dest="min_score",
         help="Score threshold — results above this are always included up to --top-k (default: 0.50)",  # noqa: E501
     )
 
@@ -989,23 +952,36 @@ def main() -> int:
     )
     answer_parser.add_argument("query", help="Natural-language question")
     answer_parser.add_argument(
-        "--top-k", type=int, default=10, dest="top_k",
+        "--top-k",
+        type=int,
+        default=10,
+        dest="top_k",
         help="Maximum number of context excerpts to retrieve (default: 10)",
     )
     answer_parser.add_argument(
-        "--min-results", type=int, default=3, dest="min_results",
+        "--min-results",
+        type=int,
+        default=3,
+        dest="min_results",
         help="Minimum excerpts to include regardless of score (default: 3)",
     )
     answer_parser.add_argument(
-        "--min-score", type=float, default=0.50, dest="min_score",
+        "--min-score",
+        type=float,
+        default=0.50,
+        dest="min_score",
         help="Score threshold for including additional excerpts (default: 0.50)",
     )
     answer_parser.add_argument(
-        "--temperature", type=float, default=0.3,
+        "--temperature",
+        type=float,
+        default=0.3,
         help="LLM sampling temperature (default: 0.3)",
     )
     answer_parser.add_argument(
-        "--verbose", action="store_true", default=False,
+        "--verbose",
+        action="store_true",
+        default=False,
         help="Print context excerpts before the answer",
     )
 
@@ -1022,11 +998,14 @@ def main() -> int:
         "--file", "-f", required=True, help="Path to raw ChatGPT export JSON"
     )
     ingest_chatgpt.add_argument(
-        "--output-dir", default="inbox/ai_chat/chatgpt",
+        "--output-dir",
+        default="inbox/ai_chat/chatgpt",
         help="Base output directory (default: inbox/ai_chat/chatgpt)",
     )
     ingest_chatgpt.add_argument(
-        "--persist", action="store_true", default=False,
+        "--persist",
+        action="store_true",
+        default=False,
         help="Persist source file metadata, conversation, and segments to SQLite",
     )
 
@@ -1040,31 +1019,48 @@ def main() -> int:
         "chatgpt", help="Summarize segments from a ChatGPT ingested conversation"
     )
     ss_chatgpt.add_argument(
-        "--conversation-id", required=True, dest="conversation_id",
+        "--conversation-id",
+        required=True,
+        dest="conversation_id",
         help="Conversation ID (subfolder name under --inbox-dir)",
     )
     ss_chatgpt.add_argument(
-        "--inbox-dir", default="inbox/ai_chat/chatgpt", dest="inbox_dir",
+        "--inbox-dir",
+        default="inbox/ai_chat/chatgpt",
+        dest="inbox_dir",
         help="Base inbox directory (default: inbox/ai_chat/chatgpt)",
     )
     ss_chatgpt.add_argument(
-        "--from-segment", type=int, default=None, dest="from_segment",
+        "--from-segment",
+        type=int,
+        default=None,
+        dest="from_segment",
         help="Start at this segment index, inclusive (default: 0)",
     )
     ss_chatgpt.add_argument(
-        "--to-segment", type=int, default=None, dest="to_segment",
+        "--to-segment",
+        type=int,
+        default=None,
+        dest="to_segment",
         help="Stop after this segment index, inclusive (default: last)",
     )
     ss_chatgpt.add_argument(
-        "--context-window", type=int, default=3, dest="context_window",
+        "--context-window",
+        type=int,
+        default=3,
+        dest="context_window",
         help="Number of prior segment summaries to pass as context (default: 3)",
     )
     ss_chatgpt.add_argument(
-        "--persist", action="store_true", default=False,
+        "--persist",
+        action="store_true",
+        default=False,
         help="Persist segment summaries to SQLite (no Qdrant indexing)",
     )
     ss_chatgpt.add_argument(
-        "--force", action="store_true", default=False,
+        "--force",
+        action="store_true",
+        default=False,
         help="Wipe existing files and DB records for the range before re-running",
     )
 
@@ -1078,27 +1074,40 @@ def main() -> int:
         "chatgpt", help="Detect topics from a ChatGPT ingested conversation"
     )
     dt_chatgpt.add_argument(
-        "--conversation-id", required=True, dest="conversation_id",
+        "--conversation-id",
+        required=True,
+        dest="conversation_id",
         help="Conversation ID (used to locate OUTPUTS/<id>/segment_summaries/)",
     )
     dt_chatgpt.add_argument(
-        "--inbox-dir", default="inbox/ai_chat/chatgpt", dest="inbox_dir",
+        "--inbox-dir",
+        default="inbox/ai_chat/chatgpt",
+        dest="inbox_dir",
         help="Base inbox directory (default: inbox/ai_chat/chatgpt)",
     )
     dt_chatgpt.add_argument(
-        "--threshold", type=float, default=0.55,
+        "--threshold",
+        type=float,
+        default=0.55,
         help="Cosine similarity drop threshold for topic boundaries (default: 0.55)",
     )
     dt_chatgpt.add_argument(
-        "--dry-run", action="store_true", default=False, dest="dry_run",
+        "--dry-run",
+        action="store_true",
+        default=False,
+        dest="dry_run",
         help="Detect boundaries only — skip LLM summarization",
     )
     dt_chatgpt.add_argument(
-        "--persist", action="store_true", default=False,
+        "--persist",
+        action="store_true",
+        default=False,
         help="Persist topic summaries to SQLite (no Qdrant indexing)",
     )
     dt_chatgpt.add_argument(
-        "--force", action="store_true", default=False,
+        "--force",
+        action="store_true",
+        default=False,
         help="Wipe existing topic files and DB records before re-running",
     )
 
@@ -1108,31 +1117,43 @@ def main() -> int:
     )
     es_sub = es_parser.add_subparsers(dest="source", help="Source platform")
 
-    es_chatgpt = es_sub.add_parser(
-        "chatgpt", help="Extract from a ChatGPT ingested conversation"
-    )
+    es_chatgpt = es_sub.add_parser("chatgpt", help="Extract from a ChatGPT ingested conversation")
     es_chatgpt.add_argument(
-        "--conversation-id", required=True, dest="conversation_id",
+        "--conversation-id",
+        required=True,
+        dest="conversation_id",
         help="Conversation ID (subfolder under --inbox-dir)",
     )
     es_chatgpt.add_argument(
-        "--inbox-dir", default="inbox/ai_chat/chatgpt", dest="inbox_dir",
+        "--inbox-dir",
+        default="inbox/ai_chat/chatgpt",
+        dest="inbox_dir",
         help="Base inbox directory (default: inbox/ai_chat/chatgpt)",
     )
     es_chatgpt.add_argument(
-        "--from-segment", type=int, default=None, dest="from_segment",
+        "--from-segment",
+        type=int,
+        default=None,
+        dest="from_segment",
         help="Start at this segment index, inclusive (default: 0)",
     )
     es_chatgpt.add_argument(
-        "--to-segment", type=int, default=None, dest="to_segment",
+        "--to-segment",
+        type=int,
+        default=None,
+        dest="to_segment",
         help="Stop after this segment index, inclusive (default: last)",
     )
     es_chatgpt.add_argument(
-        "--persist", action="store_true", default=False,
+        "--persist",
+        action="store_true",
+        default=False,
         help="Persist extracts and statements to SQLite",
     )
     es_chatgpt.add_argument(
-        "--force", action="store_true", default=False,
+        "--force",
+        action="store_true",
+        default=False,
         help="Wipe existing extract files before re-running",
     )
 
@@ -1146,39 +1167,49 @@ def main() -> int:
         "chatgpt", help="Fragment extracts from a ChatGPT ingested conversation"
     )
     fe_chatgpt.add_argument(
-        "--conversation-id", required=True, dest="conversation_id",
+        "--conversation-id",
+        required=True,
+        dest="conversation_id",
         help="Conversation ID",
     )
     fe_chatgpt.add_argument(
-        "--from-segment", type=int, default=None, dest="from_segment",
+        "--from-segment",
+        type=int,
+        default=None,
+        dest="from_segment",
         help="Start at this segment index, inclusive (default: 0)",
     )
     fe_chatgpt.add_argument(
-        "--to-segment", type=int, default=None, dest="to_segment",
+        "--to-segment",
+        type=int,
+        default=None,
+        dest="to_segment",
         help="Stop after this segment index, inclusive (default: last)",
     )
     fe_chatgpt.add_argument(
-        "--persist", action="store_true", default=False,
+        "--persist",
+        action="store_true",
+        default=False,
         help="Persist fragments and statement links to SQLite (source of truth). "
-             "Does not index Qdrant.",
+        "Does not index Qdrant.",
     )
     fe_chatgpt.add_argument(
-        "--embed", action="store_true", default=False,
+        "--embed",
+        action="store_true",
+        default=False,
         help="Embed and index persisted fragments in Qdrant. Requires --persist.",
     )
     fe_chatgpt.add_argument(
-        "--force", action="store_true", default=False,
+        "--force",
+        action="store_true",
+        default=False,
         help="Wipe existing fragment files and records before re-running",
     )
 
     # -- serve ------------------------------------------------------------
     serve_parser = subparsers.add_parser("serve", help="Launch the JARVIS web UI")
-    serve_parser.add_argument(
-        "--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)"
-    )
-    serve_parser.add_argument(
-        "--port", type=int, default=5000, help="Bind port (default: 5000)"
-    )
+    serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    serve_parser.add_argument("--port", type=int, default=5000, help="Bind port (default: 5000)")
     serve_parser.add_argument(
         "--debug", action="store_true", default=False, help="Enable Flask debug mode"
     )

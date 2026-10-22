@@ -22,6 +22,7 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 > Update this section at the end of any session where meaningful progress is made.
 
 ### Done
+- Profile Phase 2: profile-aware SQLite/Qdrant clients, centralized client factories, independent embedding Ollama endpoint, and optional remote Qdrant URL/API key. Existing v8 databases validate read-only; new databases keep v8. Non-personal runtime guards remain until pipeline/web isolation. Synthetic tests only; implementation awaits review before deployment or later phases.
 - Profile Phase 1: validated `profiles.yaml`, immutable resolved profile context, read-only `config show`, and temporary non-personal CLI/web runtime guards. Review fixes reserve database/sidecar file boundaries and preserve valid YAML merges while rejecting explicit duplicates. Later profile integration remains pending review.
 - Repo, CI/CD setup
 - ChatGPT export ingestion (normalize → segment)
@@ -43,7 +44,7 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 - Web UI retrieve + answer: Search page (semantic fragment retrieval with scores and links); Answer page (single-turn RAG with clickable citation traceability to fragment→extract→segment); synchronous; reuses `run_retrieval`/`generate_answer` helpers extracted from CLI
 
 ### Planned
-- Profile Phases 2–5: storage/v8 compatibility, pipeline isolation, separately reviewed cleanup fixes, and profile-bound web/jobs. Real-data deployment requires verified SQLite/Qdrant/source/artifact backups; do not use destructive rebuild workflows.
+- Profile Phases 3–5: pipeline isolation, separately reviewed cleanup fixes, and profile-bound web/jobs. Real-data deployment requires verified SQLite/Qdrant/source/artifact backups; do not use destructive rebuild workflows.
 - Token-budget retrieval: replace flat `--top-k` with `--max-context-tokens` to handle variable fragment sizes
 - `summarize` (single-file) `--persist`: wire standalone files through the same ingest→extract→fragment pipeline
 - TrueNAS deployment: migrate JARVIS services (Ollama, Qdrant, backend) to run on TrueNAS
@@ -77,7 +78,7 @@ Precedence: **CLI flag > ENV / `.env` > `config.yaml`**
 
 | Variable | Default | Notes |
 |---|---|---|
-| `JARVIS_PROFILE` | `personal` | Global `--profile` takes precedence; non-personal is inspection-only in Phase 1. See `docs/profiles.md`. |
+| `JARVIS_PROFILE` | `personal` | Global `--profile` takes precedence; non-personal workflows remain inspection-only in Phase 2. See `docs/profiles.md`. |
 | `JARVIS_PROVIDER` | `local` | `local` \| `openai` \| `benchmark` |
 | `LOCAL_MODEL_NAME` | `gemma4:31b` | Ollama model for inference |
 | `OPENAI_API_KEY` | — | Required only for `openai`/`benchmark`. Never commit. |
@@ -85,11 +86,14 @@ Precedence: **CLI flag > ENV / `.env` > `config.yaml`**
 | `JARVIS_OUTPUT_ROOT` | `OUTPUTS` | Root for all output artifacts |
 | `JARVIS_LOG_LEVEL` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` |
 | `JARVIS_PROMPTS_DIR` | `prompts` | Prompt template directory |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Shared by inference and embedding clients |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Inference endpoint; default endpoint for embeddings |
+| `EMBEDDING_OLLAMA_BASE_URL` | `OLLAMA_BASE_URL` | Optional independent embedding service |
 | `EMBEDDING_MODEL` | `qwen3-embedding` | Ollama embedding model |
 | `JARVIS_DB_PATH` | `data/jarvis.db` | SQLite database path |
 | `QDRANT_HOST` | `localhost` | Qdrant server host |
 | `QDRANT_PORT` | `6333` | Qdrant server port |
+| `QDRANT_URL` | — | Optional HTTP(S) endpoint; do not combine with environment host/port |
+| `QDRANT_API_KEY` | — | Optional credential; environment/.env only, never display or log |
 
 `.env` is gitignored. Use `.env.example` for placeholders.
 

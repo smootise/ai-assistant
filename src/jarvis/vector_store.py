@@ -6,12 +6,14 @@ full records are always reconstructed from SQLite by fragment_id.
 """
 
 import logging
+import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
+from jarvis.endpoints import validate_qdrant_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +23,34 @@ COLLECTION_NAME = "jarvis_fragments"
 class VectorStore:
     """Manages the Qdrant collection for fragment embeddings."""
 
-    def __init__(self, host: str = "localhost", port: int = 6333):
-        self._client = QdrantClient(host=host, port=port)
+    def __init__(
+        self,
+        host: str | None = None,
+        port: int | None = None,
+        collection_name: str = COLLECTION_NAME,
+        *,
+        url: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
+        validate_qdrant_endpoint(url, host, port)
+        if not isinstance(collection_name, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,254}", collection_name
+        ):
+            raise ValueError("Invalid Qdrant collection name")
+        self.collection_name = collection_name
         self._expected_dim: Optional[int] = None
-        self._load_existing_dim()
+        try:
+            if url:
+                self._client = QdrantClient(url=url, api_key=api_key)
+            else:
+                self._client = QdrantClient(
+                    host=host if host is not None else "localhost",
+                    port=port if port is not None else 6333,
+                    api_key=api_key,
+                )
+            self._load_existing_dim()
+        except Exception:
+            raise RuntimeError("Qdrant connection or collection lookup failed") from None
 
     # ------------------------------------------------------------------
     # Public API
@@ -62,7 +88,7 @@ class VectorStore:
 
         try:
             self._client.upsert(
-                collection_name=COLLECTION_NAME,
+                collection_name=self.collection_name,
                 points=[
                     qmodels.PointStruct(
                         id=point_id,
@@ -71,15 +97,13 @@ class VectorStore:
                     )
                 ],
             )
-        except Exception as e:
-            raise RuntimeError(f"Qdrant upsert failed: {e}") from e
+        except Exception:
+            raise RuntimeError("Qdrant upsert failed") from None
 
         logger.info(f"Upserted point {point_id} (fragment_id={fragment_id}, dim={dim})")
         return point_id
 
-    def search(
-        self, query_vector: List[float], top_k: int = 5
-    ) -> List[Tuple[str, float, str]]:
+    def search(self, query_vector: List[float], top_k: int = 5) -> List[Tuple[str, float, str]]:
         """Search for the top-k most similar fragments.
 
         Args:
@@ -98,21 +122,23 @@ class VectorStore:
 
         if not self._collection_exists():
             raise RuntimeError(
-                f"Qdrant collection '{COLLECTION_NAME}' does not exist. "
+                f"Qdrant collection '{self.collection_name}' does not exist. "
                 "Run fragment-extracts with --persist --embed first."
             )
 
+        if self._expected_dim is None:
+            self._load_existing_dim()
         self._validate_dimension(dim)
 
         try:
             results = self._client.query_points(
-                collection_name=COLLECTION_NAME,
+                collection_name=self.collection_name,
                 query=query_vector,
                 limit=top_k,
                 with_payload=True,
             )
-        except Exception as e:
-            raise RuntimeError(f"Qdrant search failed: {e}") from e
+        except Exception:
+            raise RuntimeError("Qdrant search failed") from None
 
         hits = []
         for hit in results.points:
@@ -129,52 +155,59 @@ class VectorStore:
             return
         try:
             self._client.delete(
-                collection_name=COLLECTION_NAME,
+                collection_name=self.collection_name,
                 points_selector=qmodels.PointIdsList(points=point_ids),
+                wait=True,
             )
             logger.info(f"Deleted {len(point_ids)} Qdrant points")
-        except Exception as e:
-            logger.warning(f"Qdrant delete failed: {e}")
+        except Exception:
+            raise RuntimeError("Qdrant delete failed") from None
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
     def _collection_exists(self) -> bool:
-        collections = self._client.get_collections().collections
-        return any(c.name == COLLECTION_NAME for c in collections)
+        try:
+            return self._client.collection_exists(collection_name=self.collection_name)
+        except Exception:
+            raise RuntimeError("Qdrant collection lookup failed") from None
 
     def _load_existing_dim(self) -> None:
         if not self._collection_exists():
             return
-        info = self._client.get_collection(COLLECTION_NAME)
-        self._expected_dim = info.config.params.vectors.size
+        try:
+            info = self._client.get_collection(collection_name=self.collection_name)
+            self._expected_dim = info.config.params.vectors.size
+        except Exception:
+            raise RuntimeError("Qdrant collection dimension lookup failed") from None
         logger.debug(
-            f"Loaded existing collection '{COLLECTION_NAME}' "
-            f"with dim={self._expected_dim}"
+            f"Loaded existing collection '{self.collection_name}' " f"with dim={self._expected_dim}"
         )
 
     def _ensure_collection(self, dim: int) -> None:
         if self._collection_exists():
+            if self._expected_dim is None:
+                self._load_existing_dim()
             return
 
         logger.info(
-            f"Creating Qdrant collection '{COLLECTION_NAME}' with dim={dim}, "
+            f"Creating Qdrant collection '{self.collection_name}' with dim={dim}, "
             "distance=Cosine"
         )
-        self._client.create_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config=qmodels.VectorParams(
-                size=dim,
-                distance=qmodels.Distance.COSINE,
-            ),
-        )
+        try:
+            self._client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=qmodels.VectorParams(size=dim, distance=qmodels.Distance.COSINE),
+            )
+        except Exception:
+            raise RuntimeError("Qdrant collection creation failed") from None
         self._expected_dim = dim
 
     def _validate_dimension(self, dim: int) -> None:
         if self._expected_dim is not None and dim != self._expected_dim:
             raise ValueError(
-                f"Vector dimension mismatch: collection '{COLLECTION_NAME}' expects "
+                f"Vector dimension mismatch: collection '{self.collection_name}' expects "
                 f"{self._expected_dim} dimensions but received {dim}. "
                 f"Are you using the same embedding model that created the collection?"
             )

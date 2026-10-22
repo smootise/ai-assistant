@@ -7,7 +7,7 @@ local-first: all inference, embeddings, and storage run on your own machine.
 
 ```
 Raw sources                       Ollama (inference + embedding)
-  ChatGPT exports   ──ingest──▶  Segments ──summarize──▶  SQLite (relational, v7)
+  ChatGPT exports   ──ingest──▶  Segments ──summarize──▶  SQLite (relational, v8)
   Notion (planned)     ──extract-segments──▶  Statements       │
   Slack (planned)         ──fragment-extracts──▶  Fragments ──▶ Qdrant (fragment vectors)
                                                                 │
@@ -18,9 +18,9 @@ Raw sources                       Ollama (inference + embedding)
 
 ## Storage Layers
 
-Profile configuration and read-only inspection are available in Phase 1. Personal retains its
-existing resources; non-personal processing and serving remain blocked pending storage/pipeline
-integration. See [Profiles](profiles.md) for the registry, validation rules, and mandatory
+Profile-aware storage clients and centralized construction are available in Phase 2. Personal
+retains its existing resources; non-personal processing and serving remain blocked pending
+pipeline/web isolation. See [Profiles](profiles.md) for the registry, validation rules, and mandatory
 backup/compatibility checkpoint before real-data deployment. No SQLite schema change is included.
 
 Three layers, each with a distinct role:
@@ -34,6 +34,11 @@ Three layers, each with a distinct role:
 **Key principle:** Qdrant stores only the vector and a small payload (`fragment_id`, `parent_conversation_id`, `segment_id`, `conversation_date`). Full records are always fetched from SQLite by ID via `get_fragments_with_statements`. Never treat Qdrant as the source of truth.
 
 ---
+
+All application client construction goes through `jarvis.clients` using the resolved configuration.
+Each SQLite client uses its profile's database path; each Qdrant client uses its profile's collection.
+Personal remains `jarvis_fragments`; mom is `jarvis_mom_fragments`. Collections are created lazily
+only when absent and are never automatically reset. Point IDs and payloads are unchanged.
 
 ## Data Flow
 
@@ -99,6 +104,12 @@ the Qdrant retrieval vectors. Qdrant is fragment-only — segment and topic summ
 
 Ollama is required for every pipeline run. Qdrant is only required for `fragment-extracts --embed` and `retrieve`/`answer`.
 
+Inference uses `OLLAMA_BASE_URL`. Embeddings use `EMBEDDING_OLLAMA_BASE_URL` when provided,
+otherwise the inference endpoint. This supports desktop inference and a separate TrueNAS embedding
+service without changing the embedding model or existing vectors. Qdrant can use an HTTP(S)
+`QDRANT_URL` plus optional `QDRANT_API_KEY`, or the existing host/port configuration. See
+[Profiles](profiles.md#phase-2-storage-and-service-construction) for validation and precedence.
+
 ---
 
 ## Models in Use
@@ -113,8 +124,11 @@ Ollama is required for every pipeline run. Qdrant is only required for `fragment
 ## SQLite Schema
 
 The database lives at `data/jarvis.db` (configurable via `JARVIS_DB_PATH`). Current schema
-version: **8**. Schema is applied fresh on startup — no migrations from prior versions (wipe
-and rebuild).
+version: **8**. Only a genuinely missing database file is initialized. Existing databases are
+validated through a read-only connection without changing their schema, metadata, or journal mode.
+Required structures are checked against an in-memory v8 reference; harmless additional objects
+are tolerated. Incompatible or incomplete files fail unchanged. There are no migrations or
+automatic rebuilds.
 
 Table hierarchy (each table has a deterministic `*_id` primary key):
 

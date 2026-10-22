@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from jarvis.ingest.pipeline import ingest_chatgpt
-from jarvis.store import SummaryStore
+from jarvis.clients import create_summary_store
 
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ def run_ingest_job(job_id: str, raw_path: Path, config: Dict[str, Any]) -> None:
     Called from a daemon thread spawned by the upload route. Opens its own
     SQLite connection so it does not share state with the request thread.
     """
-    store = SummaryStore(db_path=config["db_path"])
+    store = create_summary_store(config)
     store.mark_job_running(job_id)
     logger.info(f"Job {job_id}: starting ingest for {raw_path}")
 

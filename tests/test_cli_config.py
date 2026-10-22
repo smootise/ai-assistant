@@ -20,10 +20,10 @@ def test_config_show_has_no_storage_or_service_side_effects(
     monkeypatch.setattr(sys, "argv", ["jarvis", "--profile", "mom", "config", "show"])
     with ExitStack() as stack:
         for target in (
-            "jarvis.cli.SummaryStore",
-            "jarvis.cli.VectorStore",
-            "jarvis.cli.OllamaClient",
-            "jarvis.cli.EmbeddingClient",
+            "jarvis.clients.SummaryStore",
+            "jarvis.clients.VectorStore",
+            "jarvis.clients.OllamaClient",
+            "jarvis.clients.EmbeddingClient",
             "jarvis.cli._build_memory_layer",
             "jarvis.web.app.create_app",
             "requests.sessions.Session.request",
@@ -127,10 +127,10 @@ def test_reserved_file_conflict_fails_before_storage_or_client_creation(
     monkeypatch.setattr(sys, "argv", ["jarvis", *arguments])
     with ExitStack() as stack:
         for target in (
-            "jarvis.cli.SummaryStore",
-            "jarvis.cli.VectorStore",
-            "jarvis.cli.OllamaClient",
-            "jarvis.cli.EmbeddingClient",
+            "jarvis.clients.SummaryStore",
+            "jarvis.clients.VectorStore",
+            "jarvis.clients.OllamaClient",
+            "jarvis.clients.EmbeddingClient",
             "jarvis.cli.cmd_serve",
             "jarvis.web.app.create_app",
             "requests.sessions.Session.request",

@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from jarvis.store import SummaryStore
 from jarvis.cli import build_memory_layer, run_retrieval, generate_answer
-from jarvis.ollama import OllamaClient
+from jarvis.clients import create_ollama_client
 
 
 logger = logging.getLogger(__name__)
@@ -185,11 +185,7 @@ def run_answer(
     ]
 
     try:
-        ollama = OllamaClient(
-            base_url=config["ollama_base_url"],
-            model=config["local_model_name"],
-            timeout=config["ollama_timeout"],
-        )
+        ollama = create_ollama_client(config)
         answer, is_degraded, warning = generate_answer(
             memory, ollama, query, rows,
             config["prompts_dir"], config.get("user_name", ""), temperature

@@ -118,8 +118,8 @@ def ingest_chatgpt(
             for seg in result["segments"]:
                 memory.persist_segment(seg)
         else:
-            from jarvis.store import SummaryStore
-            _store = store if store is not None else SummaryStore(db_path=config["db_path"])
+            from jarvis.clients import create_summary_store
+            _store = store if store is not None else create_summary_store(config)
             _store.insert_source_file(raw_file_data)
             _store.insert_source_file(norm_file_data)
             _store.insert_conversation(conv_data)

@@ -279,7 +279,12 @@ Raw block content (code, prompts, etc.) is never included in the retrieval text.
 
 **Idempotency:** if a fragment row already exists and has a `qdrant_point_id`, it is skipped entirely. If it exists but has no `qdrant_point_id` and `--embed` is set, only the Qdrant indexing step runs (no duplicate insert).
 
-**Qdrant collection:** `jarvis_fragments`. Payload per point: `{fragment_id, parent_conversation_id, segment_id, conversation_date}`. Full fragment records are always fetched from SQLite.
+**Qdrant collection:** selected by the resolved profile (`jarvis_fragments` for personal,
+`jarvis_mom_fragments` for mom). Non-personal pipeline workflows remain guarded during Phase 2.
+Payload per point: `{fragment_id, parent_conversation_id, segment_id, conversation_date}`.
+Full fragment records are always fetched from SQLite. Embeddings use
+`EMBEDDING_OLLAMA_BASE_URL` when set, otherwise `OLLAMA_BASE_URL`; the model and existing
+vectors are unchanged. See [Profiles](profiles.md) for service configuration and rollout limits.
 
 ---
 

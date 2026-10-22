@@ -152,9 +152,9 @@ Once fragments are embedded in Qdrant:
 
 > **Note:** Requires Qdrant to be running and fragments to be embedded (`fragment-extracts --embed`).
 
-> **Note:** If you are upgrading from schema v7, delete `data/jarvis.db` once before
-> starting the server — schema v8 adds the `jobs` table. Re-run `--persist` steps to
-> rebuild the DB from your existing disk artifacts (all operations are idempotent).
+> **Note:** The server requires a compatible schema v8 database, including `jobs`.
+> Older or incomplete databases fail unchanged. Do not delete or rebuild existing data;
+> any future upgrade requires a separately approved backup and migration plan.
 
 ---
 
@@ -364,7 +364,8 @@ python -m jarvis.cli config show
 python -m jarvis.cli --profile mom config show
 ```
 
-Profiles are registered in `profiles.yaml`. Phase 1 supports **inspection only** for `mom`
+Profiles are registered in `profiles.yaml`. Phase 2 adds profile-aware storage clients;
+application workflows still support **inspection only** for `mom`
 and other non-personal profiles; processing and serving remain personal-only. Personal's
 existing database, collection, inbox, outputs, and environment overrides remain in place.
 Configuration paths resolve against the repository root, independently of the working directory.
@@ -380,11 +381,34 @@ checkpoint before deployment against existing personal data.
 | `OPENAI_MODEL` | `gpt-4o-mini` | Cloud model name |
 | `JARVIS_OUTPUT_ROOT` | `OUTPUTS` | Personal profile's root directory for output artifacts |
 | `JARVIS_LOG_LEVEL` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama inference server URL |
+| `EMBEDDING_OLLAMA_BASE_URL` | `OLLAMA_BASE_URL` | Optional independent Ollama embedding endpoint |
 | `EMBEDDING_MODEL` | `qwen3-embedding` | Ollama embedding model |
 | `JARVIS_DB_PATH` | `data/jarvis.db` | Personal profile's SQLite database path |
 | `QDRANT_HOST` | `localhost` | Qdrant server host |
 | `QDRANT_PORT` | `6333` | Qdrant server port |
+| `QDRANT_URL` | — | Optional HTTP(S) URL; omit environment host/port when using it |
+| `QDRANT_API_KEY` | — | Optional Qdrant credential; environment or untracked `.env` only |
+
+For distributed services, inference can stay on the desktop while embeddings run on TrueNAS:
+
+```dotenv
+OLLAMA_BASE_URL=http://desktop:11434
+EMBEDDING_OLLAMA_BASE_URL=http://truenas:11434
+QDRANT_URL=https://qdrant.example:6333
+```
+
+Keep `EMBEDDING_MODEL=qwen3-embedding` and use the same model on the embedding server.
+Changing endpoints does not migrate collections or re-embed data. `QDRANT_URL` accepts
+HTTP/HTTPS (including a reverse-proxy path), rejects embedded credentials, queries and
+fragments, and overrides YAML host/port defaults. Remove `QDRANT_HOST` and `QDRANT_PORT`
+from your environment/`.env` when setting it; supplying both modes is a configuration error.
+Within YAML, choose either `qdrant_url` or `qdrant_host`/`qdrant_port`. API keys are omitted
+from `config show`; Qdrant service errors do not include raw remote responses.
+
+Existing SQLite v8 databases are validated read-only when opened. Only a missing database
+file is initialized. Unsupported, empty, or incomplete existing databases fail unchanged;
+there are no schema migrations or automatic rebuilds.
 
 ---
 
@@ -422,7 +446,7 @@ inbox/ai_chat/chatgpt/
       ...
 
 data/
-  jarvis.db                        # SQLite — relational source of truth (schema v7)
+  jarvis.db                        # SQLite — relational source of truth (schema v8)
                                    # Tables: source_files, conversations, segments,
                                    #   segment_summaries, extracts, extract_statements,
                                    #   fragments, fragment_statement_links,

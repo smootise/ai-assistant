@@ -11,6 +11,8 @@ and non-obvious design decisions that must not be re-litigated without good reas
 |---|---|
 | `cli.py` | Entry point for all CLI commands. Wires config → clients → domain logic. |
 | `config.py` | Reads ENV + config.yaml + profiles.yaml without environment mutation; returns the effective config dict. |
+| `clients.py` | Shared SQLite, Qdrant, embedding, inference, and memory factories; accepts resolved configuration without reloading it. |
+| `endpoints.py` | Shared validation for remote Qdrant URLs and legacy host/port endpoints. |
 | `profiles.py` | Frozen profile context, read-only storage validation, temporary personal-only runtime guard. |
 | `ollama.py` | `OllamaClient` — inference via Ollama HTTP API. |
 | `embedder.py` | `EmbeddingClient` — embeddings via Ollama. `build_embedding_text()` for retrieval. |
@@ -63,10 +65,18 @@ in the main pipeline flows. Do not reintroduce timestamps without explicit discu
 
 Two stores, distinct roles:
 
-- **SQLite (`SummaryStore`)** — relational source of truth for all pipeline records. Schema v7. Ten tables: `source_files`, `conversations`, `segments`, `segment_summaries`, `extracts`, `extract_statements`, `fragments`, `fragment_statement_links`, `topic_summaries`, `topic_segments`. Always query SQLite for full records.
-- **Qdrant (`VectorStore`)** — fragment vector index only. Collection: `jarvis_fragments`. Payload per point: `{fragment_id, parent_conversation_id, segment_id, conversation_date}`. Full records fetched from SQLite by `fragment_id` via `store.get_fragments_with_statements()`.
+- **SQLite (`SummaryStore`)** — relational source of truth for all pipeline records. Schema v8: the ten entity tables plus `jobs` and `_jarvis_meta`. Always query SQLite for full records. Database paths come from the resolved profile.
+- **Qdrant (`VectorStore`)** — fragment vector index only. Collection comes from the resolved profile: personal `jarvis_fragments`, mom `jarvis_mom_fragments`. Payload per point: `{fragment_id, parent_conversation_id, segment_id, conversation_date}`. Full records fetched from SQLite by `fragment_id` via `store.get_fragments_with_statements()`.
 
-Schema changes require a version bump in `_SCHEMA_VERSION` (currently `7`) — no migration path, DB is wiped and rebuilt. All `INSERT OR IGNORE` operations use deterministic IDs, so rebuilding from existing disk artifacts (with `--persist` flags) is idempotent.
+Phase 2 preserves `_SCHEMA_VERSION = 8` and the DDL. Existing databases validate read-only without
+DDL, metadata writes, or journal-mode changes on the existing file. Only a genuinely new file is
+initialized. Unsupported or incomplete schemas fail unchanged. Never wipe/rebuild databases or
+recreate existing collections automatically. All `INSERT OR IGNORE` operations retain their IDs.
+
+Use `jarvis.clients` for application client construction. Embeddings use
+`embedding_ollama_base_url` (fallback `ollama_base_url`); inference uses `ollama_base_url`.
+Qdrant supports optional `qdrant_url`/`qdrant_api_key`, with legacy host/port when URL is absent.
+Never include raw Qdrant errors or API keys in logs, configuration display, or job errors.
 
 ---
 
