@@ -5,7 +5,6 @@ without subprocess. The CLI thin-shell still exists; this module owns
 all business logic.
 """
 
-import hashlib
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -18,17 +17,17 @@ from jarvis.ingest.normalizer import (
     save_normalized,
 )
 from jarvis.ingest.segmenter import save_segments, segment_conversation
-
+from jarvis.paths import (
+    PathBoundaryError,
+    ProfilePaths,
+    confined,
+    identifier,
+    sha256_file,
+    validate_record,
+    validate_tree,
+)
 
 logger = logging.getLogger(__name__)
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def source_file_data(path: Path, source_kind: str) -> Dict[str, Any]:
@@ -56,16 +55,21 @@ def ingest_chatgpt(
     Returns a dict: {conversation_id, source_file_id, segment_count, normalized_path}.
     Raises ValueError on parse errors, FileNotFoundError if raw_path is missing.
     """
+    paths = ProfilePaths.from_config(config)
+    raw_path = paths.source(raw_path)
+    output_dir = paths.inbox(output_dir)
     if not raw_path.exists():
         raise FileNotFoundError(f"Raw export file not found: {raw_path}")
 
     logger.info(f"Loading raw export: {raw_path}")
     raw = load_raw_export(str(raw_path))
+    conversation_id = identifier(raw.get("conversation_id", raw_path.stem), "conversation_id")
+    conv_dir = paths.conversation(conversation_id, output_dir)
+    validate_tree(paths.context.inbox_root, conv_dir, conversation_id)
+    source_file_id = sha256_file(raw_path)
     messages = parse_export(raw)
     logger.info(f"Parsed {len(messages)} visible messages")
 
-    conversation_id = raw.get("conversation_id", raw_path.stem)
-    conv_dir = output_dir / conversation_id
     norm_path = conv_dir / "normalized.json"
 
     existing = load_normalized(norm_path)
@@ -76,18 +80,35 @@ def ingest_chatgpt(
         logger.info("No existing normalized file — building fresh")
         normalized = build_normalized(raw, messages, str(raw_path))
 
-    save_normalized(normalized, norm_path)
+    normalized["raw_export_path"] = str(raw_path)
+    normalized["raw_export_sha256"] = source_file_id
+    provenance = normalized.setdefault("source_provenance", [])
+    if not isinstance(provenance, list):
+        raise ValueError("Invalid source provenance in normalized conversation")
+    source = {"original_path": str(raw_path), "sha256": source_file_id}
+    if source not in provenance:
+        provenance.append(source)
+    validate_record(normalized, conversation_id)
 
     segments_dir = conv_dir / "segments"
     result = segment_conversation(normalized)
+    validate_record(result, conversation_id)
+    targets = [norm_path, conv_dir / "segment_manifest.json"]
+    targets.extend(
+        segments_dir / f"segment_{segment['segment_index']:03d}.json"
+        for segment in result["segments"]
+    )
+    if result["pending_tail"]:
+        targets.append(segments_dir / "pending_tail.json")
+    if raw_path in [confined(paths.context.inbox_root, path) for path in targets]:
+        raise PathBoundaryError(f"Source overlaps generated artifacts: {raw_path}")
+    save_normalized(normalized, norm_path)
     save_segments(
         segments=result["segments"],
         pending_tail=result["pending_tail"],
         manifest_meta=result["manifest_meta"],
         output_dir=segments_dir,
     )
-
-    source_file_id = sha256_file(raw_path)
 
     if persist:
         # Ingest only needs SQLite — Qdrant is never touched here.
@@ -119,6 +140,7 @@ def ingest_chatgpt(
                 memory.persist_segment(seg)
         else:
             from jarvis.clients import create_summary_store
+
             _store = store if store is not None else create_summary_store(config)
             _store.insert_source_file(raw_file_data)
             _store.insert_source_file(norm_file_data)

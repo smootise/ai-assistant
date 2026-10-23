@@ -187,7 +187,7 @@ python -m jarvis.cli ingest chatgpt --file <path-to-export.json> --persist
 | Flag | Default | Description |
 |---|---|---|
 | `--file` | *(required)* | Path to the raw ChatGPT export JSON |
-| `--output-dir` | `inbox/ai_chat/chatgpt` | Where to write normalized output |
+| `--output-dir` | Active profile's ChatGPT inbox | Destination inside the active inbox root |
 | `--persist` | off | Write source file metadata, conversation, and segment rows to SQLite |
 
 Re-running on an updated export is safe — existing messages are never duplicated. Re-running with `--persist` is idempotent (same SHA-256 → same row, no duplicates).
@@ -209,7 +209,7 @@ python -m jarvis.cli summarize-segments chatgpt --conversation-id <id> --persist
 | Flag | Default | Description |
 |---|---|---|
 | `--conversation-id` | *(required)* | Conversation ID (subfolder under `--inbox-dir`) |
-| `--inbox-dir` | `inbox/ai_chat/chatgpt` | Base inbox directory |
+| `--inbox-dir` | Active profile's ChatGPT inbox | Source directory inside the active inbox root |
 | `--from-segment` | `0` | Start segment index (inclusive) |
 | `--to-segment` | last | End segment index (inclusive) |
 | `--context-window` | `3` | Prior segment summaries passed as rolling context |
@@ -265,7 +265,7 @@ python -m jarvis.cli extract-segments chatgpt --conversation-id <id> --persist
 | Flag | Default | Description |
 |---|---|---|
 | `--conversation-id` | *(required)* | Conversation ID |
-| `--inbox-dir` | `inbox/ai_chat/chatgpt` | Base inbox directory |
+| `--inbox-dir` | Active profile's ChatGPT inbox | Source directory inside the active inbox root |
 | `--from-segment` | `0` | Start at this segment index, inclusive |
 | `--to-segment` | last | Stop after this segment index, inclusive |
 | `--persist` | off | Write extract and statement rows to SQLite (`extracts`, `extract_statements` tables) |
@@ -364,11 +364,19 @@ python -m jarvis.cli config show
 python -m jarvis.cli --profile mom config show
 ```
 
-Profiles are registered in `profiles.yaml`. Phase 2 adds profile-aware storage clients;
+Profiles are registered in `profiles.yaml`. Phase 3 Commit 1 adds profile-aware CLI filesystem
+routing and validation to the Phase 2 storage clients;
 application workflows still support **inspection only** for `mom`
 and other non-personal profiles; processing and serving remain personal-only. Personal's
 existing database, collection, inbox, outputs, and environment overrides remain in place.
 Configuration paths resolve against the repository root, independently of the working directory.
+CLI directory defaults now come from the selected profile. Explicit `--inbox-dir` and ingestion
+`--output-dir` overrides must stay inside its inbox root; relative overrides retain their existing
+working-directory interpretation. Generated artifacts stay in the profile's output root. Unsafe
+identifiers, traversal, cross-profile sources, and resolved symlink/junction escapes are rejected.
+Explicit external source files remain read-only; normalized data records their original absolute
+path and SHA-256, so later processing does not need the source. `retrieve` and `answer` require an
+existing compatible database and never initialize missing storage or collections.
 See [Profiles](docs/profiles.md) for validation rules, limitations, and the mandatory backup
 checkpoint before deployment against existing personal data.
 

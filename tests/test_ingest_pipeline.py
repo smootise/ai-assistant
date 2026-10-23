@@ -8,7 +8,6 @@ import pytest
 
 from jarvis.ingest.pipeline import ingest_chatgpt, sha256_file, source_file_data
 
-
 FIXTURE = Path(__file__).parent / "fixtures" / "chatgpt_tiny.json"
 
 
@@ -35,7 +34,7 @@ def test_ingest_chatgpt_no_persist(tmp_path):
         raw_path=FIXTURE,
         output_dir=tmp_path,
         persist=False,
-        config={},
+        config={"inbox_root": str(tmp_path)},
     )
     assert result["conversation_id"] == "conv_test_tiny"
     assert result["segment_count"] >= 1
@@ -53,12 +52,13 @@ def test_ingest_chatgpt_missing_file(tmp_path):
             raw_path=tmp_path / "nonexistent.json",
             output_dir=tmp_path,
             persist=False,
-            config={},
+            config={"inbox_root": str(tmp_path)},
         )
 
 
 def test_ingest_chatgpt_persist(tmp_path):
     config = {
+        "inbox_root": str(tmp_path),
         "db_path": str(tmp_path / "test.db"),
         "qdrant_host": "localhost",
         "qdrant_port": 6333,

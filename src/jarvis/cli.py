@@ -1,10 +1,13 @@
 """CLI entry point for JARVIS."""
 
 import argparse
+import copy
 import json
 import logging
 import sys
+from functools import wraps
 from pathlib import Path
+from typing import Callable
 
 from jarvis.segment_summarizer import SegmentSummarizer
 from jarvis.memory import MemoryLayer
@@ -23,6 +26,8 @@ from jarvis.topic_detector import TopicDetector
 from jarvis.ingest.pipeline import ingest_chatgpt
 from jarvis.output_writer import OutputWriter
 from jarvis.ollama import OllamaClient
+from jarvis.store import DatabaseCompatibilityError
+from jarvis.paths import PathBoundaryError, ProfilePaths, identifier, validate_tree
 from jarvis.summarizer import ConversationSummarizer
 
 
@@ -37,8 +42,62 @@ def setup_logging(log_level: str) -> None:
 
 # Public alias — usable by the web layer without importing a private name
 build_memory_layer = _build_memory_layer
+CommandHandler = Callable[[argparse.Namespace, dict], int]
 
 
+def profile_routed(command: str) -> Callable[[CommandHandler], CommandHandler]:
+    def decorate(handler: CommandHandler) -> CommandHandler:
+        @wraps(handler)
+        def routed(args: argparse.Namespace, config: dict) -> int:
+            try:
+                paths = ProfilePaths.from_config(config)
+                args = copy.copy(args)
+                config = dict(config)
+                config["output_root"] = str(paths.context.output_root)
+                if "profile_context" in config:
+                    config.update(
+                        db_path=str(paths.context.db_path),
+                        qdrant_collection=paths.context.qdrant_collection,
+                    )
+                if command in {"summarize", "ingest"}:
+                    args.file = str(paths.source(args.file))
+                if command == "summarize":
+                    basename = identifier(Path(args.file).stem, "source basename")
+                    validate_tree(paths.context.output_root, paths.output(basename))
+                    if Path(args.file) == paths.output(basename, f"{basename}.json"):
+                        raise PathBoundaryError(f"Source overlaps generated output: {args.file}")
+                elif command == "ingest":
+                    args.output_dir = str(paths.inbox(getattr(args, "output_dir", None)))
+                elif command not in {"retrieve", "answer"}:
+                    conv_id = identifier(args.conversation_id, "conversation_id")
+                    args.inbox_dir = str(paths.inbox(getattr(args, "inbox_dir", None)))
+                    validate_tree(
+                        paths.context.inbox_root,
+                        paths.conversation(conv_id, args.inbox_dir),
+                        conv_id,
+                    )
+                    validate_tree(paths.context.output_root, paths.output(conv_id), conv_id)
+                    if (
+                        command == "fragment-extracts"
+                        and getattr(args, "force", False)
+                        and not getattr(args, "persist", False)
+                        and not paths.context.db_path.is_file()
+                    ):
+                        raise PathBoundaryError(
+                            "Legacy fragment --force cleanup requires an initialized database; "
+                            "no database was created"
+                        )
+                return handler(args, config)
+            except (ValueError, OSError) as exc:
+                logging.getLogger(__name__).error("Invalid managed path or artifact: %s", exc)
+                return 1
+
+        return routed
+
+    return decorate
+
+
+@profile_routed("summarize")
 def cmd_summarize(args: argparse.Namespace, config: dict) -> int:
     """Execute the summarize command."""
     logger = logging.getLogger(__name__)
@@ -179,12 +238,13 @@ def generate_answer(
     return answer, is_degraded, warning
 
 
+@profile_routed("retrieve")
 def cmd_retrieve(args: argparse.Namespace, config: dict) -> int:
     """Execute the retrieve command."""
     logger = logging.getLogger(__name__)
 
     try:
-        memory = _build_memory_layer(config)
+        memory = _build_memory_layer(config, read_only=True)
         logger.info(f"Embedding query with model={config['embedding_model']}...")
         rows, scores = run_retrieval(
             memory, args.query, args.top_k, args.min_results, args.min_score
@@ -217,6 +277,9 @@ def cmd_retrieve(args: argparse.Namespace, config: dict) -> int:
 
         return 0
 
+    except DatabaseCompatibilityError as e:
+        logger.error("%s", e)
+        return 1
     except ConnectionError as e:
         logger.error(f"Connection error: {e}")
         return 1
@@ -245,11 +308,12 @@ def _build_context_block(rows: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
+@profile_routed("answer")
 def cmd_answer(args: argparse.Namespace, config: dict) -> int:
     """Execute the answer command."""
     logger = logging.getLogger(__name__)
     try:
-        memory = _build_memory_layer(config)
+        memory = _build_memory_layer(config, read_only=True)
         ollama = create_ollama_client(config)
 
         logger.info(f"Embedding query with model={config['embedding_model']}...")
@@ -287,6 +351,9 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
         print()
         return 0
 
+    except DatabaseCompatibilityError as e:
+        logger.error("%s", e)
+        return 1
     except ConnectionError as e:
         logger.error(f"Connection error: {e}")
         return 1
@@ -298,6 +365,7 @@ def cmd_answer(args: argparse.Namespace, config: dict) -> int:
         return 1
 
 
+@profile_routed("ingest")
 def cmd_ingest(args: argparse.Namespace, config: dict) -> int:
     """Execute the ingest command."""
     logger = logging.getLogger(__name__)
@@ -331,6 +399,7 @@ def cmd_ingest(args: argparse.Namespace, config: dict) -> int:
         return 1
 
 
+@profile_routed("summarize-segments")
 def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
     """Execute the summarize-segments command."""
     logger = logging.getLogger(__name__)
@@ -455,6 +524,7 @@ def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
         return 1
 
 
+@profile_routed("detect-topics")
 def cmd_detect_topics(args: argparse.Namespace, config: dict) -> int:
     """Execute the detect-topics command."""
     logger = logging.getLogger(__name__)
@@ -574,6 +644,7 @@ def cmd_detect_topics(args: argparse.Namespace, config: dict) -> int:
         return 1
 
 
+@profile_routed("extract-segments")
 def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
     """Execute the extract-segments command."""
     logger = logging.getLogger(__name__)
@@ -704,6 +775,7 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
         return 1
 
 
+@profile_routed("fragment-extracts")
 def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
     """Execute the fragment-extracts command."""
     logger = logging.getLogger(__name__)
@@ -990,8 +1062,8 @@ def main() -> int:
     )
     ingest_chatgpt.add_argument(
         "--output-dir",
-        default="inbox/ai_chat/chatgpt",
-        help="Base output directory (default: inbox/ai_chat/chatgpt)",
+        default=None,
+        help="Base output directory (default: active profile's ChatGPT inbox)",
     )
     ingest_chatgpt.add_argument(
         "--persist",
@@ -1017,9 +1089,9 @@ def main() -> int:
     )
     ss_chatgpt.add_argument(
         "--inbox-dir",
-        default="inbox/ai_chat/chatgpt",
+        default=None,
         dest="inbox_dir",
-        help="Base inbox directory (default: inbox/ai_chat/chatgpt)",
+        help="Base inbox directory (default: active profile's ChatGPT inbox)",
     )
     ss_chatgpt.add_argument(
         "--from-segment",
@@ -1072,9 +1144,9 @@ def main() -> int:
     )
     dt_chatgpt.add_argument(
         "--inbox-dir",
-        default="inbox/ai_chat/chatgpt",
+        default=None,
         dest="inbox_dir",
-        help="Base inbox directory (default: inbox/ai_chat/chatgpt)",
+        help="Base inbox directory (default: active profile's ChatGPT inbox)",
     )
     dt_chatgpt.add_argument(
         "--threshold",
@@ -1117,9 +1189,9 @@ def main() -> int:
     )
     es_chatgpt.add_argument(
         "--inbox-dir",
-        default="inbox/ai_chat/chatgpt",
+        default=None,
         dest="inbox_dir",
-        help="Base inbox directory (default: inbox/ai_chat/chatgpt)",
+        help="Base inbox directory (default: active profile's ChatGPT inbox)",
     )
     es_chatgpt.add_argument(
         "--from-segment",

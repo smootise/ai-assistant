@@ -14,6 +14,7 @@ and non-obvious design decisions that must not be re-litigated without good reas
 | `clients.py` | Shared SQLite, Qdrant, embedding, inference, and memory factories; accepts resolved configuration without reloading it. |
 | `endpoints.py` | Shared validation for remote Qdrant URLs and legacy host/port endpoints. |
 | `profiles.py` | Frozen profile context, read-only storage validation, temporary personal-only runtime guard. |
+| `paths.py` | Shared managed-path confinement, portable identifiers, artifact preflight, and external-source provenance hashes. |
 | `ollama.py` | `OllamaClient` — inference via Ollama HTTP API. |
 | `embedder.py` | `EmbeddingClient` — embeddings via Ollama. `build_embedding_text()` for retrieval. |
 | `summarizer.py` | Single-file conversation summarization. |
@@ -80,6 +81,12 @@ Never include raw Qdrant errors or API keys in logs, configuration display, or j
 Memory clients capture resolved configuration and create Qdrant/embedding clients lazily on first
 use. SQLite-only persistence must not contact either service. Explicitly injected clients remain
 supported; destructive cleanup construction and behavior are unchanged.
+Phase 3 Commit 1 uses `ProfilePaths` to route CLI filesystem operations and ingestion from the
+resolved context. Managed overrides remain inside the active inbox root. External sources are
+read-only and cannot come from another profile's storage. Validate paths and artifact identifiers
+before any mutation. CLI retrieval/answer use `read_only=True` client/store access; missing
+databases fail without initialization. Keep the existing CLI and web guards until their separate
+rollout reviews. Cleanup correctness and recovery remain deferred.
 
 ---
 

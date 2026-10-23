@@ -31,7 +31,11 @@ def test_web_cleanup_propagates_qdrant_failure(tmp_path: Path, stage: str) -> No
 
 @pytest.mark.parametrize("stage", ["extract", "fragment"])
 def test_cli_cleanup_failure_stops_processing(tmp_path: Path, stage: str) -> None:
-    config = {"output_root": str(tmp_path / "output"), "qdrant_collection": "jarvis_mom_fragments"}
+    config = {
+        "output_root": str(tmp_path / "output"),
+        "qdrant_collection": "jarvis_mom_fragments",
+        "inbox_root": str(tmp_path / "inbox"),
+    }
     (tmp_path / "inbox" / "conv" / "segments").mkdir(parents=True)
     (tmp_path / "output" / "conv" / "extracts").mkdir(parents=True)
     args = argparse.Namespace(

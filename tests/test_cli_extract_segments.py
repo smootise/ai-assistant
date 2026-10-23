@@ -86,6 +86,7 @@ def _make_config(tmp_path: Path) -> dict:
     segments_dir.mkdir(parents=True)
     return {
         "inbox_dir": str(inbox_dir),
+        "inbox_root": str(tmp_path / "inbox"),
         "output_root": str(tmp_path / "OUTPUTS"),
         "db_path": str(tmp_path / "jarvis.db"),
         "qdrant_host": "localhost",

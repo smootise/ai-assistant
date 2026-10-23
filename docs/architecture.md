@@ -18,9 +18,9 @@ Raw sources                       Ollama (inference + embedding)
 
 ## Storage Layers
 
-Profile-aware storage clients and centralized construction are available in Phase 2. Personal
-retains its existing resources; non-personal processing and serving remain blocked pending
-pipeline/web isolation. See [Profiles](profiles.md) for the registry, validation rules, and mandatory
+Phase 3 Commit 1 adds profile-aware filesystem and CLI routing to the Phase 2 storage clients.
+Personal retains its existing resources; non-personal processing and serving remain blocked
+until separately reviewed cleanup fixes and web isolation. See [Profiles](profiles.md) for the registry, validation rules, and mandatory
 backup/compatibility checkpoint before real-data deployment. No SQLite schema change is included.
 
 Three layers, each with a distinct role:
@@ -36,6 +36,10 @@ Three layers, each with a distinct role:
 ---
 
 All application client construction goes through `jarvis.clients` using the resolved configuration.
+`jarvis.paths` supplies managed-path boundaries and source validation shared by CLI routing and
+ingestion. Commands validate existing artifact trees and identifiers before file mutations; roots
+come from the active `ProfileContext`. External sources remain read-only and retain path/hash
+provenance. Identical conversation IDs occupy independent profile directories.
 Memory clients open SQLite immediately and construct Qdrant and embedding clients only on first
 use, then reuse them. SQLite-only persistence in CLI commands and web jobs does not require Qdrant
 or an embedding service. Topic detection embeds summary text directly without a Qdrant probe.
@@ -132,6 +136,10 @@ validated through a read-only connection without changing their schema, metadata
 Required structures are checked against an in-memory v8 reference; harmless additional objects
 are tolerated. Incompatible or incomplete files fail unchanged. There are no migrations or
 automatic rebuilds.
+CLI retrieval and answer use the explicit `read_only=True` store/factory mode. Missing databases
+fail without filesystem initialization; existing files still undergo the same v8 compatibility
+validation. Subsequent connections use SQLite read-only/query-only modes. Search never creates
+missing Qdrant collections.
 
 Table hierarchy (each table has a deterministic `*_id` primary key):
 

@@ -32,6 +32,7 @@ def _make_args(raw_path: str, output_dir: str, persist: bool = False) -> argpars
 def _make_config(tmp_path: Path) -> dict:
     return {
         "output_root": str(tmp_path / "OUTPUTS"),
+        "inbox_root": str(tmp_path / "inbox"),
         "db_path": str(tmp_path / "jarvis.db"),
         "qdrant_host": "localhost",
         "qdrant_port": 6333,

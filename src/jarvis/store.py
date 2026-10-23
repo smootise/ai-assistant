@@ -233,8 +233,17 @@ def _now_iso() -> str:
 class SummaryStore:
     """Relational SQLite store for all JARVIS pipeline records."""
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, *, read_only: bool = False) -> None:
         self.db_path = Path(db_path).resolve()
+        self.read_only = read_only
+        if read_only:
+            if not self.db_path.is_file():
+                raise DatabaseCompatibilityError(
+                    f"SQLite database is not initialized: {self.db_path}. "
+                    "Run ingest with --persist before retrieval."
+                )
+            self._validate_db()
+            return
         if not self.db_path.exists():
             if any(
                 Path(f"{self.db_path}{suffix}").exists() for suffix in ("-wal", "-shm", "-journal")
@@ -1077,8 +1086,11 @@ class SummaryStore:
     # ------------------------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(f"{self.db_path.as_uri()}?mode=rw", uri=True)
+        mode = "ro" if self.read_only else "rw"
+        conn = sqlite3.connect(f"{self.db_path.as_uri()}?mode={mode}", uri=True)
         conn.execute("PRAGMA foreign_keys=ON")
+        if self.read_only:
+            conn.execute("PRAGMA query_only=ON")
         return conn
 
     def _validate_db(self) -> None:

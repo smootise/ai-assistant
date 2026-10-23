@@ -9,6 +9,11 @@ segment summaries, extracts/statements, and fragments/links without `--embed`, i
 Topic detection uses its embedding service directly but does not need Qdrant. Indexing, retrieval,
 and explicit vector cleanup still require Qdrant; destructive `--force` behavior is unchanged.
 
+Phase 3 Commit 1 routes managed CLI paths from the resolved profile and validates them before
+processing. Non-personal CLI execution remains blocked until the separately reviewed cleanup
+commit. The personal examples below retain their default locations; `--inbox-dir` and ingestion
+`--output-dir` may override them only inside the active profile's inbox root.
+
 ---
 
 ## Step 1 — Ingest
@@ -36,6 +41,13 @@ What happens:
 Re-running on an updated export is safe — messages are merged by ID, never duplicated. `--persist` is idempotent: SHA-256-keyed source file rows are never duplicated on re-run.
 
 **SQLite rows written:** `source_files` (raw export + normalized.json), `conversations`, `segments` (with full `segment_text` for citation rendering).
+
+An explicit raw export may live outside the managed inbox. JARVIS reads it without moving,
+modifying, or deleting it; other profiles' managed files cannot be used as external sources.
+Normalized content records `raw_export_path`, `raw_export_sha256`, and `source_provenance`
+entries (`original_path`, `sha256`). Normalized content and segments always stay in the active
+inbox, and subsequent processing does not require the original source. Source/output collisions,
+unsafe imported IDs, traversal, and resolved symlink/junction escapes fail before writes.
 
 **Reusable entrypoint:** the ingest orchestration is in `src/jarvis/ingest/pipeline.py:ingest_chatgpt()`. Both the CLI (`cmd_ingest` in `cli.py`) and the web upload flow (`web/ingest_runner.py`) call this function directly — no subprocess. The CLI adds the argparse glue + print output; the web runner adds job status tracking.
 

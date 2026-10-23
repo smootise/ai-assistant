@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from jarvis.ollama import OllamaClient
 from jarvis.output_writer import OutputWriter
-
+from jarvis.paths import source_provenance
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +102,8 @@ class ConversationSummarizer:
             warning=warning,
             run_id=run_id,
         )
+
+        output_data["source_provenance"] = [source_provenance(file_path)]
 
         # Write outputs
         output_dir = self.output_writer.write_outputs(

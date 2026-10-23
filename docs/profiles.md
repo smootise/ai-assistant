@@ -1,8 +1,9 @@
-# Profiles — Phases 1 and 2
+# Profiles — Through Phase 3 Commit 1
 
 Phase 1 resolves and validates profiles and provides read-only configuration inspection.
 Phase 2 adds profile-aware SQLite/Qdrant clients, shared client factories, and independent
-service endpoints. Non-personal ingestion, processing, retrieval, background jobs, and serving remain guarded.
+service endpoints. Phase 3 Commit 1 adds filesystem boundaries and profile-derived CLI routing
+under the existing guards. Non-personal ingestion, processing, retrieval, background jobs, and serving remain guarded.
 Those operations fail before dispatch when a non-personal profile is selected. The Flask app
 factory applies the same guard, including the `python -m jarvis.web` entrypoint.
 
@@ -79,8 +80,8 @@ rejected.
 
 Custom personal inboxes and collection names can be inspected but remain guarded for
 processing until pipeline and web isolation are complete. Existing personal
-database/output overrides continue to work. Directory-override confinement, pipeline path
-guards, external-source provenance, and
+database/output overrides continue to work. CLI directory-override confinement, pipeline path
+guards, and external-source provenance are implemented underneath the guards in Commit 1;
 profile-bound web operations remain deferred. Existing `--force` cleanup defects are not fixed
 in this phase; they require separately reviewable changesets and dedicated regression tests.
 Phase 2 routes cleanup calls to the selected collection and propagates Qdrant failures rather
@@ -113,6 +114,12 @@ metadata, and compatible extra columns are accepted. Empty files, invalid SQLite
 versions, missing/incompatible required structures, and orphaned SQLite sidecars fail unchanged.
 Later operations use
 `mode=rw` so a removed database is never silently recreated.
+Phase 3 adds `SummaryStore(db_path, read_only=True)` and matching client-factory options:
+they require an existing compatible v8 file, open subsequent connections with `mode=ro` and
+`query_only=ON`, and do not initialize files or directories. CLI retrieval and answer use this mode.
+For an existing WAL database, SQLite itself may create `-wal`/`-shm` reader coordination sidecars;
+the database contents/schema are not rewritten. No immutable-mode shortcut is used, so reads
+continue to respect committed WAL data.
 
 Inference uses `OLLAMA_BASE_URL`; `EMBEDDING_OLLAMA_BASE_URL` optionally selects a separate
 embedding server and otherwise defaults to inference. YAML equivalent: `defaults.ollama.embedding_base_url`.
@@ -128,6 +135,42 @@ or host/port. Without a URL, existing `QDRANT_HOST`/`QDRANT_PORT` behavior is pr
 Tests use synthetic SQLite files and mocked Qdrant/Ollama services. Suite-wide guards block
 unmocked Qdrant construction, outbound socket connections, and SQLite paths outside pytest's
 temporary tree; configuration loading uses a synthetic repository rather than the clone's `.env`.
+
+## Phase 3 Commit 1: filesystem routing infrastructure
+
+`jarvis.paths.ProfilePaths` derives all managed roots from the resolved `ProfileContext`.
+Shared helpers validate path components, imported conversation/segment identifiers, and existing
+JSON artifacts before CLI dispatch into file operations. `summarize`, `ingest`, segment summaries,
+topic detection, extraction, and fragmentation use these checks. Retrieval and answer continue
+using the selected SQLite database and collection with non-creating database access.
+
+Default `--inbox-dir` and ingestion `--output-dir` values are resolved from the selected profile's
+ChatGPT inbox. Explicit overrides may select any directory within that profile's inbox root.
+Relative overrides resolve from the working directory, preserving valid personal scripts.
+Outputs use the profile's output root. Traversal, unsafe Windows names/streams, and resolved
+symlink/junction escapes are rejected. Managed files and external sources with multiple hard
+links are rejected because their ownership cannot be established from the path alone.
+
+Explicit `--file` sources may live outside managed storage. They are read-only; database/sidecar
+files and other profiles' managed files cannot be used as sources. Generated files cannot overwrite
+the original source. Normalized files retain `raw_export_path`, `raw_export_sha256`, and a
+`source_provenance` list of original absolute paths and SHA-256 values across imports. Standalone
+summaries also record `source_provenance`. Source metadata in SQLite retains its existing path/hash
+fields. Generated normalized content and segments support later processing after the source is
+unavailable. No original is copied, moved, or deleted.
+
+Only necessary artifact directories are created during file-only processing. SQLite is initialized
+only for requested persistence; Qdrant collections remain lazy until indexing. `config show` stays
+read-only. Boundary validation runs before destructive cleanup; a legacy fragment `--force`
+without persistence and without an existing database fails before cleanup instead of initializing
+one. Existing cleanup ordering, scope, and dependent-data invalidation remain unchanged.
+
+The public CLI and Flask guards are retained verbatim: `mom` is still inspection-only. Direct
+handler/pipeline tests exercise the infrastructure without unlocking the runtime. Commit 2 must
+separately fix destructive cleanup and recovery before non-personal CLI execution is enabled.
+Web profile routing, PST ingestion, migrations, and interrupted-run recovery are not implemented.
+Checks assume filesystem boundaries remain stable during a command; concurrent replacement of
+symlinks/junctions is not supported.
 
 ## Mandatory checkpoint before real-data deployment
 

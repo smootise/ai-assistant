@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional
-
+from jarvis.paths import confined, identifier
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ class OutputWriter:
         output_root: str = "OUTPUTS",
         timestamp_format: str = "%Y%m%d_%H%M%S",
         use_timestamp: bool = True,
-    ):
+    ) -> None:
         """Initialize output writer.
 
         Args:
@@ -26,7 +26,7 @@ class OutputWriter:
             timestamp_format: strftime format for timestamped folders.
             use_timestamp: Whether to create timestamped subfolders.
         """
-        self.output_root = Path(output_root)
+        self.output_root = Path(output_root).resolve()
         self.timestamp_format = timestamp_format
         self.use_timestamp = use_timestamp
 
@@ -58,19 +58,20 @@ class OutputWriter:
         else:
             output_dir = self.output_root
 
-        output_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Writing outputs to {output_dir}")
-
         # Determine base filename from source
         source_path = Path(source_file)
         base_name = source_path.stem  # filename without extension
+        identifier(base_name, "artifact basename")
+        output_dir = confined(self.output_root, output_dir)
+        json_path = confined(self.output_root, output_dir / f"{base_name}.json")
+        md_path = confined(self.output_root, output_dir / f"{base_name}.md")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Writing outputs to {output_dir}")
 
         # Write JSON artifact
-        json_path = output_dir / f"{base_name}.json"
         self._write_json(json_path, summary_data)
 
         # Write Markdown report
-        md_path = output_dir / f"{base_name}.md"
         self._write_markdown(md_path, summary_data)
 
         logger.info("Outputs written successfully:")

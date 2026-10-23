@@ -10,7 +10,9 @@ from jarvis.store import SummaryStore
 from jarvis.vector_store import VectorStore
 
 
-def create_summary_store(config: Mapping[str, Any]) -> SummaryStore:
+def create_summary_store(config: Mapping[str, Any], *, read_only: bool = False) -> SummaryStore:
+    if read_only:
+        return SummaryStore(db_path=config["db_path"], read_only=True)
     return SummaryStore(db_path=config["db_path"])
 
 
@@ -45,10 +47,14 @@ def create_ollama_client(config: Mapping[str, Any]) -> OllamaClient:
     )
 
 
-def build_memory_layer(config: Mapping[str, Any]) -> MemoryLayer:
+def build_memory_layer(config: Mapping[str, Any], *, read_only: bool = False) -> MemoryLayer:
     resolved = dict(config)
     return MemoryLayer(
-        store=create_summary_store(resolved),
+        store=(
+            create_summary_store(resolved, read_only=True)
+            if read_only
+            else create_summary_store(resolved)
+        ),
         vector_store_factory=lambda: create_vector_store(resolved),
         embedder_factory=lambda: create_embedding_client(resolved),
     )
