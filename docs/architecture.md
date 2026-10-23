@@ -55,6 +55,11 @@ inclusive range, validates the complete deletion set, and writes a durable inten
 output root at `.jarvis-recovery/cleanup_<digest>.json` before mutating stores or files. The intent
 binds to the profile, database, output root, collection, and a hash of the Qdrant endpoint; it contains
 no service credentials. Cleanup never initializes an absent SQLite database or Qdrant collection.
+Before recording or replaying an intent, cleanup checks canonical segment IDs against their
+conversation/index, input filenames, and existing SQLite segment/extract scope. Saved entries
+undergo the same validation before any deletion. Missing records or inputs are allowed during
+replay because an interrupted operation may already have removed them; conflicting evidence
+rejects recovery without mutation and leaves the journal available for operator review.
 
 The dependency graph is segment summary -> all conversation topics, and extract -> statements ->
 fragments -> statement links/vectors/artifacts. Fragment invalidation preserves extracts/statements;

@@ -21,6 +21,9 @@ Cleanup is delete-first and scoped to the selected profile/conversation and actu
 inside an inclusive range. Invalid, negative, and reversed ranges fail before cleanup. Missing
 input indices are not inferred. When an existing database has affected records, cleanup applies
 even without `--persist`; absent databases and collections are never created for cleanup.
+Segment and extract input filenames must agree with their conversation, segment ID, and index.
+Existing SQLite segment/extract records must also match the selected scope. Mismatches reject
+cleanup before journal writes, file deletion, or SQLite/Qdrant changes.
 
 If cleanup or processing fails, rerun the same command/range without `--force`. A durable file in
 `<output_root>/.jarvis-recovery/` retains pending deletions until SQLite, Qdrant, and artifact cleanup

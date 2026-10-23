@@ -22,6 +22,7 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 > Update this section at the end of any session where meaningful progress is made.
 
 ### Done
+- Phase 3 Commit 2 review fix: validate cleanup filenames, conversation/segment IDs, indices, and existing SQLite scope before recording or replaying deletion intents. Reject swapped identifiers without mutation; preserve recovery when records or inputs were already removed. Schema v8 and journal format remain unchanged; synthetic tests only.
 - Phase 3 Commit 2: scoped delete-first CLI cleanup, dependency invalidation, durable profile recovery journals, atomic validated artifacts, idempotent SQLite repair, and deterministic/reused Qdrant IDs. All processing CLI commands support profiles; serving and web jobs remain personal-only until Phase 4. Schema v8 and existing indexed UUIDs are preserved; synthetic tests only.
 - Phase 3 Commit 1 review fix: include normalization staging files in source/output collision preflight; reject raw exports at `normalized.tmp` before any writes and preserve the original source.
 - Phase 3 Commit 1: shared profile filesystem boundaries, profile-derived CLI directory defaults, read-only external-source provenance, and non-creating SQLite retrieval/answer access. CLI/web runtime guards remain unchanged; destructive cleanup correctness and recovery are reserved for Commit 2.

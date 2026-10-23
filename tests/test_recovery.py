@@ -1,10 +1,12 @@
 """Scoped cleanup and interrupted-run recovery against synthetic profile stores."""
 
 import argparse
+import gc
 import json
 import sys
+from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from unittest.mock import MagicMock, patch
 from uuid import UUID
 
@@ -750,3 +752,262 @@ def test_incomplete_model_summary_is_not_persisted(profile_repo: Path, command: 
             getattr(cli, f"cmd_{command}")(arguments(config, force=True, persist=True), config) == 1
         )
     persistence.assert_not_called()
+
+
+@pytest.fixture
+def scope_profiles(profile_repo: Path) -> tuple[dict, dict]:
+    active, other = load_config("mom"), load_config("personal")
+    for config in (active, other):
+        store = seed(config, count=3)
+        seed(config, "unrelated")
+        gc.collect()
+        with closing(store._connect()) as connection:
+            connection.execute("PRAGMA journal_mode=DELETE")
+    return active, other
+
+
+def scope_snapshot(root: Path) -> dict[Path, tuple[bytes | None, int]]:
+    return {
+        path: (path.read_bytes() if path.is_file() else None, path.stat().st_mtime_ns)
+        for path in root.rglob("*")
+    }
+
+
+@contextmanager
+def forbid_cleanup_mutations() -> Iterator[None]:
+    with (
+        patch(
+            "jarvis.recovery.atomic_json", side_effect=AssertionError("Journal write")
+        ) as journal,
+        patch.object(
+            SummaryStore, "invalidate_stage", side_effect=AssertionError("SQLite mutation")
+        ) as database,
+        patch(
+            "jarvis.recovery.create_vector_store", side_effect=AssertionError("Qdrant access")
+        ) as vectors,
+        patch.object(Path, "unlink", side_effect=AssertionError("File deletion")) as unlink,
+        patch.object(Path, "mkdir", side_effect=AssertionError("Directory creation")) as mkdir,
+        patch(
+            "jarvis.cli.create_ollama_client", side_effect=AssertionError("Inference")
+        ) as inference,
+    ):
+        yield
+        for operation in (journal, database, vectors, unlink, mkdir, inference):
+            operation.assert_not_called()
+
+
+def scope_input(config: dict, stage: str, index: int) -> Path:
+    if stage == "fragment_extracts":
+        return Path(config["output_root"]) / "shared/extracts" / f"extract_{index:03d}.json"
+    return Path(config["chatgpt_inbox_dir"]) / "shared/segments" / f"segment_{index:03d}.json"
+
+
+@pytest.mark.parametrize("command", ["summarize_segments", "extract_segments", "fragment_extracts"])
+@pytest.mark.parametrize("swapped", ["segment_id", "segment_index", "records"])
+def test_ranged_cleanup_rejects_swapped_artifact_scope_before_mutation(
+    profile_repo: Path, scope_profiles: tuple[dict, dict], command: str, swapped: str
+) -> None:
+    config, _ = scope_profiles
+    first, second = [scope_input(config, command, index) for index in (1, 2)]
+    left, right = [json.loads(path.read_text()) for path in (first, second)]
+    if swapped == "records":
+        left, right = right, left
+    else:
+        left[swapped], right[swapped] = right[swapped], left[swapped]
+    atomic_json(first, left)
+    atomic_json(second, right)
+    before = scope_snapshot(profile_repo)
+    with forbid_cleanup_mutations():
+        assert (
+            getattr(cli, f"cmd_{command}")(
+                arguments(config, force=True, from_segment=1, to_segment=1), config
+            )
+            == 1
+        )
+    assert scope_snapshot(profile_repo) == before
+
+
+def remove_scope_segment(store: SummaryStore) -> None:
+    with closing(store._connect()) as connection, connection:
+        connection.execute("DELETE FROM fragments WHERE extract_id = 'shared_s001_x'")
+        connection.execute("DELETE FROM extracts WHERE segment_id = 'shared_s001'")
+        connection.execute("DELETE FROM segment_summaries WHERE segment_id = 'shared_s001'")
+        connection.execute("DELETE FROM topic_segments WHERE segment_id = 'shared_s001'")
+        connection.execute("DELETE FROM segments WHERE segment_id = 'shared_s001'")
+
+
+def swap_scope_indices(store: SummaryStore) -> None:
+    with closing(store._connect()) as connection, connection:
+        connection.execute(
+            "UPDATE segments SET segment_index = 99 WHERE segment_id = 'shared_s001'"
+        )
+        connection.execute("UPDATE segments SET segment_index = 1 WHERE segment_id = 'shared_s002'")
+        connection.execute("UPDATE segments SET segment_index = 2 WHERE segment_id = 'shared_s001'")
+
+
+@pytest.mark.parametrize(
+    "command, mismatch",
+    [
+        (command, mismatch)
+        for command in ("summarize_segments", "extract_segments", "fragment_extracts")
+        for mismatch in ("segment_index", "conversation", "slot_id")
+    ]
+    + [("fragment_extracts", "extract_index"), ("fragment_extracts", "extract_conversation")],
+)
+def test_ranged_cleanup_rejects_sqlite_scope_mismatches(
+    profile_repo: Path, scope_profiles: tuple[dict, dict], command: str, mismatch: str
+) -> None:
+    config, _ = scope_profiles
+    store = create_summary_store(config)
+    if mismatch == "segment_index":
+        swap_scope_indices(store)
+    elif mismatch == "slot_id":
+        row = store.get_segment("shared_s001")
+        remove_scope_segment(store)
+        row["segment_id"] = "different_identifier"
+        store.insert_segment(row)
+    else:
+        with closing(store._connect()) as connection, connection:
+            if mismatch == "conversation":
+                connection.execute(
+                    "UPDATE segments SET conversation_id = ? WHERE segment_id = ?",
+                    ("unrelated", "shared_s001"),
+                )
+            elif mismatch == "extract_index":
+                connection.execute(
+                    "UPDATE extracts SET segment_index = 2 WHERE segment_id = 'shared_s001'"
+                )
+            else:
+                connection.execute(
+                    "UPDATE extracts SET parent_conversation_id = ? WHERE segment_id = ?",
+                    ("unrelated", "shared_s001"),
+                )
+    before = scope_snapshot(profile_repo)
+    with forbid_cleanup_mutations():
+        assert (
+            getattr(cli, f"cmd_{command}")(
+                arguments(config, force=True, from_segment=1, to_segment=1), config
+            )
+            == 1
+        )
+    assert scope_snapshot(profile_repo) == before
+
+
+@pytest.mark.parametrize("stage", ["summaries", "extracts", "fragments"])
+@pytest.mark.parametrize("mismatch", ["journal_id", "sqlite_index"])
+def test_saved_cleanup_scope_is_revalidated_before_replay(
+    profile_repo: Path, scope_profiles: tuple[dict, dict], stage: str, mismatch: str
+) -> None:
+    config, _ = scope_profiles
+    item = {"segment_id": "shared_s001", "segment_index": 1}
+    service = CleanupService(config)
+    with patch.object(SummaryStore, "invalidate_stage", side_effect=RuntimeError("Interrupted")):
+        with pytest.raises(RuntimeError, match="Interrupted"):
+            service.invalidate(stage, "shared", [item])
+    journal = service._journal(stage, "shared")
+    if mismatch == "journal_id":
+        plan = json.loads(journal.read_text())
+        plan["items"][0]["segment_id"] = "shared_s002"
+        atomic_json(journal, plan)
+    else:
+        swap_scope_indices(create_summary_store(config))
+    before = scope_snapshot(profile_repo)
+    with forbid_cleanup_mutations(), pytest.raises(ValueError):
+        service.resume(stage, "shared", 1, 1)
+    assert scope_snapshot(profile_repo) == before
+
+
+@pytest.mark.parametrize(
+    "stage, command",
+    [
+        ("summaries", "summarize_segments"),
+        ("extracts", "extract_segments"),
+        ("fragments", "fragment_extracts"),
+    ],
+)
+def test_pending_cleanup_does_not_precede_live_input_validation(
+    profile_repo: Path, scope_profiles: tuple[dict, dict], stage: str, command: str
+) -> None:
+    config, _ = scope_profiles
+    with patch.object(SummaryStore, "invalidate_stage", side_effect=RuntimeError("Interrupted")):
+        with pytest.raises(RuntimeError, match="Interrupted"):
+            CleanupService(config).invalidate(
+                stage, "shared", [{"segment_id": "shared_s001", "segment_index": 1}]
+            )
+    source = scope_input(config, command, 1)
+    data = json.loads(source.read_text())
+    data["segment_id"] = "shared_s002"
+    atomic_json(source, data)
+    before = scope_snapshot(profile_repo)
+    with forbid_cleanup_mutations():
+        assert (
+            getattr(cli, f"cmd_{command}")(arguments(config, from_segment=1, to_segment=1), config)
+            == 1
+        )
+    assert scope_snapshot(profile_repo) == before
+
+
+@pytest.mark.parametrize(
+    "stage, command",
+    [
+        ("summaries", "summarize_segments"),
+        ("extracts", "extract_segments"),
+        ("fragments", "fragment_extracts"),
+    ],
+)
+def test_journal_replay_allows_already_removed_records_and_inputs(
+    scope_profiles: tuple[dict, dict], stage: str, command: str
+) -> None:
+    config, other = scope_profiles
+    store = create_summary_store(config)
+    original = SummaryStore.invalidate_stage
+
+    def interrupted(self: SummaryStore, *args: Any) -> None:
+        original(self, *args)
+        raise RuntimeError("Interrupted after SQLite cleanup")
+
+    service = CleanupService(config)
+    with patch.object(SummaryStore, "invalidate_stage", interrupted):
+        with pytest.raises(RuntimeError, match="Interrupted after"):
+            service.invalidate(stage, "shared", [{"segment_id": "shared_s001", "segment_index": 1}])
+    scope_input(config, command, 1).unlink()
+    remove_scope_segment(store)
+    other_before = scope_snapshot(Path(other["output_root"]))
+    outside = store.get_fragment("shared_s002_x_f000")
+    with patch("jarvis.recovery.create_vector_store", return_value=MagicMock()) as vectors:
+        service.resume(stage, "shared", 1, 1)
+    assert not service._journal(stage, "shared").exists()
+    if stage == "summaries":
+        vectors.assert_not_called()
+    else:
+        vectors.return_value.delete_points.assert_called_once_with([str(UUID(int=2))])
+    assert store.get_fragment("shared_s002_x_f000") == outside
+    assert scope_snapshot(Path(other["output_root"])) == other_before
+
+
+@pytest.mark.parametrize(
+    "stage, command",
+    [
+        ("summaries", "summarize_segments"),
+        ("extracts", "extract_segments"),
+        ("fragments", "fragment_extracts"),
+    ],
+)
+def test_file_only_scope_remains_valid_without_persisted_segment(
+    scope_profiles: tuple[dict, dict], stage: str, command: str
+) -> None:
+    config, _ = scope_profiles
+    remove_scope_segment(create_summary_store(config))
+    with (
+        patch(
+            "jarvis.recovery.create_vector_store", side_effect=AssertionError("No vectors")
+        ) as vectors,
+        patch("jarvis.cli.create_ollama_client", return_value=model(stage)),
+    ):
+        assert (
+            getattr(cli, f"cmd_{command}")(
+                arguments(config, force=True, from_segment=1, to_segment=1), config
+            )
+            == 0
+        )
+    vectors.assert_not_called()

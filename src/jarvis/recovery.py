@@ -58,6 +58,86 @@ class CleanupService:
             raise PathBoundaryError("Cleanup paths must not use symlink or junction aliases")
         return resolved
 
+    @staticmethod
+    def _validate_segment_scope(conversation: str, item: dict) -> None:
+        if not isinstance(item, dict):
+            raise PathBoundaryError("Invalid segment scope")
+        validate_record(item, conversation)
+        index = item.get("segment_index")
+        if (
+            type(index) is not int
+            or index < 0
+            or item.get("segment_id") != f"{conversation}_s{index:03d}"
+        ):
+            raise PathBoundaryError("Segment ID does not match its conversation and index")
+
+    def _validate_input(self, stage: str, conversation: str, path: Path, data: dict) -> None:
+        self._validate_segment_scope(conversation, data)
+        extract = stage == "fragments"
+        owner = "parent_conversation_id" if extract else "conversation_id"
+        prefix = "extract" if extract else "segment"
+        if (
+            data.get(owner) != conversation
+            or path.name != f"{prefix}_{data['segment_index']:03d}.json"
+        ):
+            raise PathBoundaryError(
+                "Artifact filename or conversation does not match its segment scope"
+            )
+
+    def _validate_scope(self, stage: str, conversation: str, items: list[dict]) -> None:
+        identifier(conversation, "conversation_id")
+        seen_ids, seen_indices = set(), set()
+        for item in items:
+            self._validate_segment_scope(conversation, item)
+            if item["segment_id"] in seen_ids or item["segment_index"] in seen_indices:
+                raise PathBoundaryError("Duplicate cleanup segment identifiers or indices")
+            seen_ids.add(item["segment_id"])
+            seen_indices.add(item["segment_index"])
+        store = (
+            create_summary_store(self.config, read_only=True)
+            if items and self.context.db_path.exists()
+            else None
+        )
+        stored_indices = (
+            {
+                row["segment_index"]: row["segment_id"]
+                for row in store.list_segments_for_conversation(conversation)
+            }
+            if store is not None
+            else {}
+        )
+        for item in items:
+            segment, index = item["segment_id"], item["segment_index"]
+            if stage == "fragments":
+                source = self.paths.output(conversation, "extracts", f"extract_{index:03d}.json")
+            else:
+                source = confined(
+                    self.context.inbox_root,
+                    self.paths.conversation(conversation, self.inbox)
+                    / "segments"
+                    / f"segment_{index:03d}.json",
+                )
+            # Cleanup may already have removed records/files before a retry. Existing
+            # evidence must agree; absent evidence must not strand a valid journal.
+            if source.exists():
+                self._validate_input(
+                    stage, conversation, source, json.loads(source.read_text(encoding="utf-8"))
+                )
+            if store is not None:
+                row = store.get_segment(segment)
+                if (
+                    row is not None
+                    and (row["conversation_id"] != conversation or row["segment_index"] != index)
+                ) or (index in stored_indices and stored_indices[index] != segment):
+                    raise PathBoundaryError("SQLite segment does not match the cleanup scope")
+                if stage in {"extracts", "fragments"}:
+                    extract = store.get_extract_by_segment(segment)
+                    if extract is not None and (
+                        extract["parent_conversation_id"] != conversation
+                        or extract["segment_index"] != index
+                    ):
+                        raise PathBoundaryError("SQLite extract does not match the cleanup scope")
+
     def _files(self, stage: str, conversation: str, items: list[dict]) -> list[Path]:
         root = self._safe_path(self.context.output_root / conversation)
         candidates = []
@@ -173,6 +253,7 @@ class CleanupService:
         return plan
 
     def resume(self, stage: str, conversation: str, start: int = 0, end: int | None = None) -> None:
+        validate_range(start, end)
         journal = self._journal(stage, conversation)
         if journal.exists():
             plan = self._read_plan(journal)
@@ -198,6 +279,7 @@ class CleanupService:
         identifier(conversation, "conversation_id")
         if stage not in STAGES.values():
             raise ValueError("Unknown cleanup stage")
+        self._validate_scope(stage, conversation, items)
         files = self._files(stage, conversation, items)
         if preserve_batches:
             files = [path for path in files if not re.fullmatch(r"\.batch_\d+\.json", path.name)]
@@ -268,9 +350,7 @@ class CleanupService:
         if stage not in STAGES.values() or journal != self._journal(stage, conversation):
             raise ValueError("Invalid cleanup journal stage")
         items = plan["items"]
-        for item in items:
-            validate_record(item)
-            identifier(item["segment_id"], "segment_id")
+        self._validate_scope(stage, conversation, items)
         # Validate the entire saved write set before any mutation, including absent files.
         root = self._safe_path(self.context.output_root / conversation)
         files = [self._safe_path(self.context.output_root / name) for name in plan["files"]]
@@ -309,8 +389,9 @@ class CleanupService:
         self.inbox = self.paths.inbox(getattr(args, "inbox_dir", None))
         conversation = args.conversation_id
         start, end = getattr(args, "from_segment", None) or 0, getattr(args, "to_segment", None)
-        self.resume(stage, conversation, start, end)
+        validate_range(getattr(args, "from_segment", None), end)
         if stage == "topics":
+            self.resume(stage, conversation, start, end)
             inputs = hashlib.sha256(str(args.threshold).encode())
             for path in sorted(self.paths.output(conversation, "segment_summaries").glob("*.json")):
                 if (
@@ -338,13 +419,15 @@ class CleanupService:
         seen_ids, seen_indices = set(), set()
         for source in sorted(sources):
             data = json.loads(source.read_text(encoding="utf-8"))
-            validate_record(data, conversation)
+            self._validate_input(stage, conversation, source, data)
             if data["segment_id"] in seen_ids or data["segment_index"] in seen_indices:
                 raise ValueError("Duplicate segment identifiers or indices")
             seen_ids.add(data["segment_id"])
             seen_indices.add(data["segment_index"])
             if start <= data["segment_index"] and (end is None or data["segment_index"] <= end):
                 selected.append(data)
+        self._validate_scope(stage, conversation, selected)
+        self.resume(stage, conversation, start, end)
         invalid = []
         repair = []
         store = (
