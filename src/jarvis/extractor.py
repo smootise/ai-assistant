@@ -18,9 +18,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from jarvis.artifacts import atomic_json, atomic_text, load_output
 from jarvis.block_detector import ArchivedBlock, build_working_view, detect_blocks, split_by_message
 from jarvis.ollama import OllamaClient
-
 
 logger = logging.getLogger(__name__)
 
@@ -110,8 +110,7 @@ class SegmentExtractor:
         extract_dir = output_root / conversation_id / "extracts"
 
         segment_files = sorted(
-            f for f in segments_dir.glob("segment_*.json")
-            if f.name != "pending_tail.json"
+            f for f in segments_dir.glob("segment_*.json") if f.name != "pending_tail.json"
         )
 
         segments = []
@@ -121,7 +120,11 @@ class SegmentExtractor:
 
         segments.sort(key=lambda s: s["segment_index"])
 
-        effective_to = to_segment if to_segment is not None else segments[-1]["segment_index"]
+        effective_to = (
+            to_segment
+            if to_segment is not None
+            else (segments[-1]["segment_index"] if segments else 0)
+        )
         selected = [s for s in segments if from_segment <= s["segment_index"] <= effective_to]
 
         if not selected:
@@ -135,22 +138,22 @@ class SegmentExtractor:
             seg_idx = segment["segment_index"]
             existing_path = extract_dir / f"extract_{seg_idx:03d}.json"
 
-            if existing_path.exists() and not force:
-                with open(existing_path, encoding="utf-8") as f:
-                    output_data = json.load(f)
-                if output_data.get("status") in ("skipped", "partial"):
-                    logger.info(
-                        f"Re-processing segment {seg_idx} ({segment['segment_id']}) "
-                        f"— previous extract has status '{output_data['status']}'"
-                    )
-                else:
-                    logger.info(
-                        f"Skipping segment {seg_idx} ({segment['segment_id']}) "
-                        f"— extract already exists"
-                    )
-                    output_data["_from_disk"] = True
-                    results.append((extract_dir, output_data))
-                    continue
+            cached = load_output(
+                existing_path,
+                "ai_chat_extract",
+                {
+                    "segment_id": segment["segment_id"],
+                    "segment_index": seg_idx,
+                    "parent_conversation_id": conversation_id,
+                },
+            )
+            if cached is not None and not force:
+                markdown = existing_path.with_suffix(".md")
+                if not markdown.exists():
+                    atomic_text(markdown, _render_md(cached))
+                cached["_from_disk"] = True
+                results.append((extract_dir, cached))
+                continue
 
             logger.info(
                 f"Extracting segment {seg_idx} / {segments[-1]['segment_index']} "
@@ -162,9 +165,7 @@ class SegmentExtractor:
             )
             results.append((extract_dir, output_data))
 
-        logger.info(
-            f"Extracted {len(results)} segments for conversation {conversation_id}"
-        )
+        logger.info(f"Extracted {len(results)} segments for conversation {conversation_id}")
         return results
 
     def extract_segment(
@@ -317,9 +318,7 @@ class SegmentExtractor:
                     break
 
             if not attempt3_failed and merged:
-                valid3, val_warnings3 = _validate_statements(
-                    {"statements": merged}, segment_text
-                )
+                valid3, val_warnings3 = _validate_statements({"statements": merged}, segment_text)
                 if valid3:
                     statements = merged
                 else:
@@ -341,8 +340,11 @@ class SegmentExtractor:
                 "line_count": b.line_count,
                 "char_count": b.char_count,
                 "raw_text": b.raw_text,
-                **({"archival_description": b.archival_description}
-                   if b.archival_description else {}),
+                **(
+                    {"archival_description": b.archival_description}
+                    if b.archival_description
+                    else {}
+                ),
             }
             for b in blocks
         ]
@@ -366,11 +368,8 @@ class SegmentExtractor:
         json_path = extract_dir / f"extract_{seg_idx:03d}.json"
         md_path = extract_dir / f"extract_{seg_idx:03d}.md"
 
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(output_data, f, ensure_ascii=False, indent=2)
-
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(_render_md(output_data))
+        atomic_json(json_path, output_data)
+        atomic_text(md_path, _render_md(output_data))
 
         logger.debug(
             f"Segment {segment_id} extracted in {latency_ms}ms "
@@ -396,9 +395,7 @@ class SegmentExtractor:
         user_content = user_template.strip().replace("{segment_text}", segment_text)
         return system_part.strip() + "\n\n" + user_content
 
-    def _describe_blocks(
-        self, blocks: List[ArchivedBlock], segment_id: str
-    ) -> List[ArchivedBlock]:
+    def _describe_blocks(self, blocks: List[ArchivedBlock], segment_id: str) -> List[ArchivedBlock]:
         """Run the archival-description LLM call for each block (attempt 2 only)."""
         prompt_path = self._prompts_dir / "describe_archived_block.md"
         if not prompt_path.exists():
@@ -422,8 +419,7 @@ class SegmentExtractor:
                     blk.archival_description = parsed
             except (RuntimeError, ValueError) as e:
                 logger.warning(
-                    f"Segment {segment_id}: archival description failed for "
-                    f"{blk.block_id}: {e}"
+                    f"Segment {segment_id}: archival description failed for " f"{blk.block_id}: {e}"
                 )
 
         return blocks
@@ -457,22 +453,22 @@ class SegmentExtractor:
             clean_statements.append(raw_s)
 
         if dropped:
-            logger.warning(
-                f"Segment {segment_id}: dropped {dropped} malformed statement(s)"
-            )
+            logger.warning(f"Segment {segment_id}: dropped {dropped} malformed statement(s)")
 
         # Inject deterministic per-statement metadata
         enriched = []
         for idx, s in enumerate(clean_statements):
-            enriched.append({
-                "statement_id": f"{segment_id}_st{idx:04d}",
-                "statement_index": idx,
-                "segment_id": segment_id,
-                "segment_index": seg_idx,
-                "parent_conversation_id": conv_id,
-                "speaker": s["speaker"],
-                "text": s["text"],
-            })
+            enriched.append(
+                {
+                    "statement_id": f"{segment_id}_st{idx:04d}",
+                    "statement_index": idx,
+                    "segment_id": segment_id,
+                    "segment_index": seg_idx,
+                    "parent_conversation_id": conv_id,
+                    "speaker": s["speaker"],
+                    "text": s["text"],
+                }
+            )
 
         output: Dict[str, Any] = {
             "statements": enriched,
@@ -511,6 +507,7 @@ class SegmentExtractor:
 # Consecutive-duplicate assistant turn deduplication
 # ---------------------------------------------------------------------------
 
+
 def _dedup_consecutive_assistant_turns(segment_text: str) -> Tuple[str, int]:
     """Drop earlier turns when consecutive assistant messages are near-identical.
 
@@ -529,7 +526,7 @@ def _dedup_consecutive_assistant_turns(segment_text: str) -> Tuple[str, int]:
         words = re.findall(r"\w+", text.lower())
         if len(words) < k:
             return frozenset([" ".join(words)]) if words else frozenset()
-        return frozenset(" ".join(words[i: i + k]) for i in range(len(words) - k + 1))
+        return frozenset(" ".join(words[i : i + k]) for i in range(len(words) - k + 1))
 
     keep = [True] * len(messages)
     for i in range(len(messages) - 1):
@@ -567,6 +564,7 @@ def _dedup_consecutive_assistant_turns(segment_text: str) -> Tuple[str, int]:
 # Validation / drift detection
 # ---------------------------------------------------------------------------
 
+
 def _validate_statements(
     parsed: Any,
     working_view: str,
@@ -598,7 +596,8 @@ def _validate_statements(
 
     # Invalid speakers
     bad_speakers = [
-        s.get("speaker") for s in statements
+        s.get("speaker")
+        for s in statements
         if isinstance(s, dict) and s.get("speaker") not in ("user", "assistant")
     ]
     if bad_speakers:
@@ -633,7 +632,7 @@ def _validate_statements(
             words = re.findall(r"\w+", text)
             if len(words) < k:
                 return frozenset([" ".join(words)]) if words else frozenset()
-            return frozenset(" ".join(words[i: i + k]) for i in range(len(words) - k + 1))
+            return frozenset(" ".join(words[i : i + k]) for i in range(len(words) - k + 1))
 
         sigs = [_shingles(t) for t in texts]
         dup_pairs = 0
@@ -647,9 +646,7 @@ def _validate_statements(
                 if union and inter / union >= 0.70:
                     dup_pairs += 1
         if dup_pairs >= 5:
-            errs.append(
-                f"found {dup_pairs} near-duplicate statement pair(s) — likely drift"
-            )
+            errs.append(f"found {dup_pairs} near-duplicate statement pair(s) — likely drift")
 
         # (b) Dominant 4-gram — a 4-gram that appears in a large fraction of
         # statements (not just many times overall). Proportional threshold
@@ -658,7 +655,7 @@ def _validate_statements(
             per_stmt_grams = []
             for t in texts:
                 words = re.findall(r"\w+", t)
-                grams = {tuple(words[i: i + 4]) for i in range(len(words) - 3)}
+                grams = {tuple(words[i : i + 4]) for i in range(len(words) - 3)}
                 per_stmt_grams.append(grams)
 
             gram_doc_freq: Dict[Tuple, int] = {}
@@ -683,6 +680,7 @@ def _validate_statements(
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
+
 
 def _render_md(output_data: Dict[str, Any]) -> str:
     lines = [

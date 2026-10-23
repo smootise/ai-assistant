@@ -5,6 +5,7 @@ coherent fragments. Each fragment is an independent retrieval unit.
 """
 
 import json
+import hashlib
 import logging
 import re
 import time
@@ -12,10 +13,42 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from jarvis.artifacts import atomic_json, atomic_text, fragment_outputs, load_output
 from jarvis.ollama import OllamaClient
 
-
 logger = logging.getLogger(__name__)
+
+
+def _batch_result(data: Any, fingerprint: str) -> Optional[List[Any]]:
+    if not isinstance(data, dict) or data.get("sha256") != fingerprint:
+        return None
+    result = data.get("result")
+    if (
+        not isinstance(result, list)
+        or len(result) != 6
+        or not isinstance(result[0], list)
+        or not result[0]
+        or not isinstance(result[1], int)
+        or not isinstance(result[2], bool)
+        or result[3] is not False
+        or result[4] is not None
+        or not isinstance(result[5], str)
+    ):
+        return None
+    if any(
+        not isinstance(fragment, dict)
+        or not isinstance(fragment.get("statements"), list)
+        or any(
+            not isinstance(statement, dict)
+            or statement.get("speaker") not in {"user", "assistant"}
+            or not isinstance(statement.get("text"), str)
+            for statement in fragment["statements"]
+        )
+        for fragment in result[0]
+    ):
+        return None
+    return result
+
 
 # Statements beyond this threshold are split into batches before sending to
 # the model. The model has to re-emit every statement in its output JSON, so
@@ -91,52 +124,42 @@ class Fragmenter:
                 continue
 
             # Skip extracts that were themselves skipped (timeout/parse failure)
-            if extract_data.get("status") == "skipped":
+            if extract_data.get("status") in {"skipped", "partial"}:
                 reason = (extract_data.get("warnings") or ["skipped during extraction"])[0]
                 skipped.append((extract_data["segment_id"], f"extract skipped: {reason}"))
                 continue
 
             segment_fragment_dir = fragments_root / f"segment_{seg_idx:03d}"
-            sentinel = segment_fragment_dir / "fragment_000.json"
-
-            if sentinel.exists() and not force:
-                with open(sentinel, encoding="utf-8") as f:
-                    sentinel_data = json.load(f)
-                if sentinel_data.get("status") in ("skipped", "partial"):
-                    logger.info(
-                        f"Re-processing segment {seg_idx} ({extract_data['segment_id']}) "
-                        f"— previous fragments have status '{sentinel_data['status']}'"
-                    )
-                    for frag_file in segment_fragment_dir.iterdir():
-                        frag_file.unlink()
-                else:
-                    logger.info(
-                        f"Skipping segment {seg_idx} ({extract_data['segment_id']}) "
-                        f"— fragments already exist"
-                    )
-                    for frag_path in sorted(segment_fragment_dir.glob("fragment_*.json")):
-                        with open(frag_path, encoding="utf-8") as f:
-                            results.append((segment_fragment_dir, json.load(f)))
-                    continue
+            cached = fragment_outputs(segment_fragment_dir, extract_data)
+            if cached is not None and not force:
+                for document in cached:
+                    path = segment_fragment_dir / f"fragment_{document['fragment_index']:03d}.json"
+                    if load_output(path, "ai_chat_fragment") != document:
+                        atomic_json(path, document)
+                    markdown = path.with_suffix(".md")
+                    if not markdown.exists():
+                        atomic_text(markdown, _render_md(document))
+                    results.append((segment_fragment_dir, document))
+                continue
 
             if force and segment_fragment_dir.exists():
                 for f in segment_fragment_dir.iterdir():
                     f.unlink()
                 logger.info(f"--force: cleared {segment_fragment_dir}")
 
-            logger.info(
-                f"Fragmenting segment {seg_idx} ({extract_data['segment_id']})"
-            )
+            logger.info(f"Fragmenting segment {seg_idx} ({extract_data['segment_id']})")
             fragments = self.fragment_extract(
                 extract_data=extract_data,
                 fragment_dir=segment_fragment_dir,
                 retries=retries,
             )
             if not fragments:
-                skipped.append((
-                    extract_data["segment_id"],
-                    "fragmentation produced no output (timeout or parse failure)",
-                ))
+                skipped.append(
+                    (
+                        extract_data["segment_id"],
+                        "fragmentation produced no output (timeout or parse failure)",
+                    )
+                )
             results.extend(fragments)
 
         logger.info(
@@ -282,7 +305,7 @@ class Fragmenter:
         segment_id = extract_data.get("segment_id", "")
         n = len(statements)
         batch_size = _MAX_STATEMENTS_PER_BATCH
-        batches = [statements[i: i + batch_size] for i in range(0, n, batch_size)]
+        batches = [statements[i : i + batch_size] for i in range(0, n, batch_size)]
         logger.info(
             f"Segment {segment_id}: {n} statements exceeds batch limit "
             f"— splitting into {len(batches)} batch(es) of ≤{batch_size}"
@@ -295,20 +318,58 @@ class Fragmenter:
         warnings: List[str] = []
 
         for batch_idx, batch in enumerate(batches):
-            raw_fragments, latency_ms, is_degraded, is_partial, skip_reason, warning = (
-                self._run_fragment_llm(
-                    statements=batch,
-                    segment_id=f"{segment_id}[batch {batch_idx + 1}/{len(batches)}]",
-                    retries=retries,
+            fingerprint = hashlib.sha256(
+                json.dumps(
+                    {
+                        "statements": batch,
+                        "model": self._ollama.model,
+                        "schema": self._schema,
+                        "schema_version": self._schema_version,
+                        "archived_blocks": extract_data.get("archived_blocks", []),
+                    },
+                    sort_keys=True,
+                ).encode()
+            ).hexdigest()
+            checkpoint = fragment_dir / f".batch_{batch_idx:03d}.json"
+            try:
+                cached = json.loads(checkpoint.read_text(encoding="utf-8"))
+            except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+                cached = None
+            result = _batch_result(cached, fingerprint)
+            if result is not None:
+                raw_fragments, latency_ms, is_degraded, is_partial, skip_reason, warning = result
+            else:
+                raw_fragments, latency_ms, is_degraded, is_partial, skip_reason, warning = (
+                    self._run_fragment_llm(
+                        statements=batch,
+                        segment_id=f"{segment_id}[batch {batch_idx + 1}/{len(batches)}]",
+                        retries=retries,
+                    )
                 )
-            )
+                if raw_fragments and not skip_reason and not is_partial:
+                    atomic_json(
+                        checkpoint,
+                        {
+                            "sha256": fingerprint,
+                            "result": [
+                                raw_fragments,
+                                latency_ms,
+                                is_degraded,
+                                is_partial,
+                                skip_reason,
+                                warning,
+                            ],
+                        },
+                    )
             total_latency += latency_ms
             if skip_reason:
-                logger.warning(
-                    f"Segment {segment_id} batch {batch_idx + 1} skipped: {skip_reason}"
-                )
+                any_partial = True
+                warnings.append(f"batch {batch_idx + 1}: {skip_reason}")
+                logger.warning(f"Segment {segment_id} batch {batch_idx + 1} skipped: {skip_reason}")
                 continue
             if not raw_fragments:
+                any_partial = True
+                warnings.append(f"batch {batch_idx + 1}: no fragments")
                 logger.warning(f"Segment {segment_id} batch {batch_idx + 1} produced no fragments")
                 continue
             any_degraded = any_degraded or is_degraded
@@ -360,15 +421,15 @@ class Fragmenter:
                 warning=warning,
             )
 
-            json_path = fragment_dir / f"fragment_{abs_idx:03d}.json"
-            md_path = fragment_dir / f"fragment_{abs_idx:03d}.md"
-
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump(output_data, f, ensure_ascii=False, indent=2)
-            with open(md_path, "w", encoding="utf-8") as f:
-                f.write(_render_md(output_data))
-
             results.append((fragment_dir, output_data))
+
+        # Publish the entire model result before rendering individual artifacts. A retry
+        # can finish a partially written batch without repeating a successful model call.
+        atomic_json(fragment_dir / "fragment_manifest.json", {"outputs": [d for _, d in results]})
+        for _, document in results:
+            json_path = fragment_dir / f"fragment_{document['fragment_index']:03d}.json"
+            atomic_json(json_path, document)
+            atomic_text(json_path.with_suffix(".md"), _render_md(document))
 
         logger.debug(
             f"Segment {extract_data['segment_id']} fragmented into "
@@ -388,9 +449,7 @@ class Fragmenter:
         with open(prompt_path, encoding="utf-8") as f:
             template = f.read()
 
-        statements_text = "\n".join(
-            f"{stmt['speaker']}: {stmt['text']}" for stmt in statements
-        )
+        statements_text = "\n".join(f"{stmt['speaker']}: {stmt['text']}" for stmt in statements)
         system_prompt, user_template = template.split("---USER---", 1)
         user_content = user_template.strip().replace("{statements_text}", statements_text)
         return system_prompt.strip(), user_content
@@ -413,12 +472,11 @@ class Fragmenter:
         # Keys include brackets to match what re.sub group(0) returns.
         archived_lookup: Dict[str, str] = {}
         for blk in extract_data.get("archived_blocks", []):
-            bid = blk.get("block_id", "")           # e.g. "ARCHIVED_BLOCK_1"
-            token = f"[{bid}]"                       # e.g. "[ARCHIVED_BLOCK_1]"
+            bid = blk.get("block_id", "")  # e.g. "ARCHIVED_BLOCK_1"
+            token = f"[{bid}]"  # e.g. "[ARCHIVED_BLOCK_1]"
             desc = blk.get("archival_description") or {}
             brief = desc.get("brief_description") or (
-                f"{blk.get('block_kind', 'block')} "
-                f"({blk.get('line_count', '?')} lines)"
+                f"{blk.get('block_kind', 'block')} " f"({blk.get('line_count', '?')} lines)"
             )
             archived_lookup[token] = brief
 
@@ -427,6 +485,7 @@ class Fragmenter:
         def _clean_stmt_text(text: str) -> str:
             def _replace(m: re.Match) -> str:
                 return archived_lookup.get(m.group(0), m.group(0))
+
             return re.sub(r"\[ARCHIVED_BLOCK_\d+\]", _replace, text)
 
         cleaned_lines = [

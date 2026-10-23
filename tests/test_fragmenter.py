@@ -9,7 +9,6 @@ import pytest
 
 from jarvis.fragmenter import Fragmenter
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -21,18 +20,20 @@ _STATEMENTS = [
     {"speaker": "assistant", "text": "It runs in ~50ms on CPU."},
 ]
 
-_FRAGMENTS_RESPONSE = json.dumps({
-    "fragments": [
-        {
-            "title": "Embedding model choice",
-            "statements": _STATEMENTS[:2],
-        },
-        {
-            "title": "Latency considerations",
-            "statements": _STATEMENTS[2:],
-        },
-    ]
-})
+_FRAGMENTS_RESPONSE = json.dumps(
+    {
+        "fragments": [
+            {
+                "title": "Embedding model choice",
+                "statements": _STATEMENTS[:2],
+            },
+            {
+                "title": "Latency considerations",
+                "statements": _STATEMENTS[2:],
+            },
+        ]
+    }
+)
 
 
 def _make_extract(seg_idx: int, conversation_id: str = "test-conv") -> Dict[str, Any]:
@@ -54,9 +55,7 @@ def _make_fragmenter(prompts_dir: str) -> Fragmenter:
     client = MagicMock()
     client.model = "gemma4:31b"
     client.chat.return_value = (_FRAGMENTS_RESPONSE, False, "")
-    client.parse_json_response.return_value = (
-        json.loads(_FRAGMENTS_RESPONSE), False, ""
-    )
+    client.parse_json_response.return_value = (json.loads(_FRAGMENTS_RESPONSE), False, "")
     return Fragmenter(
         ollama_client=client,
         prompts_dir=prompts_dir,
@@ -68,7 +67,8 @@ def _make_fragmenter(prompts_dir: str) -> Fragmenter:
 @pytest.fixture()
 def prompts_dir(tmp_path) -> str:
     (tmp_path / "fragment_extract.md").write_text(
-        "Fragment these statements into coherent groups.\n---USER---\n{statements_text}", encoding="utf-8"
+        "Fragment these statements into coherent groups.\n---USER---\n{statements_text}",
+        encoding="utf-8",
     )
     return str(tmp_path)
 
@@ -154,16 +154,22 @@ class TestFragmentExtract:
     def test_degraded_sets_status(self, tmp_path):
         p = tmp_path / "prompts"
         p.mkdir()
-        (p / "fragment_extract.md").write_text("Fragment statements.\n---USER---\n{statements_text}", encoding="utf-8")
+        (p / "fragment_extract.md").write_text(
+            "Fragment statements.\n---USER---\n{statements_text}", encoding="utf-8"
+        )
         client = MagicMock()
         client.model = "gemma4:31b"
         client.chat.return_value = (_FRAGMENTS_RESPONSE, False, "")
         client.parse_json_response.return_value = (
-            json.loads(_FRAGMENTS_RESPONSE), True, "Stripped code fences"
+            json.loads(_FRAGMENTS_RESPONSE),
+            True,
+            "Stripped code fences",
         )
         fragmenter = Fragmenter(
-            ollama_client=client, prompts_dir=str(p),
-            schema="jarvis.summarization", schema_version="1.0.0",
+            ollama_client=client,
+            prompts_dir=str(p),
+            schema="jarvis.summarization",
+            schema_version="1.0.0",
         )
         results = fragmenter.fragment_extract(
             extract_data=_make_extract(0),
@@ -182,9 +188,7 @@ class TestFragmentConversationExtracts:
         extract_dir.mkdir(parents=True)
         for i in range(n):
             data = _make_extract(i)
-            (extract_dir / f"extract_{i:03d}.json").write_text(
-                json.dumps(data), encoding="utf-8"
-            )
+            (extract_dir / f"extract_{i:03d}.json").write_text(json.dumps(data), encoding="utf-8")
 
     def test_raises_if_extracts_missing(self, prompts_dir, tmp_path):
         fragmenter = _make_fragmenter(prompts_dir)
@@ -215,14 +219,20 @@ class TestFragmentConversationExtracts:
         seg0_dir = output_root / "conv" / "fragments" / "segment_000"
         seg0_dir.mkdir(parents=True)
         existing_frag = {
-            "source_kind": "ai_chat_fragment", "fragment_index": 0, "segment_index": 0,
-            "segment_id": "test-conv_s000", "parent_conversation_id": "test-conv",
-            "text": "t", "title": "t", "statements": [], "status": "ok",
-            "model": "m", "latency_ms": 0, "created_at": "2026-04-21T00:00:00Z",
+            "source_kind": "ai_chat_fragment",
+            "fragment_index": 0,
+            "segment_index": 0,
+            "segment_id": "test-conv_s000",
+            "parent_conversation_id": "test-conv",
+            "text": "t",
+            "title": "t",
+            "statements": _STATEMENTS,
+            "status": "ok",
+            "model": "m",
+            "latency_ms": 0,
+            "created_at": "2026-04-21T00:00:00Z",
         }
-        (seg0_dir / "fragment_000.json").write_text(
-            json.dumps(existing_frag), encoding="utf-8"
-        )
+        (seg0_dir / "fragment_000.json").write_text(json.dumps(existing_frag), encoding="utf-8")
 
         fragmenter.fragment_conversation_extracts(
             conversation_id="conv",
@@ -239,14 +249,20 @@ class TestFragmentConversationExtracts:
         seg0_dir = output_root / "conv" / "fragments" / "segment_000"
         seg0_dir.mkdir(parents=True)
         existing_frag = {
-            "source_kind": "ai_chat_fragment", "fragment_index": 0, "segment_index": 0,
-            "segment_id": "test-conv_s000", "parent_conversation_id": "test-conv",
-            "text": "t", "title": "t", "statements": [], "status": "ok",
-            "model": "m", "latency_ms": 0, "created_at": "2026-04-21T00:00:00Z",
+            "source_kind": "ai_chat_fragment",
+            "fragment_index": 0,
+            "segment_index": 0,
+            "segment_id": "test-conv_s000",
+            "parent_conversation_id": "test-conv",
+            "text": "t",
+            "title": "t",
+            "statements": [],
+            "status": "ok",
+            "model": "m",
+            "latency_ms": 0,
+            "created_at": "2026-04-21T00:00:00Z",
         }
-        (seg0_dir / "fragment_000.json").write_text(
-            json.dumps(existing_frag), encoding="utf-8"
-        )
+        (seg0_dir / "fragment_000.json").write_text(json.dumps(existing_frag), encoding="utf-8")
 
         fragmenter.fragment_conversation_extracts(
             conversation_id="conv",
@@ -285,14 +301,17 @@ class TestBatchedFragmentation:
     def test_small_extract_does_not_batch(self, prompts_dir, tmp_path):
         """Extracts under the threshold go through the normal single-call path."""
         from jarvis.fragmenter import _MAX_STATEMENTS_PER_BATCH
+
         extract = self._make_large_extract(n=_MAX_STATEMENTS_PER_BATCH - 1)
         client = MagicMock()
         client.model = "gemma4:31b"
         client.chat.return_value = (_FRAGMENTS_RESPONSE, False, "")
         client.parse_json_response.return_value = (json.loads(_FRAGMENTS_RESPONSE), False, "")
         fragmenter = Fragmenter(
-            ollama_client=client, prompts_dir=prompts_dir,
-            schema="j", schema_version="1",
+            ollama_client=client,
+            prompts_dir=prompts_dir,
+            schema="j",
+            schema_version="1",
         )
         fragmenter.fragment_extract(extract_data=extract, fragment_dir=tmp_path / "f")
         assert client.chat.call_count == 1
@@ -300,6 +319,7 @@ class TestBatchedFragmentation:
     def test_large_extract_splits_into_multiple_calls(self, prompts_dir, tmp_path):
         """Extracts over the threshold are split; one chat call per batch."""
         from jarvis.fragmenter import _MAX_STATEMENTS_PER_BATCH
+
         n = _MAX_STATEMENTS_PER_BATCH + 10
         extract = self._make_large_extract(n=n)
         expected_batches = 2  # ceil(n / MAX) = 2
@@ -309,8 +329,10 @@ class TestBatchedFragmentation:
         client.chat.return_value = (_FRAGMENTS_RESPONSE, False, "")
         client.parse_json_response.return_value = (json.loads(_FRAGMENTS_RESPONSE), False, "")
         fragmenter = Fragmenter(
-            ollama_client=client, prompts_dir=prompts_dir,
-            schema="j", schema_version="1",
+            ollama_client=client,
+            prompts_dir=prompts_dir,
+            schema="j",
+            schema_version="1",
         )
         results = fragmenter.fragment_extract(extract_data=extract, fragment_dir=tmp_path / "f")
         assert client.chat.call_count == expected_batches
@@ -322,6 +344,7 @@ class TestBatchedFragmentation:
     def test_batch_prompt_contains_only_its_statements(self, prompts_dir, tmp_path):
         """Each batch call sends only its own slice of statements."""
         from jarvis.fragmenter import _MAX_STATEMENTS_PER_BATCH
+
         n = _MAX_STATEMENTS_PER_BATCH + 5
         extract = self._make_large_extract(n=n)
 
@@ -336,8 +359,10 @@ class TestBatchedFragmentation:
         client.chat.side_effect = _fake_chat
         client.parse_json_response.return_value = (json.loads(_FRAGMENTS_RESPONSE), False, "")
         fragmenter = Fragmenter(
-            ollama_client=client, prompts_dir=prompts_dir,
-            schema="j", schema_version="1",
+            ollama_client=client,
+            prompts_dir=prompts_dir,
+            schema="j",
+            schema_version="1",
         )
         fragmenter.fragment_extract(extract_data=extract, fragment_dir=tmp_path / "f")
 
@@ -351,6 +376,7 @@ class TestBatchedFragmentation:
     def test_failed_batch_does_not_abort_other_batches(self, prompts_dir, tmp_path):
         """If one batch times out, the other batch's fragments are still returned."""
         from jarvis.fragmenter import _MAX_STATEMENTS_PER_BATCH
+
         n = _MAX_STATEMENTS_PER_BATCH + 5
         extract = self._make_large_extract(n=n)
 
@@ -367,9 +393,12 @@ class TestBatchedFragmentation:
         client.chat.side_effect = _fake_chat
         client.parse_json_response.return_value = (json.loads(_FRAGMENTS_RESPONSE), False, "")
         fragmenter = Fragmenter(
-            ollama_client=client, prompts_dir=prompts_dir,
-            schema="j", schema_version="1",
+            ollama_client=client,
+            prompts_dir=prompts_dir,
+            schema="j",
+            schema_version="1",
         )
         results = fragmenter.fragment_extract(extract_data=extract, fragment_dir=tmp_path / "f")
         # Batch 1 failed, batch 2 succeeded → 2 fragments from batch 2
         assert len(results) == 2
+        assert all(document["status"] == "partial" for _, document in results)

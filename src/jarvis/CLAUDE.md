@@ -15,6 +15,8 @@ and non-obvious design decisions that must not be re-litigated without good reas
 | `endpoints.py` | Shared validation for remote Qdrant URLs and legacy host/port endpoints. |
 | `profiles.py` | Frozen profile context, read-only storage validation, temporary personal-only runtime guard. |
 | `paths.py` | Shared managed-path confinement, portable identifiers, artifact preflight, and external-source provenance hashes. |
+| `recovery.py` | CLI scoped invalidation, dependency cleanup, and durable per-profile retry intents. |
+| `artifacts.py` | Atomic output writes, cache validation, and complete fragment-batch recovery. |
 | `ollama.py` | `OllamaClient` — inference via Ollama HTTP API. |
 | `embedder.py` | `EmbeddingClient` — embeddings via Ollama. `build_embedding_text()` for retrieval. |
 | `summarizer.py` | Single-file conversation summarization. |
@@ -80,13 +82,21 @@ Qdrant supports optional `qdrant_url`/`qdrant_api_key`, with legacy host/port wh
 Never include raw Qdrant errors or API keys in logs, configuration display, or job errors.
 Memory clients capture resolved configuration and create Qdrant/embedding clients lazily on first
 use. SQLite-only persistence must not contact either service. Explicitly injected clients remain
-supported; destructive cleanup construction and behavior are unchanged.
+supported. Phase 2 kept destructive cleanup behavior; Commit 2 replaces CLI cleanup below.
 Phase 3 Commit 1 uses `ProfilePaths` to route CLI filesystem operations and ingestion from the
 resolved context. Managed overrides remain inside the active inbox root. External sources are
 read-only and cannot come from another profile's storage. Validate paths and artifact identifiers
 before any mutation. CLI retrieval/answer use `read_only=True` client/store access; missing
-databases fail without initialization. Keep the existing CLI and web guards until their separate
-rollout reviews. Cleanup correctness and recovery remain deferred.
+databases fail without initialization. Commit 2 now enables all processing CLI commands with scoped cleanup/recovery;
+the personal-only `serve` and Flask guards remain. `CleanupService` journals known vector IDs before
+SQLite invalidation, confirms vector deletion, removes files, then clears the intent. Reruns without
+force replay pending cleanup. Never discard a pending journal. Existing databases are invalidated
+when necessary even without `--persist`; missing databases/collections are not created for cleanup.
+New vector IDs are deterministic; recorded UUIDs remain unchanged. `qdrant_point_id` with null
+`embedded_at` is pending indexing, not completion. Only confirmed upsert sets `embedded_at`.
+Validated JSON repairs missing SQLite rows/statements/links/Markdown; fragment manifests retain
+complete model batches. Schema v8 is unchanged. One writer per profile is required; web job
+cleanup/recovery and profile routing remain deferred to Phase 4.
 
 ---
 

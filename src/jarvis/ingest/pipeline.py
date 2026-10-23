@@ -66,7 +66,7 @@ def ingest_chatgpt(
     raw = load_raw_export(str(raw_path))
     conversation_id = identifier(raw.get("conversation_id", raw_path.stem), "conversation_id")
     conv_dir = paths.conversation(conversation_id, output_dir)
-    validate_tree(paths.context.inbox_root, conv_dir, conversation_id)
+    validate_tree(paths.context.inbox_root, conv_dir, conversation_id, repairable=True)
     source_file_id = sha256_file(raw_path)
     messages = parse_export(raw)
     logger.info(f"Parsed {len(messages)} visible messages")

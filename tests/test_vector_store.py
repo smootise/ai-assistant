@@ -7,7 +7,7 @@ from uuid import UUID
 
 import pytest
 
-from jarvis.vector_store import VectorStore
+from jarvis.vector_store import VectorStore, fragment_point_id
 
 
 @pytest.fixture
@@ -28,7 +28,8 @@ def server() -> MagicMock:
             )
         )
 
-    def upsert(collection_name: str, points: list) -> None:
+    def upsert(collection_name: str, points: list, wait: bool) -> None:
+        assert wait
         for point in points:
             collections[collection_name]["points"][point.id] = point
 
@@ -54,15 +55,23 @@ def server() -> MagicMock:
     return client
 
 
+def test_upsert_retry_uses_one_deterministic_point(server: MagicMock) -> None:
+    with patch("jarvis.vector_store.QdrantClient", return_value=server):
+        store = VectorStore(collection_name="synthetic")
+    first = store.upsert([1.0], "fragment", {})
+    second = store.upsert([1.0], "fragment", {})
+    assert first == second == fragment_point_id("fragment")
+    assert store.search([1.0]) == [("fragment", 0.9, first)]
+
+
 def test_two_collections_isolate_identical_fragment_and_point_ids(server: MagicMock) -> None:
     with patch("jarvis.vector_store.QdrantClient", return_value=server):
         personal = VectorStore(collection_name="jarvis_fragments")
         mom = VectorStore(collection_name="jarvis_mom_fragments")
     payload = {"parent_conversation_id": "conv", "segment_id": "seg", "conversation_date": "date"}
     point_id = UUID("00000000-0000-0000-0000-000000000001")
-    with patch("jarvis.vector_store.uuid.uuid4", return_value=point_id):
-        personal_id = personal.upsert([1.0, 0.0], "same-fragment", payload)
-        mom_id = mom.upsert([1.0, 0.0, 0.0], "same-fragment", payload)
+    personal_id = personal.upsert([1.0, 0.0], "same-fragment", payload, point_id=str(point_id))
+    mom_id = mom.upsert([1.0, 0.0, 0.0], "same-fragment", payload, point_id=str(point_id))
     assert personal_id == mom_id == str(point_id)
     with patch("jarvis.vector_store.QdrantClient", return_value=server):
         personal = VectorStore(collection_name="jarvis_fragments")

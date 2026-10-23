@@ -200,7 +200,8 @@ def test_vector_clients_initialize_only_for_indexing_and_keep_resolved_configura
         if unavailable:
             with pytest.raises(RuntimeError, match="Qdrant unavailable"):
                 memory.index_fragment_in_qdrant(fragment_id, data)
-            assert memory.store.get_fragment(fragment_id)["qdrant_point_id"] is None
+            assert memory.store.get_fragment(fragment_id)["qdrant_point_id"] is not None
+            assert memory.store.get_fragment(fragment_id)["embedded_at"] is None
         else:
             for _ in range(2):
                 assert memory.index_fragment_in_qdrant(fragment_id, data) == "synthetic-point"

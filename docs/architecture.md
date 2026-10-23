@@ -18,9 +18,9 @@ Raw sources                       Ollama (inference + embedding)
 
 ## Storage Layers
 
-Phase 3 Commit 1 adds profile-aware filesystem and CLI routing to the Phase 2 storage clients.
-Personal retains its existing resources; non-personal processing and serving remain blocked
-until separately reviewed cleanup fixes and web isolation. See [Profiles](profiles.md) for the registry, validation rules, and mandatory
+Phase 3 adds filesystem routing, scoped cleanup, interrupted-run recovery, and multi-profile CLI
+processing to the Phase 2 storage clients. Personal retains its existing resources; web serving
+remains personal-only until Phase 4. See [Profiles](profiles.md) for the registry, validation rules, and mandatory
 backup/compatibility checkpoint before real-data deployment. No SQLite schema change is included.
 
 Three layers, each with a distinct role:
@@ -45,7 +45,58 @@ use, then reuse them. SQLite-only persistence in CLI commands and web jobs does 
 or an embedding service. Topic detection embeds summary text directly without a Qdrant probe.
 Each SQLite client uses its profile's database path; each Qdrant client uses its profile's collection.
 Personal remains `jarvis_fragments`; mom is `jarvis_mom_fragments`. Collections are created lazily
-only when absent and are never automatically reset. Point IDs and payloads are unchanged.
+only when absent and are never automatically reset. Payloads are unchanged. Newly indexed fragments
+use deterministic UUIDs; existing indexed fragments retain their recorded UUIDs.
+
+## Cleanup and recovery
+
+`jarvis.recovery.CleanupService` owns CLI invalidation. It selects actual input segment IDs in an
+inclusive range, validates the complete deletion set, and writes a durable intent under the active
+output root at `.jarvis-recovery/cleanup_<digest>.json` before mutating stores or files. The intent
+binds to the profile, database, output root, collection, and a hash of the Qdrant endpoint; it contains
+no service credentials. Cleanup never initializes an absent SQLite database or Qdrant collection.
+
+The dependency graph is segment summary -> all conversation topics, and extract -> statements ->
+fragments -> statement links/vectors/artifacts. Fragment invalidation preserves extracts/statements;
+summary invalidation preserves independent extracts/fragments. `SummaryStore.invalidate_stage`
+removes relational dependents in one scoped SQLite transaction. Required invalidation applies even
+without `--persist`. Standalone summaries have no relational persistence and clean only their pair
+of artifacts.
+
+After the journal is durable, cleanup removes SQLite records, confirms Qdrant deletion with
+`wait=True`, removes artifacts, then deletes the journal. If any step fails, the journal retains
+the known vector IDs and is replayed idempotently by the same command without `--force`. A narrower
+retry range is rejected if it excludes pending work. Other processing commands and search refuse
+to proceed while cleanup is pending; do not delete or edit a recovery journal to bypass this guard.
+This deliberately favors temporary missing data over stale retrieval. There is no rollback.
+
+Indexing records its intended point ID in `fragments.qdrant_point_id` with `embedded_at=NULL`
+before upsert. New IDs are UUIDv5 of `jarvis:fragment:<fragment_id>` in the URL namespace; a recorded
+legacy UUID is reused. A successful upsert followed by an interrupted SQLite completion update can
+therefore be retried at the same ID. Only a confirmed upsert sets `embedded_at`; search excludes
+unfinished indexing. A subsequent cleanup can also find and remove these pending point IDs.
+No SQLite schema, existing IDs, payloads, models, or vectors are migrated.
+
+`jarvis.artifacts` supplies flushed, fsynced temporary-file writes followed by atomic replacement,
+and validates cached outputs before reuse. Successful JSON can repair missing SQLite rows,
+statements, links, and Markdown. A fragment manifest publishes the complete model result before
+individual files, allowing interrupted rendering to finish without repeating inference. Topic input
+hashes invalidate changed boundary inputs/thresholds; unchanged topics resume individually.
+Oversized extracts checkpoint successful model batches as `.batch_<index>.json`, validated against
+an input/model/schema fingerprint. Automatic fragment recovery retains these checkpoints; explicit
+force and upstream extraction invalidation clear them. Failed batches make the segment partial.
+If validated JSON disagrees with partial/stale persisted content, cleanup preserves that JSON while
+invalidating the affected records and dependencies, then repairs persistence without model calls.
+Cleanup selects generated artifact names and refuses to delete an original export recorded in
+normalized provenance or the conversation's SQLite source metadata.
+
+Recovery assumes one writer per profile and stable filesystem/service boundaries during an
+operation; concurrent CLI/web writers are unsupported. Journals and fragment manifests are required
+recovery data and belong in backups. Lost/corrupt journals, manual database replacement/removal,
+and storage/device failure require operator recovery; fsync/rename is not a cross-store transaction
+or a guarantee against hardware loss. Historical orphan vectors created by older random-ID failures
+cannot be inferred automatically and are not migrated or swept. Web job cleanup/recovery remains
+outside this CLI rollout.
 
 ## Data Flow
 

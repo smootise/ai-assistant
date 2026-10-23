@@ -7,12 +7,30 @@ For system design, see [architecture.md](architecture.md).
 SQLite-only persistence does not contact Qdrant or construct an embedding client. This includes
 segment summaries, extracts/statements, and fragments/links without `--embed`, in CLI and web jobs.
 Topic detection uses its embedding service directly but does not need Qdrant. Indexing, retrieval,
-and explicit vector cleanup still require Qdrant; destructive `--force` behavior is unchanged.
+and required vector cleanup still require Qdrant.
 
-Phase 3 Commit 1 routes managed CLI paths from the resolved profile and validates them before
-processing. Non-personal CLI execution remains blocked until the separately reviewed cleanup
-commit. The personal examples below retain their default locations; `--inbox-dir` and ingestion
+Phase 3 routes managed CLI paths from the resolved profile and validates them before processing.
+CLI processing supports personal and non-personal profiles; `serve` and all Flask entrypoints
+remain personal-only until Phase 4. The personal examples below retain their default locations;
+`--inbox-dir` and ingestion
 `--output-dir` may override them only inside the active profile's inbox root.
+
+### Force and interrupted-run recovery
+
+Cleanup is delete-first and scoped to the selected profile/conversation and actual segment IDs
+inside an inclusive range. Invalid, negative, and reversed ranges fail before cleanup. Missing
+input indices are not inferred. When an existing database has affected records, cleanup applies
+even without `--persist`; absent databases and collections are never created for cleanup.
+
+If cleanup or processing fails, rerun the same command/range without `--force`. A durable file in
+`<output_root>/.jarvis-recovery/` retains pending deletions until SQLite, Qdrant, and artifact cleanup
+finish. Search and other processing refuse to continue while cleanup is pending. Keep the journal;
+Qdrant must be available if recorded point IDs require deletion. Successful regeneration reuses
+validated JSON and repairs missing persistence/Markdown. Partial/skipped outputs are retried and
+reported with a nonzero CLI status. Use one writer per profile; concurrent CLI/web writes are not
+supported. See [Architecture](architecture.md#cleanup-and-recovery) for consistency and limitations.
+Cleanup preserves unrelated filenames and rejects deletion sets containing recorded original
+exports, including exports whose names collide with a generated fragment artifact.
 
 ---
 
@@ -80,16 +98,18 @@ python -m jarvis.cli summarize-segments chatgpt \
 Each segment is summarized individually. The last 3 segment summaries (configurable via
 `--context-window`) are passed as rolling context so the model understands continuity.
 
-**Resume behavior:** if a segment's `.json` already exists in
-`OUTPUTS/<id>/segment_summaries/`, the LLM call is skipped and the file is loaded from disk.
-Re-run the same command after an interruption — only missing segments are processed.
+**Resume behavior:** valid successful JSON in `OUTPUTS/<id>/segment_summaries/` is reused.
+Missing, truncated, or incomplete outputs are regenerated. Missing Markdown is reconstructed,
+and `--persist` repairs missing SQLite summaries without repeating successful model calls.
 
 **Partial runs:** use `--from-segment` / `--to-segment` to summarize a specific range.
 Rolling context is pre-seeded from existing summaries before the range start.
 
 **Force re-run:** `--force` wipes output files and SQLite records for the specified
-range (or all segments if no range given), then re-summarizes. Segments outside the range are
-never touched.
+inclusive range (or all segments if no range given), then re-summarizes. Segment summaries outside
+the selected range remain untouched. All topics for that conversation are invalidated because
+topic boundaries depend on its complete summary sequence; extracts and fragments are independent.
+Existing persisted records are invalidated even if this invocation omits `--persist`.
 
 **SQLite rows written (with `--persist`):** `segment_summaries` — one row per segment, keyed on `segment_id`. No Qdrant writes at this stage.
 
@@ -151,6 +171,9 @@ python -m jarvis.cli detect-topics chatgpt \
 
 **Force re-run:** `--force` wipes all existing topic files and SQLite records for the
 conversation, then re-detects and re-summarizes from scratch.
+`--dry-run --force` never performs cleanup. Without force, unchanged boundary inputs/thresholds
+reuse validated topic JSON and repair missing Markdown/persistence. Changed inputs invalidate all
+conversation topics before regeneration. Valid completed topics survive an interrupted run.
 
 **Prerequisites:** segment summaries must exist in `OUTPUTS/<id>/segment_summaries/`.
 Run `summarize-segments` first.
@@ -244,7 +267,12 @@ attempt triggered) if any of these hold:
 
 After all 3 attempts fail validation, the extract receives `status: "partial"` with warnings.
 
-**SQLite rows written (with `--persist`):** `extracts` (one per segment) + `extract_statements` (one per attributed statement). Skips a segment if its extract row already exists — idempotent on re-run.
+**SQLite rows written (with `--persist`):** `extracts` (one per segment) + `extract_statements`
+(one per attributed statement), using deterministic IDs for idempotent repair.
+Validated extract files are reusable even when SQLite persistence was interrupted; existing rows
+do not suppress repair of missing statements. `--force` invalidates only selected extracts and
+their dependent fragments, links, vectors, and fragment artifacts. Parent segments and unrelated
+conversations remain intact. Partial/skipped outputs are retried and are not persisted as completed.
 
 ### Output layout
 
@@ -295,10 +323,18 @@ Raw block content (code, prompts, etc.) is never included in the retrieval text.
 
 **SQLite rows written (with `--persist`):** `fragments` + `fragment_statement_links`. With `--embed`, also updates `fragments.qdrant_point_id` after successful Qdrant upsert.
 
-**Idempotency:** if a fragment row already exists and has a `qdrant_point_id`, it is skipped entirely. If it exists but has no `qdrant_point_id` and `--embed` is set, only the Qdrant indexing step runs (no duplicate insert).
+**Idempotency:** validated fragment outputs repair missing rows/links. With `--embed`, indexing
+continues until `embedded_at` confirms completion, using the same point ID across retries.
+`--force` deletes only selected fragments, links, artifacts, and vectors; extracts/statements survive.
+A `fragment_manifest.json` contains the complete model result for each segment so incomplete
+artifact rendering can resume without repeating the model call. Legacy fragment sets are reused
+only when valid and covering their parent extract's statements.
+Large extracts retain successful `.batch_<index>.json` checkpoints so interrupted/failed batches
+can resume without repeating the successful calls. Invalid checkpoints are regenerated; explicit
+force clears them. A failed batch marks the fragment set partial rather than successful.
 
 **Qdrant collection:** selected by the resolved profile (`jarvis_fragments` for personal,
-`jarvis_mom_fragments` for mom). Non-personal pipeline workflows remain guarded during Phase 2.
+`jarvis_mom_fragments` for mom). All CLI pipeline workflows support the selected profile.
 Payload per point: `{fragment_id, parent_conversation_id, segment_id, conversation_date}`.
 Full fragment records are always fetched from SQLite. Embeddings use
 `EMBEDDING_OLLAMA_BASE_URL` when set, otherwise `OLLAMA_BASE_URL`; the model and existing

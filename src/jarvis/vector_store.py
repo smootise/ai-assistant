@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 COLLECTION_NAME = "jarvis_fragments"
 
 
+def fragment_point_id(fragment_id: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"jarvis:fragment:{fragment_id}"))
+
+
 class VectorStore:
     """Manages the Qdrant collection for fragment embeddings."""
 
@@ -61,6 +65,8 @@ class VectorStore:
         vector: List[float],
         fragment_id: str,
         payload: Dict[str, Any],
+        *,
+        point_id: str | None = None,
     ) -> str:
         """Insert or update a fragment vector point in Qdrant.
 
@@ -71,6 +77,7 @@ class VectorStore:
             vector: Dense float vector to store.
             fragment_id: SQLite fragment_id (stored in payload for cross-referencing).
             payload: Minimal metadata dict stored alongside the vector.
+            point_id: Recorded legacy UUID to retain, otherwise a deterministic fragment UUID.
 
         Returns:
             UUID string of the Qdrant point.
@@ -83,7 +90,7 @@ class VectorStore:
         self._ensure_collection(dim)
         self._validate_dimension(dim)
 
-        point_id = str(uuid.uuid4())
+        point_id = point_id or fragment_point_id(fragment_id)
         full_payload = {"fragment_id": fragment_id, **payload}
 
         try:
@@ -96,6 +103,7 @@ class VectorStore:
                         payload=full_payload,
                     )
                 ],
+                wait=True,
             )
         except Exception:
             raise RuntimeError("Qdrant upsert failed") from None

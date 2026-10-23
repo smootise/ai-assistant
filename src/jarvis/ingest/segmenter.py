@@ -16,11 +16,12 @@ Special cases:
   without dropping any, and advance the cursor.
 """
 
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from jarvis.artifacts import atomic_json
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ def segment_conversation(
                 while j < len(messages) and messages[j]["speaker"] == "assistant":
                     j += 1
                 # messages[i+1 .. j-1] are all assistant turns
-                assistant_msgs = messages[i + 1:j]
+                assistant_msgs = messages[i + 1 : j]
 
                 # Look ahead for the next user message (overlap anchor)
                 if j < len(messages) and messages[j]["speaker"] == "user":
@@ -239,8 +240,7 @@ def save_segments(
 
     for segment in segments:
         segment_path = output_dir / f"segment_{segment['segment_index']:03d}.json"
-        with open(segment_path, "w", encoding="utf-8") as f:
-            json.dump(segment, f, indent=2, ensure_ascii=False)
+        atomic_json(segment_path, segment)
 
     # Write pending tail if present
     if pending_tail:
@@ -250,14 +250,10 @@ def save_segments(
             "partial": True,
             "note": "Trailing unmatched user message. Will be segmented on next re-import.",
         }
-        with open(tail_path, "w", encoding="utf-8") as f:
-            json.dump(tail_doc, f, indent=2, ensure_ascii=False)
+        atomic_json(tail_path, tail_doc)
 
     # Write manifest
     manifest_path = output_dir.parent / "segment_manifest.json"
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest_meta, f, indent=2, ensure_ascii=False)
+    atomic_json(manifest_path, manifest_meta)
 
-    logger.info(
-        f"Wrote {len(segments)} segment files + manifest to {output_dir.parent}"
-    )
+    logger.info(f"Wrote {len(segments)} segment files + manifest to {output_dir.parent}")

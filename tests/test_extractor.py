@@ -9,7 +9,6 @@ import pytest
 
 from jarvis.extractor import SegmentExtractor
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -98,12 +97,16 @@ class TestExtractSegment:
     def test_degraded_response_sets_status(self, tmp_path):
         p = tmp_path / "prompts"
         p.mkdir()
-        (p / "extract_segment.md").write_text("Extract statements.\n---USER---\n{segment_text}", encoding="utf-8")
+        (p / "extract_segment.md").write_text(
+            "Extract statements.\n---USER---\n{segment_text}", encoding="utf-8"
+        )
         client = MagicMock()
         client.model = "gemma4:31b"
         client.generate_json.return_value = (_VALID_RESPONSE, False, "")
         client.parse_json_response.return_value = (
-            json.loads(_VALID_RESPONSE), True, "Stripped code fences"
+            json.loads(_VALID_RESPONSE),
+            True,
+            "Stripped code fences",
         )
         extractor = SegmentExtractor(
             ollama_client=client,
@@ -129,9 +132,7 @@ class TestExtractConversationSegments:
         segments_dir.mkdir(parents=True)
         for i in range(n):
             seg = _make_segment(i)
-            (segments_dir / f"segment_{i:03d}.json").write_text(
-                json.dumps(seg), encoding="utf-8"
-            )
+            (segments_dir / f"segment_{i:03d}.json").write_text(json.dumps(seg), encoding="utf-8")
 
     def test_raises_if_segments_dir_missing(self, prompts_dir, tmp_path):
         extractor = _make_extractor(prompts_dir)
@@ -162,12 +163,17 @@ class TestExtractConversationSegments:
         output_root = tmp_path / "OUTPUTS"
         extract_dir = output_root / "conv" / "extracts"
         extract_dir.mkdir(parents=True)
-        existing = {"source_kind": "ai_chat_extract", "segment_index": 0,
-                    "segment_id": "conv_s000", "parent_conversation_id": "conv",
-                    "statements": [], "status": "ok", "latency_ms": 0}
-        (extract_dir / "extract_000.json").write_text(
-            json.dumps(existing), encoding="utf-8"
-        )
+        existing = {
+            "source_kind": "ai_chat_extract",
+            "segment_index": 0,
+            "segment_id": "test-conv_s000",
+            "parent_conversation_id": "conv",
+            "statements": [],
+            "status": "ok",
+            "latency_ms": 0,
+            "model": "synthetic",
+        }
+        (extract_dir / "extract_000.json").write_text(json.dumps(existing), encoding="utf-8")
 
         results = extractor.extract_conversation_segments(
             segments_dir=segments_dir,
@@ -185,12 +191,16 @@ class TestExtractConversationSegments:
         output_root = tmp_path / "OUTPUTS"
         extract_dir = output_root / "conv" / "extracts"
         extract_dir.mkdir(parents=True)
-        existing = {"source_kind": "ai_chat_extract", "segment_index": 0,
-                    "segment_id": "conv_s000", "parent_conversation_id": "conv",
-                    "statements": [], "status": "ok", "latency_ms": 0}
-        (extract_dir / "extract_000.json").write_text(
-            json.dumps(existing), encoding="utf-8"
-        )
+        existing = {
+            "source_kind": "ai_chat_extract",
+            "segment_index": 0,
+            "segment_id": "conv_s000",
+            "parent_conversation_id": "conv",
+            "statements": [],
+            "status": "ok",
+            "latency_ms": 0,
+        }
+        (extract_dir / "extract_000.json").write_text(json.dumps(existing), encoding="utf-8")
 
         extractor.extract_conversation_segments(
             segments_dir=segments_dir,

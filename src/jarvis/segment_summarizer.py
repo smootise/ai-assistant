@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from jarvis.ollama import OllamaClient
 from jarvis.output_writer import OutputWriter
-
+from jarvis.artifacts import load_output, valid_output
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +71,7 @@ class SegmentSummarizer:
         segment_summaries_dir = output_root / conversation_id / "segment_summaries"
 
         segment_files = sorted(
-            f for f in segments_dir.glob("segment_*.json")
-            if f.name != "pending_tail.json"
+            f for f in segments_dir.glob("segment_*.json") if f.name != "pending_tail.json"
         )
 
         segments = []
@@ -82,7 +81,11 @@ class SegmentSummarizer:
 
         segments.sort(key=lambda s: s["segment_index"])
 
-        effective_to = to_segment if to_segment is not None else segments[-1]["segment_index"]
+        effective_to = (
+            to_segment
+            if to_segment is not None
+            else (segments[-1]["segment_index"] if segments else 0)
+        )
         selected = [s for s in segments if from_segment <= s["segment_index"] <= effective_to]
 
         if not selected:
@@ -102,14 +105,24 @@ class SegmentSummarizer:
         results: List[Tuple[Path, Dict[str, Any]]] = []
         for segment in selected:
             existing_path = segment_summaries_dir / f"{segment['segment_id']}.json"
-            if existing_path.exists():
+            output_data = load_output(
+                existing_path,
+                "ai_chat_segment",
+                {
+                    "segment_id": segment["segment_id"],
+                    "segment_index": segment["segment_index"],
+                    "parent_conversation_id": conversation_id,
+                },
+            )
+            if output_data is not None:
                 logger.info(
                     f"Skipping segment {segment['segment_index']} / "
                     f"{segments[-1]['segment_index']} "
                     f"({segment['segment_id']}) — summary already exists"
                 )
-                with open(existing_path, encoding="utf-8") as f:
-                    output_data = json.load(f)
+                markdown = existing_path.with_suffix(".md")
+                if not markdown.exists():
+                    OutputWriter(str(segment_summaries_dir))._write_markdown(markdown, output_data)
                 output_data["_from_disk"] = True
                 rolling_summaries.append(output_data.get("summary", ""))
                 results.append((segment_summaries_dir, output_data))
@@ -119,7 +132,7 @@ class SegmentSummarizer:
                 f"Summarizing segment {segment['segment_index']} / "
                 f"{segments[-1]['segment_index']} ({segment['segment_id']})"
             )
-            prior = rolling_summaries[-self.context_window:]
+            prior = rolling_summaries[-self.context_window :]
             output_dir, output_data = self.summarize_segment(
                 segment=segment,
                 prior_summaries=prior,
@@ -179,6 +192,8 @@ class SegmentSummarizer:
             run_id=run_id,
         )
 
+        if not valid_output(output_data, "ai_chat_segment"):
+            raise RuntimeError("Model returned an incomplete segment summary; rerun to retry")
         writer = OutputWriter(output_root=str(segment_summaries_dir), use_timestamp=False)
         output_dir = writer.write_outputs(
             summary_data=output_data,
@@ -203,9 +218,7 @@ class SegmentSummarizer:
 
         user_parts = []
         if prior_summaries:
-            context_lines = "\n".join(
-                f"Segment {i}: {s}" for i, s in enumerate(prior_summaries)
-            )
+            context_lines = "\n".join(f"Segment {i}: {s}" for i, s in enumerate(prior_summaries))
             user_parts.append(
                 f"---BEGIN PREVIOUS CONTEXT---\n{context_lines}\n---END PREVIOUS CONTEXT---"
             )

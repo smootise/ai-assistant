@@ -443,6 +443,42 @@ class SummaryStore:
         r["warnings"] = json.loads(r["warnings"]) if r["warnings"] else []
         return r
 
+    def invalidate_stage(self, stage: str, conversation_id: str, segment_ids: List[str]) -> None:
+        """Delete a scoped stage and its relational dependents in one transaction.
+
+        Vector identities must already be durable before calling this operation.
+        """
+        if stage not in {"summaries", "topics", "extracts", "fragments"}:
+            raise ValueError("Unknown cleanup stage")
+        with self._connect() as conn:
+            if stage in {"summaries", "topics"}:
+                conn.execute(
+                    "DELETE FROM topic_summaries WHERE conversation_id = ?", (conversation_id,)
+                )
+            for segment_id in segment_ids:
+                row = conn.execute(
+                    "SELECT segment_id FROM segments WHERE conversation_id = ? AND segment_id = ?",
+                    (conversation_id, segment_id),
+                ).fetchone()
+                if row is None:
+                    continue
+                if stage == "summaries":
+                    conn.execute(
+                        "DELETE FROM segment_summaries WHERE segment_id = ?", (segment_id,)
+                    )
+                if stage in {"extracts", "fragments"}:
+                    conn.execute(
+                        "DELETE FROM fragments WHERE extract_id IN "
+                        "(SELECT extract_id FROM extracts WHERE segment_id = ? "
+                        "AND parent_conversation_id = ?)",
+                        (segment_id, conversation_id),
+                    )
+                if stage == "extracts":
+                    conn.execute(
+                        "DELETE FROM extracts WHERE segment_id = ? AND parent_conversation_id = ?",
+                        (segment_id, conversation_id),
+                    )
+
     def delete_segment_summaries(self, conversation_id: str) -> None:
         """Delete all segment summaries for a conversation."""
         with self._connect() as conn:
@@ -654,6 +690,14 @@ class SummaryStore:
             row = conn.execute(sql, (fragment_id,)).fetchone()
         return dict(row) if row else None
 
+    def prepare_fragment_embedding(self, fragment_id: str, point_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE fragments SET qdrant_point_id = ?, embedded_at = NULL "
+                "WHERE fragment_id = ?",
+                (point_id, fragment_id),
+            )
+
     def update_fragment_embedding(
         self,
         fragment_id: str,
@@ -671,7 +715,9 @@ class SummaryStore:
             conn.execute(sql, (qdrant_point_id, embedding_model, embedded_at, fragment_id))
         logger.debug(f"Fragment {fragment_id} updated: qdrant_point_id={qdrant_point_id}")
 
-    def get_fragments_for_conversation(self, conversation_id: str) -> List[Dict[str, Any]]:
+    def get_fragments_for_conversation(
+        self, conversation_id: str, segment_ids: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
         """Fetch all fragment rows for a conversation (for --force cleanup)."""
         sql = """
             SELECT f.*
@@ -679,9 +725,15 @@ class SummaryStore:
             JOIN extracts e ON f.extract_id = e.extract_id
             WHERE e.parent_conversation_id = ?
         """
+        parameters = [conversation_id]
+        if segment_ids is not None:
+            if not segment_ids:
+                return []
+            sql += f" AND e.segment_id IN ({','.join('?' * len(segment_ids))})"
+            parameters.extend(segment_ids)
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(sql, (conversation_id,)).fetchall()
+            rows = conn.execute(sql, parameters).fetchall()
         return [dict(r) for r in rows]
 
     def delete_fragments(self, conversation_id: str) -> List[str]:
@@ -736,7 +788,7 @@ class SummaryStore:
         Returns the topic_id.
         """
         sql = """
-            INSERT OR IGNORE INTO topic_summaries (
+            INSERT INTO topic_summaries (
                 topic_id, conversation_id, topic_index, topic_segment_range,
                 summary, bullets, action_items, lang, status, warnings,
                 provider, model, latency_ms, created_at
@@ -745,6 +797,13 @@ class SummaryStore:
                 :summary, :bullets, :action_items, :lang, :status, :warnings,
                 :provider, :model, :latency_ms, :created_at
             )
+            ON CONFLICT(topic_id) DO UPDATE SET
+                topic_segment_range=excluded.topic_segment_range,
+                summary=excluded.summary, bullets=excluded.bullets,
+                action_items=excluded.action_items, lang=excluded.lang,
+                status=excluded.status, warnings=excluded.warnings,
+                provider=excluded.provider, model=excluded.model,
+                latency_ms=excluded.latency_ms, created_at=excluded.created_at
         """
         conv_id = data["parent_conversation_id"]
         topic_idx = data["topic_index"]

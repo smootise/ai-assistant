@@ -115,8 +115,12 @@ def load_normalized(path: Path) -> Optional[Dict[str, Any]]:
     """
     if not path.exists():
         return None
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        logger.warning("Invalid normalized artifact; rebuilding from the supplied raw export")
+        return None
 
 
 def normalized_write_paths(path: Path) -> tuple[Path, Path]:

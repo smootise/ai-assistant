@@ -48,6 +48,8 @@ def create_ollama_client(config: Mapping[str, Any]) -> OllamaClient:
 
 
 def build_memory_layer(config: Mapping[str, Any], *, read_only: bool = False) -> MemoryLayer:
+    from jarvis.recovery import check_search_ready
+
     resolved = dict(config)
     return MemoryLayer(
         store=(
@@ -57,4 +59,5 @@ def build_memory_layer(config: Mapping[str, Any], *, read_only: bool = False) ->
         ),
         vector_store_factory=lambda: create_vector_store(resolved),
         embedder_factory=lambda: create_embedding_client(resolved),
+        search_guard=lambda: check_search_ready(resolved),
     )

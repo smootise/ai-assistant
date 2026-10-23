@@ -1,11 +1,11 @@
-# Profiles — Through Phase 3 Commit 1
+# Profiles — Through Phase 3 Commit 2
 
 Phase 1 resolves and validates profiles and provides read-only configuration inspection.
 Phase 2 adds profile-aware SQLite/Qdrant clients, shared client factories, and independent
 service endpoints. Phase 3 Commit 1 adds filesystem boundaries and profile-derived CLI routing
-under the existing guards. Non-personal ingestion, processing, retrieval, background jobs, and serving remain guarded.
-Those operations fail before dispatch when a non-personal profile is selected. The Flask app
-factory applies the same guard, including the `python -m jarvis.web` entrypoint.
+with scoped cleanup and recovery in Commit 2. All processing CLI commands support the selected
+profile. Serving and web background workflows remain personal-only until Phase 4. Both `serve`
+and the Flask app factory retain their guards, including the `python -m jarvis.web` entrypoint.
 
 ## Inspect configuration
 
@@ -78,16 +78,11 @@ equal, contain, or sit beneath them, and reserved files cannot contain other res
 Windows ambiguous drive-relative, reserved, alternate-stream, and trailing-dot/space paths are
 rejected.
 
-Custom personal inboxes and collection names can be inspected but remain guarded for
-processing until pipeline and web isolation are complete. Existing personal
-database/output overrides continue to work. CLI directory-override confinement, pipeline path
-guards, and external-source provenance are implemented underneath the guards in Commit 1;
-profile-bound web operations remain deferred. Existing `--force` cleanup defects are not fixed
-in this phase; they require separately reviewable changesets and dedicated regression tests.
-Phase 2 routes cleanup calls to the selected collection and propagates Qdrant failures rather
-than reporting success. It does not change cleanup ordering, range selection, or cross-store
-atomicity: earlier file/SQLite cleanup may already have occurred when a service failure is reported.
-PST ingestion and optional source copying are outside this feature.
+Custom personal inboxes and collections are supported by the CLI with the same confinement rules
+as other profiles. Existing personal database/output overrides continue to work. Web restrictions
+remain unchanged. Commit 2 adds scoped, dependency-aware cleanup and interrupted-run recovery;
+it does not provide cross-store atomicity or rollback. PST ingestion and optional source copying
+remain outside this feature.
 
 ## Phase 2 storage and service construction
 
@@ -101,8 +96,9 @@ SQLite while Qdrant is unavailable, including web jobs. Explicit vector cleanup 
 
 `VectorStore(collection_name=...)` routes collection lookup, dimension validation, lazy creation,
 upserts, searches, and point deletions to that collection. The direct-constructor default remains
-`jarvis_fragments`. Personal keeps that collection; mom uses `jarvis_mom_fragments`. Point UUID
-generation and payloads are unchanged. Existing collections are never cleared or recreated.
+`jarvis_fragments`. Personal keeps that collection; mom uses `jarvis_mom_fragments`. Payloads remain
+unchanged. Commit 2 uses deterministic new point IDs and retains recorded existing UUIDs.
+Existing collections are never cleared or recreated.
 Deletion waits for Qdrant completion, and service failures propagate with sanitized messages.
 
 `SummaryStore(db_path)` retains schema v8 and its public interface. A missing file is created
@@ -165,12 +161,37 @@ read-only. Boundary validation runs before destructive cleanup; a legacy fragmen
 without persistence and without an existing database fails before cleanup instead of initializing
 one. Existing cleanup ordering, scope, and dependent-data invalidation remain unchanged.
 
-The public CLI and Flask guards are retained verbatim: `mom` is still inspection-only. Direct
+At Commit 1, the public CLI and Flask guards were retained: `mom` was inspection-only. Direct
 handler/pipeline tests exercise the infrastructure without unlocking the runtime. Commit 2 must
 separately fix destructive cleanup and recovery before non-personal CLI execution is enabled.
-Web profile routing, PST ingestion, migrations, and interrupted-run recovery are not implemented.
+Commit 2 implements CLI recovery and removes the processing guard as described below.
+Web profile routing, PST ingestion, and migrations remain unimplemented.
 Checks assume filesystem boundaries remain stable during a command; concurrent replacement of
 symlinks/junctions is not supported.
+
+## Phase 3 Commit 2: cleanup, recovery, and CLI rollout
+
+`summarize`, `ingest`, `summarize-segments`, `detect-topics`, `extract-segments`,
+`fragment-extracts`, `retrieve`, and `answer` now execute for the selected profile. For example:
+
+```bash
+python -m jarvis.cli --profile mom ingest chatgpt --file /path/to/export.json --persist
+python -m jarvis.cli --profile mom extract-segments chatgpt --conversation-id <id> --persist
+python -m jarvis.cli --profile mom fragment-extracts chatgpt --conversation-id <id> --persist --embed
+```
+
+All filesystem, SQLite, and Qdrant operations use that profile's resolved resources. `config show`
+remains read-only; retrieval/answer still fail without creating resources on an uninitialized profile.
+`--force` has inclusive, validated selection boundaries and automatic dependency invalidation,
+even when `--persist` is omitted. Dry-run topic detection never cleans up. Cleanup never creates
+a missing database or collection. Rerun an interrupted command without force to complete its
+durable cleanup intent and repair valid artifact persistence. See [Pipeline](pipeline.md) and
+[Architecture](architecture.md#cleanup-and-recovery) for the dependency graph and recovery protocol.
+
+Schema v8 and existing personal data formats/IDs remain compatible. No automatic re-embedding,
+migration, collection reset, or source mutation is performed. New fragment manifests and profile
+cleanup journals are required recovery artifacts. Keep them with backups. One writer per profile
+is supported; web job cleanup/recovery and multi-profile serving remain deferred to Phase 4.
 
 ## Mandatory checkpoint before real-data deployment
 

@@ -16,8 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from jarvis.embedder import EmbeddingClient
 from jarvis.ollama import OllamaClient
 from jarvis.output_writer import OutputWriter
+from jarvis.artifacts import load_output, valid_output
 from jarvis.vector_store import VectorStore
-
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
     """Compute cosine similarity between two vectors (pure Python, no numpy)."""
     dot = sum(x * y for x, y in zip(a, b))
-    norm_a = sum(x ** 2 for x in a) ** 0.5
-    norm_b = sum(x ** 2 for x in b) ** 0.5
+    norm_a = sum(x**2 for x in a) ** 0.5
+    norm_b = sum(x**2 for x in b) ** 0.5
     return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
 
 
@@ -136,6 +136,22 @@ class TopicDetector:
 
         results = []
         for topic_idx, topic_segments in enumerate(topics):
+            segment_ids = [segment["segment_id"] for segment in topic_segments]
+            expected = {
+                "parent_conversation_id": conversation_id,
+                "topic_index": topic_idx,
+                "topic_segment_range": f"{segment_ids[0]}-{segment_ids[-1]}",
+            }
+            path = topic_summaries_dir / f"topic_{topic_idx:03d}.json"
+            cached = load_output(path, "ai_chat_topic", expected)
+            if cached is not None:
+                cached["segment_ids"] = segment_ids
+                markdown = path.with_suffix(".md")
+                if not markdown.exists():
+                    OutputWriter(str(topic_summaries_dir))._write_markdown(markdown, cached)
+                cached["_from_disk"] = True
+                results.append((topic_summaries_dir, cached))
+                continue
             output_dir, output_data = self.summarize_topic(
                 topic_segments=topic_segments,
                 topic_index=topic_idx,
@@ -232,6 +248,7 @@ class TopicDetector:
             "source_kind": "ai_chat_topic",
             "topic_index": topic_index,
             "topic_segment_range": segment_range,
+            "segment_ids": [segment["segment_id"] for segment in topic_segments],
             "parent_conversation_id": conversation_id,
             "provider": "local",
             "model": self._ollama.model,
@@ -249,6 +266,8 @@ class TopicDetector:
         if run_id:
             output_data["run_id"] = run_id
 
+        if not valid_output(output_data, "ai_chat_topic"):
+            raise RuntimeError("Model returned an incomplete topic summary; rerun to retry")
         writer = OutputWriter(
             output_root=str(topic_summaries_dir),
             use_timestamp=False,
@@ -257,10 +276,7 @@ class TopicDetector:
             summary_data=output_data,
             source_file=f"topic_{topic_index:03d}.json",
         )
-        logger.info(
-            f"Topic {topic_index} summarized → {output_dir} "
-            f"(segments {segment_range})"
-        )
+        logger.info(f"Topic {topic_index} summarized → {output_dir} " f"(segments {segment_range})")
         return output_dir, output_data
 
     # ------------------------------------------------------------------
@@ -286,13 +302,8 @@ class TopicDetector:
         Returns:
             List of float vectors in the same order as segment_summaries.
         """
-        logger.info(
-            f"Embedding {len(segment_summaries)} segment summaries for topic detection"
-        )
-        return [
-            self._embedder.embed(_build_embedding_text(ss))
-            for ss in segment_summaries
-        ]
+        logger.info(f"Embedding {len(segment_summaries)} segment summaries for topic detection")
+        return [self._embedder.embed(_build_embedding_text(ss)) for ss in segment_summaries]
 
     def _load_prompt_template(self) -> str:
         """Load the topic summarization prompt template (cached)."""

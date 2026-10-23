@@ -206,7 +206,7 @@ def test_invalid_ingest_routes_fail_before_writes(
 def test_invalid_paths_rejected_before_force_cleanup(profile_repo: Path, stage: str) -> None:
     config = load_config()
     with (
-        patch("jarvis.cli.create_summary_store", side_effect=AssertionError("No cleanup")),
+        patch("jarvis.recovery.create_summary_store", side_effect=AssertionError("No cleanup")),
         patch("jarvis.cli.create_ollama_client", side_effect=AssertionError("No inference")),
     ):
         assert (
@@ -240,7 +240,7 @@ def test_invalid_artifacts_prevent_all_force_cleanup(profile_repo: Path, stage: 
     artifact.write_text('{"segment_id": "../escape"}', encoding="utf-8")
     before = artifact.read_bytes(), artifact.stat().st_mtime_ns
     with (
-        patch("jarvis.cli.create_summary_store", side_effect=AssertionError("No cleanup")),
+        patch("jarvis.recovery.create_summary_store", side_effect=AssertionError("No cleanup")),
         patch("jarvis.cli.create_ollama_client", side_effect=AssertionError("No inference")),
     ):
         assert getattr(cli, f"cmd_{stage}")(processing_args(force=True), config) == 1
@@ -251,7 +251,7 @@ def test_force_without_persistence_never_initializes_missing_database(profile_re
     config = load_config()
     (Path(config["output_root"]) / "shared-conversation/extracts").mkdir(parents=True)
     before = sorted(profile_repo.rglob("*"))
-    assert cli.cmd_fragment_extracts(processing_args(force=True), config) == 1
+    assert cli.cmd_fragment_extracts(processing_args(force=True), config) == 0
     assert sorted(profile_repo.rglob("*")) == before
     assert not Path(config["db_path"]).exists()
 

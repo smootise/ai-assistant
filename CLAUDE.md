@@ -22,6 +22,7 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 > Update this section at the end of any session where meaningful progress is made.
 
 ### Done
+- Phase 3 Commit 2: scoped delete-first CLI cleanup, dependency invalidation, durable profile recovery journals, atomic validated artifacts, idempotent SQLite repair, and deterministic/reused Qdrant IDs. All processing CLI commands support profiles; serving and web jobs remain personal-only until Phase 4. Schema v8 and existing indexed UUIDs are preserved; synthetic tests only.
 - Phase 3 Commit 1 review fix: include normalization staging files in source/output collision preflight; reject raw exports at `normalized.tmp` before any writes and preserve the original source.
 - Phase 3 Commit 1: shared profile filesystem boundaries, profile-derived CLI directory defaults, read-only external-source provenance, and non-creating SQLite retrieval/answer access. CLI/web runtime guards remain unchanged; destructive cleanup correctness and recovery are reserved for Commit 2.
 - Phase 2 review fix: defer memory-layer Qdrant/embedding clients until first use so SQLite-only CLI and web persistence works without Qdrant; remove the unused topic-detection Qdrant probe. Destructive cleanup and later phases remain deferred.
@@ -47,7 +48,7 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 - Web UI retrieve + answer: Search page (semantic fragment retrieval with scores and links); Answer page (single-turn RAG with clickable citation traceability to fragment→extract→segment); synchronous; reuses `run_retrieval`/`generate_answer` helpers extracted from CLI
 
 ### Planned
-- Profile Phase 3 Commit 2 and Phases 4–5: separately reviewed cleanup/recovery fixes before unlocking multi-profile CLI, then profile-bound web/jobs. Real-data deployment requires verified SQLite/Qdrant/source/artifact backups; do not use destructive rebuild workflows.
+- Phase 3 Commit 3 and Phases 4–5 remain separately reviewed; profile-bound web/jobs are deferred. Real-data deployment requires verified SQLite/Qdrant/source/artifact/recovery-journal backups; do not use destructive rebuild workflows.
 - Token-budget retrieval: replace flat `--top-k` with `--max-context-tokens` to handle variable fragment sizes
 - `summarize` (single-file) `--persist`: wire standalone files through the same ingest→extract→fragment pipeline
 - TrueNAS deployment: migrate JARVIS services (Ollama, Qdrant, backend) to run on TrueNAS
@@ -81,7 +82,7 @@ Precedence: **CLI flag > ENV / `.env` > `config.yaml`**
 
 | Variable | Default | Notes |
 |---|---|---|
-| `JARVIS_PROFILE` | `personal` | Global `--profile` takes precedence; non-personal workflows remain inspection-only in Phase 2. See `docs/profiles.md`. |
+| `JARVIS_PROFILE` | `personal` | Global `--profile` takes precedence; CLI processing supports profiles, serving remains personal-only. See `docs/profiles.md`. |
 | `JARVIS_PROVIDER` | `local` | `local` \| `openai` \| `benchmark` |
 | `LOCAL_MODEL_NAME` | `gemma4:31b` | Ollama model for inference |
 | `OPENAI_API_KEY` | — | Required only for `openai`/`benchmark`. Never commit. |

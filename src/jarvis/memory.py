@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from jarvis.embedder import EmbeddingClient
 from jarvis.store import SummaryStore
-from jarvis.vector_store import VectorStore
+from jarvis.vector_store import VectorStore, fragment_point_id
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +31,12 @@ class MemoryLayer:
         *,
         vector_store_factory: Optional[Callable[[], VectorStore]] = None,
         embedder_factory: Optional[Callable[[], EmbeddingClient]] = None,
+        search_guard: Optional[Callable[[], None]] = None,
     ) -> None:
         self.store = store
         self._vector_store_factory = vector_store_factory
         self._embedder_factory = embedder_factory
+        self._search_guard = search_guard
         if vector_store is not None:
             self.vector_store = vector_store
         if embedder is not None:
@@ -45,6 +47,10 @@ class MemoryLayer:
         if self._vector_store_factory is None:
             raise RuntimeError("No vector store configured for this memory layer")
         return self._vector_store_factory()
+
+    def check_search_ready(self) -> None:
+        if self._search_guard is not None:
+            self._search_guard()
 
     @cached_property
     def embedder(self) -> EmbeddingClient:
@@ -113,18 +119,14 @@ class MemoryLayer:
         statements = output_data.get("statements", [])
         if statements:
             self.store.insert_statements(extract_id, statements)
-        logger.debug(
-            f"Extract persisted: {extract_id} ({len(statements)} statements)"
-        )
+        logger.debug(f"Extract persisted: {extract_id} ({len(statements)} statements)")
         return extract_id
 
     # ------------------------------------------------------------------
     # Fragment persistence
     # ------------------------------------------------------------------
 
-    def persist_fragment_with_links(
-        self, output_data: Dict[str, Any], extract_id: str
-    ) -> str:
+    def persist_fragment_with_links(self, output_data: Dict[str, Any], extract_id: str) -> str:
         """Insert fragment row + statement link rows.
 
         Idempotent: INSERT OR IGNORE on (extract_id, fragment_index).
@@ -148,17 +150,25 @@ class MemoryLayer:
 
         # Build statement_ids from linked statements (using deterministic IDs)
         statements = output_data.get("statements", [])
-        statement_ids = [
-            f"{extract_id}_st{s['statement_index']:04d}"
-            for s in statements
-            if isinstance(s.get("statement_index"), int)
-        ]
+        by_text = {
+            (s["speaker"], s["text"]): s["statement_id"]
+            for s in self.store.get_statements_for_extract(extract_id)
+        }
+        statement_ids = []
+        for statement in statements:
+            index = statement.get("statement_index")
+            if type(index) is int:
+                statement_ids.append(f"{extract_id}_st{index:04d}")
+            else:
+                key = (statement["speaker"], statement["text"])
+                if key not in by_text:
+                    raise ValueError("Fragment statement is missing from its parent extract")
+                statement_ids.append(by_text[key])
         if statement_ids:
             self.store.insert_fragment_links(fragment_id, statement_ids)
 
         logger.debug(
-            f"Fragment persisted: {fragment_id} "
-            f"({len(statement_ids)} statement links)"
+            f"Fragment persisted: {fragment_id} " f"({len(statement_ids)} statement links)"
         )
         return fragment_id
 
@@ -166,9 +176,7 @@ class MemoryLayer:
     # Fragment Qdrant indexing
     # ------------------------------------------------------------------
 
-    def index_fragment_in_qdrant(
-        self, fragment_id: str, output_data: Dict[str, Any]
-    ) -> str:
+    def index_fragment_in_qdrant(self, fragment_id: str, output_data: Dict[str, Any]) -> str:
         """Embed retrieval_text and upsert fragment into Qdrant.
 
         Writes qdrant_point_id back to the fragments table on success.
@@ -184,9 +192,7 @@ class MemoryLayer:
             RuntimeError: On embedding or Qdrant upsert failure.
         """
         retrieval_text = (output_data.get("text") or "").strip()
-        logger.debug(
-            f"Embedding fragment {fragment_id} ({len(retrieval_text)} chars)"
-        )
+        logger.debug(f"Embedding fragment {fragment_id} ({len(retrieval_text)} chars)")
 
         try:
             vector = self.embedder.embed(retrieval_text)
@@ -201,11 +207,17 @@ class MemoryLayer:
             "conversation_date": output_data.get("conversation_date"),
         }
 
+        existing = self.store.get_fragment(fragment_id)
+        if existing is None:
+            raise ValueError("Cannot index an unpersisted fragment")
+        point_id = (existing or {}).get("qdrant_point_id") or fragment_point_id(fragment_id)
+        self.store.prepare_fragment_embedding(fragment_id, point_id)
         try:
             point_id = self.vector_store.upsert(
                 vector=vector,
                 fragment_id=fragment_id,
                 payload=payload,
+                point_id=point_id,
             )
         except (ValueError, RuntimeError) as e:
             logger.error(f"Qdrant upsert failed for fragment {fragment_id}: {e}")
@@ -216,7 +228,5 @@ class MemoryLayer:
             qdrant_point_id=point_id,
             embedding_model=self.embedder.model,
         )
-        logger.info(
-            f"Indexed fragment {fragment_id} in Qdrant (point={point_id})"
-        )
+        logger.info(f"Indexed fragment {fragment_id} in Qdrant (point={point_id})")
         return point_id

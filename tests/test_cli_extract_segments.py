@@ -14,10 +14,10 @@ import pytest
 
 from jarvis.cli import cmd_extract_segments
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_output_data(
     seg_idx: int = 0,
@@ -113,6 +113,7 @@ def _canned_results(conv_id: str = "conv-001") -> List[Tuple[Path, Dict[str, Any
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestNoFlags:
     """No --persist → disk artifacts only."""
 
@@ -170,7 +171,7 @@ class TestPersistFlag:
         assert rc == 0
         assert mock_memory.persist_extract_with_statements.call_count == len(results)
 
-    def test_already_persisted_extract_skipped(self, tmp_path):
+    def test_existing_extract_is_rechecked_for_statement_repair(self, tmp_path):
         config = _make_config(tmp_path)
         args = _make_args(persist=True, inbox_dir=config["inbox_dir"])
         results = _canned_results()
@@ -189,7 +190,7 @@ class TestPersistFlag:
             rc = cmd_extract_segments(args, config)
 
         assert rc == 0
-        mock_memory.persist_extract_with_statements.assert_not_called()
+        assert mock_memory.persist_extract_with_statements.call_count == len(results)
 
     def test_persist_from_disk_results(self, tmp_path):
         """Resume path: results loaded from disk are persisted to SQLite."""

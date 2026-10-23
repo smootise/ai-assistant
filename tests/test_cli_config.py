@@ -53,14 +53,19 @@ def test_config_show_has_no_storage_or_service_side_effects(
         (["fragment-extracts", "chatgpt", "--conversation-id", "test"], "cmd_fragment_extracts"),
     ],
 )
-def test_non_personal_commands_fail_before_dispatch(
+def test_non_personal_cli_dispatches_processing_but_keeps_serve_guarded(
     profile_repo: Path, monkeypatch: pytest.MonkeyPatch, arguments: list[str], handler: str
 ) -> None:
     monkeypatch.setattr(sys, "argv", ["jarvis", "--profile", "mom", *arguments])
-    with patch.object(cli, handler) as command, pytest.raises(SystemExit) as error:
-        cli.main()
-    assert error.value.code == 2
-    command.assert_not_called()
+    with patch.object(cli, handler, return_value=0) as command:
+        if handler == "cmd_serve":
+            with pytest.raises(SystemExit) as error:
+                cli.main()
+            assert error.value.code == 2
+            command.assert_not_called()
+        else:
+            assert cli.main() == 0
+            assert command.call_args.args[1]["profile_name"] == "mom"
     assert not (profile_repo / "data").exists()
 
 

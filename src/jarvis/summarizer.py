@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from jarvis.ollama import OllamaClient
 from jarvis.output_writer import OutputWriter
+from jarvis.artifacts import valid_output
 from jarvis.paths import source_provenance
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,8 @@ class ConversationSummarizer:
         )
 
         output_data["source_provenance"] = [source_provenance(file_path)]
+        if not valid_output(output_data, "conversation"):
+            raise RuntimeError("Model returned an incomplete conversation summary; rerun to retry")
 
         # Write outputs
         output_dir = self.output_writer.write_outputs(

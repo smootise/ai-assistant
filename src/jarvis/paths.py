@@ -98,7 +98,9 @@ def validate_record(data: Any, conversation_id: str | None = None) -> None:
             validate_record(value, conversation_id)
 
 
-def validate_tree(root: Path, value: Path, conversation_id: str | None = None) -> None:
+def validate_tree(
+    root: Path, value: Path, conversation_id: str | None = None, *, repairable: bool = False
+) -> None:
     pending = [value]
     visited: set[Path] = set()
     while pending:
@@ -109,8 +111,14 @@ def validate_tree(root: Path, value: Path, conversation_id: str | None = None) -
         if path.is_dir():
             pending.extend(path.iterdir())
         elif path.is_file() and path.suffix == ".json":
-            with path.open(encoding="utf-8") as stream:
-                validate_record(json.load(stream), conversation_id)
+            try:
+                with path.open(encoding="utf-8") as stream:
+                    data = json.load(stream)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                if repairable:
+                    continue
+                raise
+            validate_record(data, conversation_id)
 
 
 @dataclass(frozen=True)

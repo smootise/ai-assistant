@@ -48,17 +48,12 @@ def test_cli_cleanup_failure_stops_processing(tmp_path: Path, stage: str) -> Non
         to_segment=0,
         inbox_dir=str(tmp_path / "inbox"),
     )
-    store = MagicMock()
-    store.delete_extracts.return_value = ["point"]
-    store.delete_fragments.return_value = ["point"]
-    vectors = MagicMock()
-    vectors.delete_points.side_effect = RuntimeError("Qdrant delete failed")
     with (
-        patch("jarvis.cli.create_summary_store", return_value=store),
-        patch("jarvis.cli.create_vector_store", return_value=vectors) as create,
+        patch("jarvis.cli.CleanupService") as cleanup,
         patch("jarvis.cli.create_ollama_client") as inference,
     ):
+        cleanup.return_value.prepare.side_effect = RuntimeError("Qdrant delete failed")
         handler = cli.cmd_extract_segments if stage == "extract" else cli.cmd_fragment_extracts
         assert handler(args, config) == 1
-    create.assert_called_once_with(config)
+    cleanup.assert_called_once_with(config)
     inference.assert_not_called()

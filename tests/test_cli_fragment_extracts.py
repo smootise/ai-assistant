@@ -17,10 +17,10 @@ import pytest
 
 from jarvis.cli import cmd_fragment_extracts
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_output_data(
     fragment_index: int,
@@ -98,6 +98,7 @@ def _canned_results(conv_id: str = "conv-001") -> Tuple[List, List]:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestNoFlags:
     """No --persist, no --embed → disk artifacts only."""
 
@@ -111,7 +112,8 @@ class TestNoFlags:
             patch("jarvis.cli._build_memory_layer") as mock_build,
         ):
             MockFragmenter.return_value.fragment_conversation_extracts.return_value = (
-                results, skipped
+                results,
+                skipped,
             )
             rc = cmd_fragment_extracts(args, config)
 
@@ -128,7 +130,8 @@ class TestNoFlags:
             patch("jarvis.cli._build_memory_layer") as mock_build,
         ):
             MockFragmenter.return_value.fragment_conversation_extracts.return_value = (
-                results, skipped
+                results,
+                skipped,
             )
             mock_memory = MagicMock()
             mock_build.return_value = mock_memory
@@ -151,7 +154,8 @@ class TestPersistOnly:
             patch("jarvis.cli._build_memory_layer") as mock_build,
         ):
             MockFragmenter.return_value.fragment_conversation_extracts.return_value = (
-                results, skipped
+                results,
+                skipped,
             )
             mock_memory = MagicMock()
             mock_memory.store.get_fragment.return_value = None
@@ -167,7 +171,7 @@ class TestPersistOnly:
         assert mock_memory.persist_fragment_with_links.call_count == len(results)
         mock_memory.index_fragment_in_qdrant.assert_not_called()
 
-    def test_already_persisted_fragment_skipped(self, tmp_path):
+    def test_existing_fragment_links_are_rechecked(self, tmp_path):
         config = _make_config(tmp_path)
         args = _make_args(persist=True, embed=False)
         results, skipped = _canned_results()
@@ -177,20 +181,22 @@ class TestPersistOnly:
             patch("jarvis.cli._build_memory_layer") as mock_build,
         ):
             MockFragmenter.return_value.fragment_conversation_extracts.return_value = (
-                results, skipped
+                results,
+                skipped,
             )
             mock_memory = MagicMock()
             # Already persisted and embedded
             mock_memory.store.get_fragment.return_value = {
                 "fragment_id": "conv-001_s000_x_f000",
                 "qdrant_point_id": "abc-123",
+                "embedded_at": "2026-01-01T00:00:00Z",
             }
             mock_build.return_value = mock_memory
 
             rc = cmd_fragment_extracts(args, config)
 
         assert rc == 0
-        mock_memory.persist_fragment_with_links.assert_not_called()
+        assert mock_memory.persist_fragment_with_links.call_count == len(results)
         mock_memory.index_fragment_in_qdrant.assert_not_called()
 
 
@@ -208,7 +214,8 @@ class TestPersistAndEmbed:
             patch("jarvis.cli._build_memory_layer") as mock_build,
         ):
             MockFragmenter.return_value.fragment_conversation_extracts.return_value = (
-                results, skipped
+                results,
+                skipped,
             )
             mock_memory = MagicMock()
             mock_memory.store.get_fragment.return_value = None
@@ -242,7 +249,8 @@ class TestPersistAndEmbed:
             patch("jarvis.cli._build_memory_layer") as mock_build,
         ):
             MockFragmenter.return_value.fragment_conversation_extracts.return_value = (
-                results, skipped
+                results,
+                skipped,
             )
             mock_memory = MagicMock()
             # Already in SQLite, not yet in Qdrant
@@ -250,12 +258,16 @@ class TestPersistAndEmbed:
                 "fragment_id": "stub",  # existing row; CLI uses its derived fragment_id
                 "qdrant_point_id": None,
             }
+            mock_memory.persist_fragment_with_links.side_effect = [
+                "conv-001_s000_x_f000",
+                "conv-001_s000_x_f001",
+            ]
             mock_build.return_value = mock_memory
 
             rc = cmd_fragment_extracts(args, config)
 
         assert rc == 0
-        mock_memory.persist_fragment_with_links.assert_not_called()
+        assert mock_memory.persist_fragment_with_links.call_count == len(results)
         # Both fragments should be indexed (they have no qdrant_point_id)
         assert mock_memory.index_fragment_in_qdrant.call_count == len(results)
         _, out0 = results[0]
@@ -279,19 +291,21 @@ class TestPersistAndEmbed:
             patch("jarvis.cli._build_memory_layer") as mock_build,
         ):
             MockFragmenter.return_value.fragment_conversation_extracts.return_value = (
-                results, skipped
+                results,
+                skipped,
             )
             mock_memory = MagicMock()
             mock_memory.store.get_fragment.return_value = {
                 "fragment_id": "conv-001_s000_x_f000",
                 "qdrant_point_id": "abc-123",
+                "embedded_at": "2026-01-01T00:00:00Z",
             }
             mock_build.return_value = mock_memory
 
             rc = cmd_fragment_extracts(args, config)
 
         assert rc == 0
-        mock_memory.persist_fragment_with_links.assert_not_called()
+        assert mock_memory.persist_fragment_with_links.call_count == len(results)
         mock_memory.index_fragment_in_qdrant.assert_not_called()
 
 
@@ -301,8 +315,10 @@ class TestEmbedWithoutPersist:
     def test_fails_with_exit_code_2(self, tmp_path, capsys):
         test_argv = [
             "jarvis.cli",
-            "fragment-extracts", "chatgpt",
-            "--conversation-id", "conv-001",
+            "fragment-extracts",
+            "chatgpt",
+            "--conversation-id",
+            "conv-001",
             "--embed",
         ]
         with (
@@ -311,6 +327,7 @@ class TestEmbedWithoutPersist:
             pytest.raises(SystemExit) as exc_info,
         ):
             from jarvis.cli import main
+
             main()
 
         assert exc_info.value.code == 2
@@ -319,8 +336,10 @@ class TestEmbedWithoutPersist:
     def test_error_message_mentions_persist(self, tmp_path, capsys):
         test_argv = [
             "jarvis.cli",
-            "fragment-extracts", "chatgpt",
-            "--conversation-id", "conv-001",
+            "fragment-extracts",
+            "chatgpt",
+            "--conversation-id",
+            "conv-001",
             "--embed",
         ]
         with (
@@ -328,6 +347,7 @@ class TestEmbedWithoutPersist:
             pytest.raises(SystemExit),
         ):
             from jarvis.cli import main
+
             main()
 
         captured = capsys.readouterr()

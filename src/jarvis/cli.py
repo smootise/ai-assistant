@@ -2,19 +2,19 @@
 
 import argparse
 import copy
-import json
 import logging
+import re
 import sys
 from functools import wraps
 from pathlib import Path
 from typing import Callable
 
+from jarvis.artifacts import load_output
+from jarvis.recovery import CleanupService, STAGES, check_search_ready, validate_range
 from jarvis.segment_summarizer import SegmentSummarizer
 from jarvis.memory import MemoryLayer
 from jarvis.clients import (
     build_memory_layer as _build_memory_layer,
-    create_summary_store,
-    create_vector_store,
     create_embedding_client,
     create_ollama_client,
 )
@@ -63,7 +63,9 @@ def profile_routed(command: str) -> Callable[[CommandHandler], CommandHandler]:
                     args.file = str(paths.source(args.file))
                 if command == "summarize":
                     basename = identifier(Path(args.file).stem, "source basename")
-                    validate_tree(paths.context.output_root, paths.output(basename))
+                    validate_tree(
+                        paths.context.output_root, paths.output(basename), repairable=True
+                    )
                     if Path(args.file) == paths.output(basename, f"{basename}.json"):
                         raise PathBoundaryError(f"Source overlaps generated output: {args.file}")
                 elif command == "ingest":
@@ -76,19 +78,19 @@ def profile_routed(command: str) -> Callable[[CommandHandler], CommandHandler]:
                         paths.conversation(conv_id, args.inbox_dir),
                         conv_id,
                     )
-                    validate_tree(paths.context.output_root, paths.output(conv_id), conv_id)
-                    if (
-                        command == "fragment-extracts"
-                        and getattr(args, "force", False)
-                        and not getattr(args, "persist", False)
-                        and not paths.context.db_path.is_file()
-                    ):
-                        raise PathBoundaryError(
-                            "Legacy fragment --force cleanup requires an initialized database; "
-                            "no database was created"
-                        )
+                    validate_tree(
+                        paths.context.output_root, paths.output(conv_id), conv_id, repairable=True
+                    )
+                if command in STAGES:
+                    validate_range(
+                        getattr(args, "from_segment", None), getattr(args, "to_segment", None)
+                    )
+                    if not getattr(args, "dry_run", False):
+                        CleanupService(config).prepare(STAGES[command], args)
+                elif command in {"summarize", "ingest", "retrieve", "answer"}:
+                    check_search_ready(config)
                 return handler(args, config)
-            except (ValueError, OSError) as exc:
+            except (ValueError, OSError, RuntimeError) as exc:
                 logging.getLogger(__name__).error("Invalid managed path or artifact: %s", exc)
                 return 1
 
@@ -125,6 +127,15 @@ def cmd_summarize(args: argparse.Namespace, config: dict) -> int:
             logger.info(f"--force: wiped existing outputs for {source_basename}")
         elif json_path.exists():
             pass  # OutputWriter will overwrite; no DB record to clean up
+
+        cached = load_output(json_path, "conversation")
+        if cached:
+            from jarvis.paths import source_provenance
+
+            if source_provenance(input_file) in cached.get("source_provenance", []):
+                if not md_path.exists():
+                    OutputWriter(str(output_root))._write_markdown(md_path, cached)
+                return 0
 
         ollama_client = create_ollama_client(config)
         output_writer = OutputWriter(output_root=str(output_root))
@@ -191,6 +202,7 @@ def run_retrieval(
     get_fragments_with_statements and scores maps fragment_id → similarity score.
     Returns ([], {}) when no hits pass the hybrid cutoff.
     """
+    memory.check_search_ready()
     query_vector = memory.embedder.embed(query)
     hits = memory.vector_store.search(query_vector=query_vector, top_k=top_k)
     hits = _apply_hybrid_cutoff(hits, min_results, min_score)
@@ -199,6 +211,7 @@ def run_retrieval(
     fragment_ids = [fid for fid, _, _ in hits]
     scores = {fid: score for fid, score, _ in hits}
     rows = memory.store.get_fragments_with_statements(fragment_ids)
+    rows = [row for row in rows if row.get("embedded_at") or "embedded_at" not in row]
     return rows, scores
 
 
@@ -421,34 +434,6 @@ def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
     to_segment = args.to_segment
 
     try:
-        if args.force:
-            segment_files = sorted(
-                f for f in segments_dir.glob("segment_*.json") if f.name != "pending_tail.json"
-            )
-            affected_segment_ids = []
-            for sf in segment_files:
-                with open(sf, encoding="utf-8") as fh:
-                    sd = json.load(fh)
-                idx = sd["segment_index"]
-                effective_to = to_segment if to_segment is not None else float("inf")
-                if from_segment <= idx <= effective_to:
-                    affected_segment_ids.append(sd["segment_id"])
-
-            for sid in affected_segment_ids:
-                for ext in (".json", ".md"):
-                    p = segment_summaries_dir / f"{sid}{ext}"
-                    if p.exists():
-                        p.unlink()
-
-            if args.persist:
-                store = create_summary_store(config)
-                store.delete_segment_summaries(args.conversation_id)
-
-            logger.info(
-                f"--force: wiped {len(affected_segment_ids)} segment summaries "
-                f"(range [{from_segment}, {'end' if to_segment is None else to_segment}])"
-            )
-
         ollama_client = create_ollama_client(config)
         summarizer = SegmentSummarizer(
             ollama_client=ollama_client,
@@ -487,9 +472,7 @@ def cmd_summarize_segments(args: argparse.Namespace, config: dict) -> int:
                 segment_id = output_data.get("segment_id")
                 if not segment_id:
                     continue
-                existing = memory.store.get_segment_summary(segment_id)
-                if existing:
-                    logger.debug(f"Skipping already-persisted summary: {segment_id}")
+                if output_data.get("status") in {"partial", "skipped"}:
                     continue
                 memory.persist_segment_summary(output_data)
                 persisted += 1
@@ -546,15 +529,6 @@ def cmd_detect_topics(args: argparse.Namespace, config: dict) -> int:
     topic_summaries_dir = output_root / args.conversation_id / "topic_summaries"
 
     try:
-        if args.force:
-            if topic_summaries_dir.exists():
-                for f in topic_summaries_dir.glob("topic_*"):
-                    f.unlink()
-            if args.persist:
-                store = create_summary_store(config)
-                store.delete_topic_summaries(args.conversation_id)
-            logger.info(f"--force: wiped existing topic summaries for {args.conversation_id}")
-
         embedder = create_embedding_client(config)
         ollama_client = create_ollama_client(config)
 
@@ -589,28 +563,26 @@ def cmd_detect_topics(args: argparse.Namespace, config: dict) -> int:
                 if topic_idx is None:
                     continue
                 conv_id = output_data.get("parent_conversation_id", args.conversation_id)
-                # Check idempotency using topic_id = <conv_id>_t<NNN>
-                topic_id = f"{conv_id}_t{topic_idx:03d}"
-                with memory.store._connect() as conn:
-                    existing = conn.execute(
-                        "SELECT topic_id FROM topic_summaries WHERE topic_id = ?",
-                        (topic_id,),
-                    ).fetchone()
-                if existing:
-                    logger.debug(f"Skipping already-persisted topic: {topic_id}")
+                if output_data.get("status") in {"partial", "skipped"}:
                     continue
-                # Collect segment_ids from the topic's segment range
-                segment_ids: list = []
-                seg_range = output_data.get("topic_segment_range", "")
-                if seg_range:
-                    try:
-                        parts_range = seg_range.replace("s", "").split("-")
-                        if len(parts_range) == 2:
-                            start_idx, end_idx = int(parts_range[0]), int(parts_range[1])
-                            for idx in range(start_idx, end_idx + 1):
-                                segment_ids.append(f"{conv_id}_s{idx:03d}")
-                    except (ValueError, IndexError):
-                        pass
+                segment_ids = output_data.get("segment_ids", [])
+                if not segment_ids:
+                    rows = memory.store.list_segments_for_conversation(conv_id)
+                    span = output_data.get("topic_segment_range", "")
+                    shorthand = re.fullmatch(r"s(\d+)-s(\d+)", span)
+                    boundaries = [
+                        row["segment_index"]
+                        for row in rows
+                        if span.startswith(row["segment_id"] + "-")
+                        or span.endswith("-" + row["segment_id"])
+                    ]
+                    if shorthand:
+                        boundaries = [int(value) for value in shorthand.groups()]
+                    segment_ids = [
+                        row["segment_id"]
+                        for row in rows
+                        if boundaries and min(boundaries) <= row["segment_index"] <= max(boundaries)
+                    ]
                 memory.persist_topic_summary(output_data, segment_ids=segment_ids or None)
                 persisted += 1
             logger.info(
@@ -666,41 +638,6 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
     to_segment = args.to_segment
 
     try:
-        if args.force:
-            all_seg_indices = sorted(
-                int(f.stem.split("_")[1])
-                for f in segments_dir.glob("segment_*.json")
-                if f.name != "pending_tail.json"
-            )
-            effective_from = from_segment
-            effective_to = (
-                to_segment
-                if to_segment is not None
-                else (max(all_seg_indices) if all_seg_indices else from_segment)
-            )
-            forced_indices = list(range(effective_from, effective_to + 1))
-
-            if extract_dir.exists():
-                for idx in forced_indices:
-                    for suffix in (".json", ".md"):
-                        p = extract_dir / f"extract_{idx:03d}{suffix}"
-                        if p.exists():
-                            p.unlink()
-
-            if getattr(args, "persist", False):
-                store = create_summary_store(config)
-                point_ids = store.delete_extracts(
-                    args.conversation_id, segment_indices=forced_indices
-                )
-                if point_ids:
-                    vs = create_vector_store(config)
-                    vs.delete_points(point_ids)
-
-            logger.info(
-                f"--force: wiped extracts {effective_from}–{effective_to} "
-                f"for {args.conversation_id}"
-            )
-
         ollama_client = create_ollama_client(config)
         extractor = SegmentExtractor(
             ollama_client=ollama_client,
@@ -715,7 +652,7 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
             output_root=output_root,
             from_segment=from_segment,
             to_segment=to_segment,
-            force=args.force,
+            force=False,
             retries=getattr(args, "retries", 1),
         )
 
@@ -738,9 +675,7 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
                 segment_id = output_data.get("segment_id")
                 if not segment_id:
                     continue
-                existing = memory.store.get_extract_by_segment(segment_id)
-                if existing:
-                    logger.debug(f"Skipping already-persisted extract: {segment_id}")
+                if output_data.get("status") in {"partial", "skipped"}:
                     continue
                 memory.persist_extract_with_statements(output_data)
                 persisted += 1
@@ -759,7 +694,7 @@ def cmd_extract_segments(args: argparse.Namespace, config: dict) -> int:
                 reason = warnings[0] if warnings else "unknown"
                 print(f"    - {seg_id}: {reason}")
         print(f"  Output directory  : {extract_dir}")
-        return 0
+        return 1 if any(data.get("status") in {"partial", "skipped"} for _, data in results) else 0
 
     except FileNotFoundError as e:
         logger.error(f"File not found: {e}")
@@ -796,20 +731,6 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
     fragment_dir = output_root / args.conversation_id / "fragments"
 
     try:
-        if args.force:
-            store = create_summary_store(config)
-            point_ids = store.delete_fragments(args.conversation_id)
-            if point_ids:
-                vs = create_vector_store(config)
-                vs.delete_points(point_ids)
-            if fragment_dir.exists():
-                import shutil
-
-                for seg_dir in fragment_dir.glob("segment_*"):
-                    if seg_dir.is_dir():
-                        shutil.rmtree(seg_dir)
-            logger.info(f"--force: wiped existing fragments for {args.conversation_id}")
-
         ollama_client = create_ollama_client(config)
         fragmenter = Fragmenter(
             ollama_client=ollama_client,
@@ -826,7 +747,7 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
             output_root=output_root,
             from_segment=from_segment,
             to_segment=to_segment,
-            force=args.force,
+            force=False,
             retries=getattr(args, "retries", 1),
         )
 
@@ -851,45 +772,13 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
                 extract_id = f"{segment_id}_x"
                 fragment_id = f"{extract_id}_f{frag_idx:03d}"
 
-                existing = memory.store.get_fragment(fragment_id)
-                if existing:
-                    # Repair missing statement links (can happen if --persist ran before
-                    # extract-segments populated extract_statements, or when loading
-                    # pre-refactor disk fragments that lack statement_index fields).
-                    link_count = memory.store.get_link_count(fragment_id)
-                    if link_count == 0 and output_data.get("statements"):
-                        frag_stmts = output_data["statements"]
-                        # Try deterministic path first (statement_index present)
-                        if isinstance(frag_stmts[0].get("statement_index"), int):
-                            statement_ids = [
-                                f"{extract_id}_st{s['statement_index']:04d}" for s in frag_stmts
-                            ]
-                        else:
-                            # Fall back: match by text against SQLite extract_statements
-                            db_stmts = memory.store.get_statements_for_extract(extract_id)
-                            text_to_id = {s["text"]: s["statement_id"] for s in db_stmts}
-                            statement_ids = [
-                                text_to_id[s["text"]] for s in frag_stmts if s["text"] in text_to_id
-                            ]
-                        if statement_ids:
-                            memory.store.insert_fragment_links(fragment_id, statement_ids)
-                            logger.debug(f"Repaired {len(statement_ids)} links for {fragment_id}")
-
-                    # Check Qdrant status
-                    if args.embed and not existing.get("qdrant_point_id"):
-                        logger.debug(f"Already in SQLite, indexing in Qdrant: {fragment_id}")
-                        memory.index_fragment_in_qdrant(
-                            fragment_id=fragment_id, output_data=output_data
-                        )
-                        persisted += 1
-                    else:
-                        logger.debug(f"Skipping already-persisted: {fragment_id}")
+                if output_data.get("status") in {"partial", "skipped"}:
                     continue
-
+                existing = memory.store.get_fragment(fragment_id)
                 frag_id = memory.persist_fragment_with_links(
                     output_data=output_data, extract_id=extract_id
                 )
-                if args.embed:
+                if args.embed and not (existing and existing.get("embedded_at")):
                     memory.index_fragment_in_qdrant(fragment_id=frag_id, output_data=output_data)
                 persisted += 1
 
@@ -903,7 +792,12 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
             for seg_id, reason in skipped_segments:
                 print(f"    - {seg_id}: {reason}")
         print(f"  Output directory  : {fragment_dir}")
-        return 0
+        return (
+            1
+            if skipped_segments
+            or any(data.get("status") in {"partial", "skipped"} for _, data in results)
+            else 0
+        )
 
     except FileNotFoundError as e:
         logger.error(f"File not found: {e}")
@@ -919,8 +813,9 @@ def cmd_fragment_extracts(args: argparse.Namespace, config: dict) -> int:
         return 1
 
 
-def cmd_serve(args, config: dict) -> int:
+def cmd_serve(args: argparse.Namespace, config: dict) -> int:
     """Launch the JARVIS web UI (read-only operator console)."""
+    require_personal_runtime(config)
     from jarvis.web.app import create_app
 
     host = getattr(args, "host", "127.0.0.1")
@@ -1298,7 +1193,8 @@ def main() -> int:
         if args.command == "config":
             print(format_config(config))
             return 0
-        require_personal_runtime(config)
+        if args.command == "serve":
+            require_personal_runtime(config)
     except ConfigurationError as exc:
         parser.error(str(exc))
     setup_logging("DEBUG" if args.debug else config["log_level"])

@@ -1,11 +1,11 @@
 """Output writer for JARVIS summarization artifacts."""
 
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional
 from jarvis.paths import confined, identifier
+from jarvis.artifacts import atomic_json, atomic_text
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +87,7 @@ class OutputWriter:
             path: Output file path.
             data: Dictionary to serialize.
         """
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        atomic_json(path, data)
         logger.debug(f"JSON written to {path}")
 
     def _write_markdown(self, path: Path, data: Dict[str, Any]) -> None:
@@ -182,6 +181,5 @@ class OutputWriter:
 
         # Write to file
         content = "\n".join(lines)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
+        atomic_text(path, content)
         logger.debug(f"Markdown written to {path}")

@@ -364,10 +364,9 @@ python -m jarvis.cli config show
 python -m jarvis.cli --profile mom config show
 ```
 
-Profiles are registered in `profiles.yaml`. Phase 3 Commit 1 adds profile-aware CLI filesystem
-routing and validation to the Phase 2 storage clients;
-application workflows still support **inspection only** for `mom`
-and other non-personal profiles; processing and serving remain personal-only. Personal's
+Profiles are registered in `profiles.yaml`. Phase 3 supports all CLI processing commands for
+`personal`, `mom`, and other configured profiles, including scoped cleanup and interrupted-run
+recovery. `serve` and every Flask entrypoint remain personal-only until Phase 4. Personal's
 existing database, collection, inbox, outputs, and environment overrides remain in place.
 Configuration paths resolve against the repository root, independently of the working directory.
 CLI directory defaults now come from the selected profile. Explicit `--inbox-dir` and ingestion
@@ -377,6 +376,12 @@ identifiers, traversal, cross-profile sources, and resolved symlink/junction esc
 Explicit external source files remain read-only; normalized data records their original absolute
 path and SHA-256, so later processing does not need the source. `retrieve` and `answer` require an
 existing compatible database and never initialize missing storage or collections.
+CLI cleanup retains durable intents in `<output_root>/.jarvis-recovery/`; fragment directories
+also contain `fragment_manifest.json` for interrupted output rendering. Keep these recovery files.
+Large extracts additionally retain `.batch_<index>.json` checkpoints for successful model batches.
+After interruption, rerun the same command/range without `--force`. See
+[Pipeline recovery](docs/pipeline.md#force-and-interrupted-run-recovery) for dependency invalidation
+and service requirements. Use one writer per profile; concurrent CLI/web writes are unsupported.
 See [Profiles](docs/profiles.md) for validation rules, limitations, and the mandatory backup
 checkpoint before deployment against existing personal data.
 
