@@ -356,21 +356,46 @@ def test_upsert_success_before_metadata_failure_is_recoverable(profile_repo: Pat
     assert store.get_fragment(fragment_id)["embedded_at"] is not None
 
 
-def test_dry_run_force_is_non_destructive(profile_repo: Path) -> None:
+@pytest.mark.parametrize("checkpoint", [False, True])
+def test_dry_run_force_is_non_destructive(profile_repo: Path, checkpoint: bool) -> None:
     config = load_config("mom")
-    seed(config)
+    store = seed(config)
     before = snapshot_files(Path(config["output_root"]))
-    database = Path(config["db_path"]).read_bytes()
-    embedder = MagicMock()
-    embedder.embed.return_value = [1.0, 0.0]
-    with (
-        patch("jarvis.cli.create_embedding_client", return_value=embedder),
-        patch("jarvis.cli.create_ollama_client", return_value=MagicMock()),
-        patch("jarvis.recovery.create_vector_store", side_effect=AssertionError("No cleanup")),
-    ):
-        assert cli.cmd_detect_topics(arguments(config, dry_run=True, force=True), config) == 0
-    assert snapshot_files(Path(config["output_root"])) == before
-    assert Path(config["db_path"]).read_bytes() == database
+    with closing(store._connect()) as connection:
+        # WAL checkpoints can change file bytes without changing schema or records.
+        database = tuple(connection.iterdump())
+
+        def embed(text: str) -> list[float]:
+            if checkpoint:
+                assert connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0] == 0
+            return [1.0, 0.0]
+
+        embedder = MagicMock()
+        embedder.embed.side_effect = embed
+        with (
+            patch("jarvis.cli.create_embedding_client", return_value=embedder),
+            patch("jarvis.cli.create_ollama_client", return_value=MagicMock()),
+            patch.object(
+                CleanupService, "prepare", side_effect=AssertionError("No cleanup")
+            ) as cleanup,
+            patch(
+                "jarvis.cli._build_memory_layer", side_effect=AssertionError("No persistence")
+            ) as persistence,
+            patch(
+                "jarvis.recovery.create_vector_store", side_effect=AssertionError("No vectors")
+            ) as vectors,
+        ):
+            assert (
+                cli.cmd_detect_topics(
+                    arguments(config, dry_run=True, force=True, persist=True), config
+                )
+                == 0
+            )
+        for operation in (cleanup, persistence, vectors):
+            operation.assert_not_called()
+        embedder.embed.assert_called_once()
+        assert snapshot_files(Path(config["output_root"])) == before
+        assert tuple(connection.iterdump()) == database
 
 
 def test_fragment_batch_survives_interrupted_artifact_writes(profile_repo: Path) -> None:
