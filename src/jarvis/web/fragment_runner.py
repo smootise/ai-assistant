@@ -18,6 +18,7 @@ from jarvis.clients import (
     create_ollama_client,
 )
 from jarvis.store import SummaryStore
+from jarvis.profiles import require_personal_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ def run_fragment_job(
                   persist (bool), embed (bool).
     Called from a daemon thread spawned by the pipeline_jobs route.
     """
+    require_personal_runtime(config)
     store = create_summary_store(config)
     store.mark_job_running(job_id)
     logger.info(f"Job {job_id}: starting fragment for conversation {conversation_id}")

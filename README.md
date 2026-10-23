@@ -72,6 +72,11 @@ docker run -p 6333:6333 -v qdrant_storage:/qdrant/storage qdrant/qdrant
 
 ### 4. Run the full pipeline on a ChatGPT export
 
+These commands use `personal` by default. Complete the
+[backup checkpoint](docs/profiles.md#mandatory-checkpoint-before-real-data-deployment) before
+processing existing real data. For explicit selection, place `--profile personal` or `--profile mom`
+before the command; see the [multi-profile workflow](docs/profiles.md#cli-workflow-and-recovery).
+
 ```bash
 # Step 1 — ingest, segment, and record in SQLite
 python -m jarvis.cli ingest chatgpt --file inbox/ai_chat/chatgpt/raw/<export>.json --persist
@@ -106,6 +111,9 @@ JARVIS includes a browser UI for browsing ingested data and uploading new export
 ```bash
 python -m jarvis.cli serve
 ```
+
+Serving and web background jobs remain personal-only until Phase 4. Non-personal profiles use
+the CLI workflow; no web profile selector or profile-aware background jobs are included.
 
 Then open [http://localhost:5000](http://localhost:5000) in your browser.
 

@@ -35,6 +35,18 @@ supported. See [Architecture](architecture.md#cleanup-and-recovery) for consiste
 Cleanup preserves unrelated filenames and rejects deletion sets containing recorded original
 exports, including exports whose names collide with a generated fragment artifact.
 
+For example, after an interrupted mom extraction for segments 2 through 4, retry the original
+range with its processing flags and omit `--force`:
+
+```bash
+python -m jarvis.cli --profile mom extract-segments chatgpt --conversation-id <id> --from-segment 2 --to-segment 4 --persist
+```
+
+Cleanup may already have removed SQLite dependents before a Qdrant outage. Pending journals block
+normal retrieval/answer until the old points are confirmed deleted. Never discard journals,
+fragment manifests, or batch checkpoints to bypass recovery. Keep the original Qdrant endpoint
+until cleanup completes; see the [profile recovery guidance](profiles.md#cli-workflow-and-recovery).
+
 ---
 
 ## Step 1 — Ingest

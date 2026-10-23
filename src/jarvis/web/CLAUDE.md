@@ -8,6 +8,9 @@ design decisions for the JARVIS read-only operator console.
 ## V1 Scope
 
 V1 includes: browse lineage · upload + ingest · extract-segments job · fragment-extracts job · search (retrieve) · answer (RAG with citations) · job tracking. Complete.
+The Flask factory, serving entrypoints, and all three background runners remain personal-only
+until Phase 4. Guard direct runner calls before SQLite access or job state changes. Custom personal
+inbox roots/collections also remain blocked in web execution; CLI processing supports them.
 
 ---
 
@@ -60,7 +63,8 @@ V1 includes: browse lineage · upload + ingest · extract-segments job · fragme
 - **`embed` requires `persist`** — enforced at the route level (400 + flash) and as defense-in-depth inside the runner (`ValueError`).
 - **Fragment prereq guard** — fragment form page blocks submission (no submit button) when `store.count_extracts_for_conversation()` returns 0; POST also rejected with 400.
 - Deterministic IDs in results: `extract_id = f"{segment_id}_x"`, `fragment_id = f"{extract_id}_f{idx:03d}"`. Runners can build these without querying SQLite.
-- Force semantics are replicated exactly from `cli.py` — do not soften.
+- Personal web runners retain their existing force behavior. The Phase 3 CLI recovery journal
+  protocol has not been ported to web jobs; do not imply that CLI recovery guarantees cover them.
 
 ---
 

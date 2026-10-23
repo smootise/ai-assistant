@@ -17,6 +17,7 @@ from jarvis.clients import (
     create_ollama_client,
 )
 from jarvis.store import SummaryStore
+from jarvis.profiles import require_personal_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ def run_extract_job(
     options keys: from_segment (int), to_segment (int|None), force (bool), persist (bool).
     Called from a daemon thread spawned by the pipeline_jobs route.
     """
+    require_personal_runtime(config)
     store = create_summary_store(config)
     store.mark_job_running(job_id)
     logger.info(f"Job {job_id}: starting extract for conversation {conversation_id}")

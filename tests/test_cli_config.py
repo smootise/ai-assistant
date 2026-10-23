@@ -1,9 +1,11 @@
 """CLI inspection and temporary runtime safety boundary regression tests."""
 
+import runpy
 import sqlite3
 import sys
 from contextlib import ExitStack
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import patch
 
 import pytest
@@ -12,12 +14,17 @@ from jarvis import cli
 from jarvis.config import load_config
 from jarvis.profiles import ConfigurationError
 from jarvis.web.app import create_app
+from jarvis.web import extract_runner, fragment_runner, ingest_runner
 
 
+@pytest.mark.parametrize("profile", ["personal", "mom"])
 def test_config_show_has_no_storage_or_service_side_effects(
-    profile_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    profile_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    profile: str,
 ) -> None:
-    monkeypatch.setattr(sys, "argv", ["jarvis", "--profile", "mom", "config", "show"])
+    monkeypatch.setattr(sys, "argv", ["jarvis", "--profile", profile, "config", "show"])
     with ExitStack() as stack:
         for target in (
             "jarvis.clients.SummaryStore",
@@ -33,9 +40,10 @@ def test_config_show_has_no_storage_or_service_side_effects(
         stack.enter_context(patch.object(sqlite3, "connect", side_effect=AssertionError("SQLite")))
         assert cli.main() == 0
     output = capsys.readouterr().out
-    assert "Profile: mom" in output
-    assert "jarvis_mom_fragments" in output
-    assert str(profile_repo / "data/profiles/mom/jarvis.db") in output
+    config = load_config(profile)
+    assert f"Profile: {profile}" in output
+    assert config["qdrant_collection"] in output
+    assert config["db_path"] in output
     assert not (profile_repo / "data").exists()
 
 
@@ -113,6 +121,35 @@ def test_web_factory_blocks_non_personal_before_creating_directories(
         pytest.raises(ConfigurationError, match="config show"),
     ):
         create_app(config)
+    assert not (profile_repo / "data").exists()
+
+
+def test_web_module_entrypoint_cannot_bypass_profile_guard(
+    profile_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("JARVIS_PROFILE", "mom")
+    with patch("flask.Flask.run") as serve, pytest.raises(ConfigurationError):
+        runpy.run_module("jarvis.web", run_name="__main__")
+    serve.assert_not_called()
+    assert not (profile_repo / "data").exists()
+
+
+@pytest.mark.parametrize("runner", [ingest_runner, extract_runner, fragment_runner])
+def test_background_runners_reject_non_personal_before_opening_storage(
+    profile_repo: Path, runner: ModuleType
+) -> None:
+    config = load_config("mom")
+    with (
+        patch.object(runner, "create_summary_store", side_effect=AssertionError("SQLite")) as store,
+        pytest.raises(ConfigurationError),
+    ):
+        if runner is ingest_runner:
+            runner.run_ingest_job("synthetic-job", profile_repo / "missing.json", config)
+        elif runner is extract_runner:
+            runner.run_extract_job("synthetic-job", "shared", {"force": True}, config)
+        else:
+            runner.run_fragment_job("synthetic-job", "shared", {"force": True}, config)
+    store.assert_not_called()
     assert not (profile_repo / "data").exists()
 
 

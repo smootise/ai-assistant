@@ -1,9 +1,9 @@
-# Profiles — Through Phase 3 Commit 2
+# Profiles — Phase 3 CLI support
 
 Phase 1 resolves and validates profiles and provides read-only configuration inspection.
 Phase 2 adds profile-aware SQLite/Qdrant clients, shared client factories, and independent
-service endpoints. Phase 3 Commit 1 adds filesystem boundaries and profile-derived CLI routing
-with scoped cleanup and recovery in Commit 2. All processing CLI commands support the selected
+service endpoints. Phase 3 adds filesystem boundaries, profile-derived CLI routing, scoped cleanup,
+recovery, and synthetic end-to-end validation. All processing CLI commands support the selected
 profile. Serving and web background workflows remain personal-only until Phase 4. Both `serve`
 and the Flask app factory retain their guards, including the `python -m jarvis.web` entrypoint.
 
@@ -60,7 +60,7 @@ Keep secrets and source content out of this file. New profile data stays under i
 Relative configuration paths resolve against the repository root; absolute overrides remain
 absolute. CLI input paths retain their existing behavior in this phase.
 
-## Validation and temporary limitations
+## Validation and runtime boundaries
 
 Every load validates every effective profile, including personal environment overrides and
 inactive profile conflicts. Validation is read-only and completes before processing starts.
@@ -80,7 +80,7 @@ rejected.
 
 Custom personal inboxes and collections are supported by the CLI with the same confinement rules
 as other profiles. Existing personal database/output overrides continue to work. Web restrictions
-remain unchanged. Commit 2 adds scoped, dependency-aware cleanup and interrupted-run recovery;
+remain in place. Phase 3 provides scoped, dependency-aware cleanup and interrupted-run recovery;
 it does not provide cross-store atomicity or rollback. PST ingestion and optional source copying
 remain outside this feature.
 
@@ -132,7 +132,7 @@ Tests use synthetic SQLite files and mocked Qdrant/Ollama services. Suite-wide g
 unmocked Qdrant construction, outbound socket connections, and SQLite paths outside pytest's
 temporary tree; configuration loading uses a synthetic repository rather than the clone's `.env`.
 
-## Phase 3 Commit 1: filesystem routing infrastructure
+## Filesystem routing and source preservation
 
 `jarvis.paths.ProfilePaths` derives all managed roots from the resolved `ProfileContext`.
 Shared helpers validate path components, imported conversation/segment identifiers, and existing
@@ -157,28 +157,38 @@ unavailable. No original is copied, moved, or deleted.
 
 Only necessary artifact directories are created during file-only processing. SQLite is initialized
 only for requested persistence; Qdrant collections remain lazy until indexing. `config show` stays
-read-only. Boundary validation runs before destructive cleanup; a legacy fragment `--force`
-without persistence and without an existing database fails before cleanup instead of initializing
-one. Existing cleanup ordering, scope, and dependent-data invalidation remain unchanged.
+read-only. Boundary validation runs before destructive cleanup. File-only `--force` operations
+do not initialize SQLite or Qdrant; when a database already contains affected records, cleanup
+invalidates them even without `--persist`.
 
-At Commit 1, the public CLI and Flask guards were retained: `mom` was inspection-only. Direct
-handler/pipeline tests exercise the infrastructure without unlocking the runtime. Commit 2 must
-separately fix destructive cleanup and recovery before non-personal CLI execution is enabled.
-Commit 2 implements CLI recovery and removes the processing guard as described below.
-Web profile routing, PST ingestion, and migrations remain unimplemented.
+Web profile routing, PST ingestion, and migrations remain unimplemented. The Flask factory,
+CLI serving command, convenience entrypoint, and directly invoked background runners reject
+non-personal profiles before opening storage. Custom personal collections and inbox roots are
+also blocked in the web runtime until Phase 4; they are supported by CLI processing.
 Checks assume filesystem boundaries remain stable during a command; concurrent replacement of
 symlinks/junctions is not supported.
 
-## Phase 3 Commit 2: cleanup, recovery, and CLI rollout
+## CLI workflow and recovery
 
 `summarize`, `ingest`, `summarize-segments`, `detect-topics`, `extract-segments`,
 `fragment-extracts`, `retrieve`, and `answer` now execute for the selected profile. For example:
 
 ```bash
 python -m jarvis.cli --profile mom ingest chatgpt --file /path/to/export.json --persist
+python -m jarvis.cli --profile mom summarize-segments chatgpt --conversation-id <id> --persist
+python -m jarvis.cli --profile mom detect-topics chatgpt --conversation-id <id> --persist
 python -m jarvis.cli --profile mom extract-segments chatgpt --conversation-id <id> --persist
 python -m jarvis.cli --profile mom fragment-extracts chatgpt --conversation-id <id> --persist --embed
+python -m jarvis.cli --profile mom retrieve --query "What was decided?"
+python -m jarvis.cli --profile mom answer "What was decided?"
 ```
+
+Use `--profile personal` for the same workflow on personal storage, or omit it when neither
+the environment nor `.env` selects another profile. The [README quickstart](../README.md#quickstart)
+shows the default personal commands. `--persist` records structured results in SQLite;
+fragment `--embed` requires `--persist` and indexes them in the selected collection. File-only
+processing remains supported without these flags. Inference can reuse completed artifacts;
+topic boundary detection still needs its configured embedding endpoint on each run.
 
 All filesystem, SQLite, and Qdrant operations use that profile's resolved resources. `config show`
 remains read-only; retrieval/answer still fail without creating resources on an uninitialized profile.
@@ -193,18 +203,60 @@ migration, collection reset, or source mutation is performed. New fragment manif
 cleanup journals are required recovery artifacts. Keep them with backups. One writer per profile
 is supported; web job cleanup/recovery and multi-profile serving remain deferred to Phase 4.
 
+If Qdrant deletion fails, relational records may already have been invalidated while old points
+remain. The journal retains their IDs, and normal CLI retrieval/answer refuse to run while any
+cleanup is pending for that profile. Restore the original endpoint and rerun the same command/range
+without `--force`. Endpoint changes while cleanup is pending are rejected: do not edit the journal
+or switch endpoints to bypass recovery. Complete cleanup against the original resources before
+any separately reviewed endpoint change or snapshot migration. Lost resources/journals require
+operator recovery; there is no automatic rollback or cross-store transaction.
+
+## Synthetic validation coverage
+
+`tests/test_cli_workflow.py` runs the full public CLI workflow for both profiles with the same
+identifiers and different source content. It uses temporary v8 databases, deterministic Ollama
+responses/embeddings, and a stateful fake Qdrant server with cosine ranking, upserts, and deletion.
+It checks lineage/statement links, SQLite-hydrated retrieval, answer context isolation, cached
+regeneration, legacy UUID reuse, ranged cleanup, failed-delete retrieval blocking, and replay.
+
+Existing focused suites retain the detailed regression coverage rather than duplicating it:
+
+| Coverage | Tests |
+|---|---|
+| Inclusive/sparse ranges, downstream invalidation, topic dependencies, force without persistence | `test_recovery.py` |
+| Swapped IDs/indices/filenames, journal scope and corruption, endpoint/range mismatch | `test_recovery.py` |
+| Inference/upsert/SQLite/artifact interruptions, JSON reuse/repair, links and Markdown, dry-run | `test_recovery.py` |
+| Existing v8 compatibility, no metadata/DDL changes, unsupported schemas | `test_store_compatibility.py` |
+| Historical personal defaults, configuration precedence, read-only missing storage | `test_config.py`, `test_cli_paths.py`, `test_clients.py` |
+| Collection routing/dimensions/failures and unchanged payloads | `test_vector_store.py` |
+| Windows case/drive paths, junctions, symlinks, hardlinks, source/staging preservation | `test_profiles.py`, `test_paths.py`, `test_ingest_pipeline.py` |
+| Configuration inspection, web factory/entrypoint/worker guards, personal web behavior | `test_cli_config.py`, `test_web_*.py`, `test_sqlite_persistence.py` |
+
+The local Windows run exercises case handling, ambiguous drive paths, junctions, SQLite WAL,
+and atomic output replacement. Symlink tests require account privileges and may skip explicitly.
+GitHub Actions runs pytest and flake8 on Ubuntu/Python 3.11; Windows-only cases skip there.
+Black at line length 100 passes for files changed in this commit. A broader `src tests` Black
+audit identifies 27 unchanged files with pre-existing formatting differences; no broad reformat
+or new skip was introduced. Synthetic validation does not certify production service availability,
+real model quality, restored backups, or concurrent writers.
+
 ## Mandatory checkpoint before real-data deployment
 
-Implementation and laptop tests use synthetic sources, temporary databases, and mocked services.
+Implementation and Windows/CI tests use synthetic sources, temporary databases, and mocked services.
 Do not deploy this feature against existing personal data until backups and compatibility
 verification have been completed and reviewed. Quiesce writers, then capture and verify:
 
 | Resource | Required recovery evidence |
 |---|---|
-| SQLite | Consistent backup, integrity check, schema/version, metadata, representative row counts |
-| Qdrant | Recoverable `jarvis_fragments` snapshot, collection configuration, point count |
+| SQLite | Consistent backup of each database, integrity check, schema/version, metadata, representative row counts; account for live WAL/SHM state |
+| Qdrant | Recoverable snapshots of each existing collection (`jarvis_fragments`, `jarvis_mom_fragments` when present), collection configuration, point count |
 | Sources | Inbox and external-source coverage, original paths, checksum inventory |
-| Artifacts | Normalized files, manifests, outputs, intermediate files, checksum inventory |
+| Artifacts | Normalized files, segment/fragment manifests, outputs, batch checkpoints, checksum inventory |
+| Recovery | Each output root's `.jarvis-recovery/` journals and the original database/collection/endpoint binding |
+
+Use a consistent SQLite backup procedure or quiesce and close writers/readers before capturing
+files. A live `.db` file alone may omit committed WAL data; do not delete `-wal`/`-shm` files to
+prepare a backup. Preserve/reconcile them with the database using an operator-reviewed procedure.
 
 Verify recovery using isolated restored resources before deployment. Confirm personal resolves
 to its original resources. Later compatibility checks must accept valid v8 databases without

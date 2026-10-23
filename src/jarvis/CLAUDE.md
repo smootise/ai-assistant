@@ -97,6 +97,8 @@ New vector IDs are deterministic; recorded UUIDs remain unchanged. `qdrant_point
 Validated JSON repairs missing SQLite rows/statements/links/Markdown; fragment manifests retain
 complete model batches. Schema v8 is unchanged. One writer per profile is required; web job
 cleanup/recovery and profile routing remain deferred to Phase 4.
+Direct web runner calls must enforce `require_personal_runtime` before creating a store or marking
+a job running. CLI processing is profile-aware; that guard is now specific to the web boundary.
 
 ---
 

@@ -11,8 +11,9 @@ V1 scope: browse data lineage · upload + ingest · launch extract-segments · l
 
 ## Starting the server
 
-Through Phase 3 Commit 1, serving remains personal-only, including the app factory and convenience
-entrypoint. Inspect another profile with `python -m jarvis.cli --profile mom config show`.
+Through Phase 3, serving remains personal-only, including the app factory, convenience entrypoint,
+and directly invoked background runners. CLI processing is available for other profiles; inspect
+their configuration with `python -m jarvis.cli --profile mom config show`.
 Profile-bound web operations and active-profile labels remain deferred; see
 [Profiles](profiles.md) for the rollout boundary and real-data backup checkpoint.
 

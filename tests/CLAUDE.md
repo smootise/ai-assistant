@@ -51,3 +51,8 @@ Fixture files are checked into git — do not put anything sensitive in them.
 - Use `unittest.mock.patch` or `MagicMock` — pytest-mock is not in the stack.
 - Test file names: `test_<module_name>.py` matching the source module.
 - Keep tests fast. If a test needs a temp directory, use `tmp_path` (pytest built-in).
+- `test_cli_workflow.py` covers public dispatch with synthetic exports, real temporary SQLite,
+  deterministic inference/embeddings, and a stateful fake Qdrant client. Keep this full-workflow
+  coverage distinct from the focused fault-injection regressions in `test_recovery.py`.
+- Compare logical SQLite contents when asserting data preservation across WAL checkpoints;
+  physical main-file bytes can change as committed WAL pages are checkpointed.

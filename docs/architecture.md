@@ -81,6 +81,8 @@ legacy UUID is reused. A successful upsert followed by an interrupted SQLite com
 therefore be retried at the same ID. Only a confirmed upsert sets `embedded_at`; search excludes
 unfinished indexing. A subsequent cleanup can also find and remove these pending point IDs.
 No SQLite schema, existing IDs, payloads, models, or vectors are migrated.
+The full CLI integration suite exercises these boundaries with separate temporary profile
+databases and one stateful fake Qdrant server; see [validation coverage](profiles.md#synthetic-validation-coverage).
 
 `jarvis.artifacts` supplies flushed, fsynced temporary-file writes followed by atomic replacement,
 and validates cached outputs before reuse. Successful JSON can repair missing SQLite rows,
@@ -102,6 +104,8 @@ and storage/device failure require operator recovery; fsync/rename is not a cros
 or a guarantee against hardware loss. Historical orphan vectors created by older random-ID failures
 cannot be inferred automatically and are not migrated or swept. Web job cleanup/recovery remains
 outside this CLI rollout.
+Web factories, serving entrypoints, and background runners enforce the personal-only boundary
+before opening storage. Runner guards also cover direct calls; profile-aware web jobs remain Phase 4.
 
 ## Data Flow
 

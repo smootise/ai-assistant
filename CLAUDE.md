@@ -22,6 +22,7 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 > Update this section at the end of any session where meaningful progress is made.
 
 ### Done
+- Phase 3 Commit 3: final synthetic CLI workflows for personal/mom verify full lineage, isolated retrieval/answers, stateful fake Qdrant cleanup/replay, cached artifacts, and legacy UUID reuse. Direct web runners now enforce the existing personal-only guard before SQLite access. Documentation and backup/recovery guidance updated; final approval and real-data deployment remain separate.
 - Stabilize the dry-run force regression by comparing SQLite schema/records rather than checkpoint-sensitive file bytes; cover WAL checkpoints and assert cleanup/persistence/vector clients remain unused even with `--persist`.
 - Phase 3 Commit 2 review fix: validate cleanup filenames, conversation/segment IDs, indices, and existing SQLite scope before recording or replaying deletion intents. Reject swapped identifiers without mutation; preserve recovery when records or inputs were already removed. Schema v8 and journal format remain unchanged; synthetic tests only.
 - Phase 3 Commit 2: scoped delete-first CLI cleanup, dependency invalidation, durable profile recovery journals, atomic validated artifacts, idempotent SQLite repair, and deterministic/reused Qdrant IDs. All processing CLI commands support profiles; serving and web jobs remain personal-only until Phase 4. Schema v8 and existing indexed UUIDs are preserved; synthetic tests only.
@@ -50,7 +51,7 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 - Web UI retrieve + answer: Search page (semantic fragment retrieval with scores and links); Answer page (single-turn RAG with clickable citation traceability to fragment→extract→segment); synchronous; reuses `run_retrieval`/`generate_answer` helpers extracted from CLI
 
 ### Planned
-- Phase 3 Commit 3 and Phases 4–5 remain separately reviewed; profile-bound web/jobs are deferred. Real-data deployment requires verified SQLite/Qdrant/source/artifact/recovery-journal backups; do not use destructive rebuild workflows.
+- Phase 3 final approval and Phases 4–5 remain separately reviewed; profile-bound web/jobs are deferred. Real-data deployment requires verified SQLite/Qdrant/source/artifact/recovery-journal backups; do not use destructive rebuild workflows.
 - Token-budget retrieval: replace flat `--top-k` with `--max-context-tokens` to handle variable fragment sizes
 - `summarize` (single-file) `--persist`: wire standalone files through the same ingest→extract→fragment pipeline
 - TrueNAS deployment: migrate JARVIS services (Ollama, Qdrant, backend) to run on TrueNAS

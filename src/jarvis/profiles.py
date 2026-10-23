@@ -206,13 +206,17 @@ def resolve_profiles(
 def require_personal_runtime(config: Mapping[str, Any]) -> None:
     if config.get("profile_name", "personal") != "personal":
         raise ConfigurationError(
-            "Phase 2 supports non-personal profiles only for 'config show'; "
-            "processing and serving require profile 'personal'"
+            "Web serving and background jobs require profile 'personal' until Phase 4; "
+            "use CLI processing commands or 'config show' for other profiles"
         )
-    # Pipeline and web isolation remain pending; retain the rollout boundary.
+    # Web isolation remains pending; CLI processing has its own profile routing.
     if config.get("qdrant_collection", "jarvis_fragments") != "jarvis_fragments":
-        raise ConfigurationError("Custom personal collections are inspection-only in Phase 2")
+        raise ConfigurationError(
+            "Custom personal collections are inspection-only in the web runtime"
+        )
     if "inbox_root" in config:
         expected = (Path(config["repo_root"]) / "inbox").resolve()
         if not _same_path(Path(config["inbox_root"]), expected):
-            raise ConfigurationError("Custom personal inboxes are inspection-only in Phase 2")
+            raise ConfigurationError(
+                "Custom personal inboxes are inspection-only in the web runtime"
+            )
