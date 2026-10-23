@@ -14,6 +14,7 @@ from jarvis.ingest.normalizer import (
     build_normalized,
     load_normalized,
     merge_normalized,
+    normalized_write_paths,
     save_normalized,
 )
 from jarvis.ingest.segmenter import save_segments, segment_conversation
@@ -93,7 +94,7 @@ def ingest_chatgpt(
     segments_dir = conv_dir / "segments"
     result = segment_conversation(normalized)
     validate_record(result, conversation_id)
-    targets = [norm_path, conv_dir / "segment_manifest.json"]
+    targets = [*normalized_write_paths(norm_path), conv_dir / "segment_manifest.json"]
     targets.extend(
         segments_dir / f"segment_{segment['segment_index']:03d}.json"
         for segment in result["segments"]

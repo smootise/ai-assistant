@@ -2,11 +2,14 @@
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from jarvis.config import load_config
+from jarvis.ingest import pipeline
 from jarvis.ingest.pipeline import ingest_chatgpt, sha256_file, source_file_data
+from jarvis.paths import PathBoundaryError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "chatgpt_tiny.json"
 
@@ -54,6 +57,40 @@ def test_ingest_chatgpt_missing_file(tmp_path):
             persist=False,
             config={"inbox_root": str(tmp_path)},
         )
+
+
+@pytest.mark.parametrize("profile", ["personal", "mom"])
+@pytest.mark.parametrize("persist", [False, True])
+def test_ingest_rejects_source_at_normalized_staging_path_before_writing(
+    profile_repo: Path, profile: str, persist: bool
+) -> None:
+    config = load_config(profile)
+    inbox = Path(config["chatgpt_inbox_dir"])
+    conversation_dir = inbox / "conv_test_tiny"
+    conversation_dir.mkdir(parents=True)
+    source = conversation_dir / "normalized.tmp"
+    original = FIXTURE.read_bytes()
+    source.write_bytes(original)
+    original_mtime = source.stat().st_mtime_ns
+
+    with (
+        patch.object(
+            pipeline, "save_normalized", wraps=pipeline.save_normalized
+        ) as save_normalized,
+        patch.object(pipeline, "save_segments", wraps=pipeline.save_segments) as save_segments,
+        patch("jarvis.clients.create_summary_store") as create_store,
+    ):
+        with pytest.raises(PathBoundaryError, match="Source overlaps generated artifacts"):
+            ingest_chatgpt(source, inbox, persist, config)
+
+        save_normalized.assert_not_called()
+        save_segments.assert_not_called()
+        create_store.assert_not_called()
+
+    assert source.read_bytes() == original
+    assert source.stat().st_mtime_ns == original_mtime
+    assert list(conversation_dir.iterdir()) == [source]
+    assert not Path(config["db_path"]).exists()
 
 
 def test_ingest_chatgpt_persist(tmp_path):

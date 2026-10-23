@@ -119,6 +119,11 @@ def load_normalized(path: Path) -> Optional[Dict[str, Any]]:
         return json.load(f)
 
 
+def normalized_write_paths(path: Path) -> tuple[Path, Path]:
+    """Share the complete write set with ingestion's source-collision preflight."""
+    return path, path.with_suffix(".tmp")
+
+
 def save_normalized(normalized: Dict[str, Any], path: Path) -> None:
     """Write a normalized conversation to disk atomically.
 
@@ -128,8 +133,8 @@ def save_normalized(normalized: Dict[str, Any], path: Path) -> None:
         normalized: Normalized conversation dict.
         path: Destination path.
     """
+    path, tmp = normalized_write_paths(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(normalized, f, indent=2, ensure_ascii=False)
     os.replace(tmp, path)
