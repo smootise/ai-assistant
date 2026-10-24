@@ -23,7 +23,7 @@ jobs:
           pip install -e .
 
       - name: Lint
-        run: flake8 src --max-line-length=100
+        run: flake8 src tools tests/test_pst_discovery.py --max-line-length=100
 
       - name: Test
-        run: pytest --maxfail=1 --disable-warnings -q
+        run: python -m pytest --maxfail=1 --disable-warnings -q

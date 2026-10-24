@@ -1,0 +1,2 @@
+# Optional discovery environment only; do not add to JARVIS production requirements.
+libpff-python==20260926

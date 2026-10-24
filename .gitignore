@@ -184,6 +184,13 @@ celerybeat.pid
 !.env.example
 .envrc
 .venv
+.venv-pst/
+*.pst
+*.ost
+pst_inventory.json
+pst_inventory.md
+pst_samples_private.json
+pst_samples_structure.json
 env/
 venv/
 ENV/

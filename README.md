@@ -34,6 +34,24 @@ Answers grounded in your own data
 
 See [docs/architecture.md](docs/architecture.md) for a detailed breakdown of each layer.
 
+### PST archive discovery (standalone)
+
+Inspect local Outlook PST archives without Outlook or JARVIS services. This is discovery only;
+it does not import mail. Install the optional parser in a separate environment, then run:
+
+```powershell
+.venv-pst\Scripts\python.exe tools/inspect_pst.py --pst "D:\Archives\mail.pst" --output-dir "D:\PST_Analysis\quick" --max-samples 150
+```
+
+Quick mode inspects up to 3,000 randomly distributed items. Use `--mode full` for all accessible
+folder items, `--max-items` to adjust quick mode, `--max-samples 0` for inventory only, and
+`--seed` for reproducible sampling. Output defaults to a new timestamped folder under
+`%LOCALAPPDATA%\JARVIS\PST_Analysis` and is always required to be outside Git repositories.
+Reports: private `pst_inventory.json`, `pst_inventory.md`, and `pst_samples_private.json`;
+structural-only `pst_samples_structure.json`. Existing reports are never overwritten.
+
+See [Windows installation, properties, limits and report semantics](docs/pst-discovery.md).
+
 ---
 
 ## Quickstart

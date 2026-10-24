@@ -22,6 +22,7 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 > Update this section at the end of any session where meaningful progress is made.
 
 ### Done
+- PST discovery: standalone read-only inventory and deterministic representative sampling, isolated optional Windows libpff environment, private/structural report separation, and synthetic tests. No email ingestion or real archive inspection; database, vector and web behavior unchanged.
 - Phase 3 Commit 3: final synthetic CLI workflows for personal/mom verify full lineage, isolated retrieval/answers, stateful fake Qdrant cleanup/replay, cached artifacts, and legacy UUID reuse. Direct web runners now enforce the existing personal-only guard before SQLite access. Documentation and backup/recovery guidance updated; final approval and real-data deployment remain separate.
 - Stabilize the dry-run force regression by comparing SQLite schema/records rather than checkpoint-sensitive file bytes; cover WAL checkpoints and assert cleanup/persistence/vector clients remain unused even with `--persist`.
 - Phase 3 Commit 2 review fix: validate cleanup filenames, conversation/segment IDs, indices, and existing SQLite scope before recording or replaying deletion intents. Reject swapped identifiers without mutation; preserve recovery when records or inputs were already removed. Schema v8 and journal format remain unchanged; synthetic tests only.
