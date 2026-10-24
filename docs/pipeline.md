@@ -4,6 +4,19 @@ Full reference for the ingestion → summarization → topic detection pipeline.
 For command flags and quickstart examples, see [README.md](../README.md).
 For system design, see [architecture.md](architecture.md).
 
+## Email V1 (separate SQLite-only pipeline)
+
+`python -m jarvis.cli --profile mom ingest pst --pst <archive.pst> --limit 100` streams
+original emails into the selected profile database. It requires an explicit backed-up email
+migration; there are no startup migrations or LLM/vector stages. `--dry-run` parses and reports
+without writing; successful source items are skipped on resume and failures are retried.
+`--limit` counts new/retried attempts rather than previously imported records. Original bodies,
+metadata field states, folder/item provenance and failures are retained in email-specific tables.
+No ChatGPT conversation/segment rows or artifacts are created. See the
+[email operator guide](email-ingestion.md) for schema, preservation, status and safe trial steps.
+
+## ChatGPT pipeline and recovery
+
 SQLite-only persistence does not contact Qdrant or construct an embedding client. This includes
 segment summaries, extracts/statements, and fragments/links without `--embed`, in CLI and web jobs.
 Topic detection uses its embedding service directly but does not need Qdrant. Indexing, retrieval,

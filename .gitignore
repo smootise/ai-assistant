@@ -185,6 +185,7 @@ celerybeat.pid
 .envrc
 .venv
 .venv-pst/
+.venv-email/
 *.pst
 *.ost
 pst_inventory.json

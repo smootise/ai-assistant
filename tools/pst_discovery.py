@@ -7,9 +7,6 @@ from collections import Counter
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from email import policy
-from email.parser import Parser
-from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path
@@ -18,6 +15,10 @@ import sys
 from typing import Any, Callable, Iterator
 
 from tools.pst_parser import (
+    decode_text,
+    html_to_text,
+    header_fields,
+    email_kind,
     ATTACHMENT_PROPERTIES,
     BODY_PROPERTIES,
     RECIPIENT_PROPERTIES,
@@ -37,53 +38,6 @@ REPORTS = (
     "pst_samples_structure.json",
 )
 STATES = ("present", "empty", "absent", "unsupported", "error")
-
-
-class TextExtractor(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
-        self.hidden = 0
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in ("script", "style", "head"):
-            self.hidden += 1
-        elif tag in ("br", "p", "div", "li", "tr", "hr") and not self.hidden:
-            self.parts.append("\n")
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in ("script", "style", "head"):
-            self.hidden = max(0, self.hidden - 1)
-        elif tag in ("p", "div", "li", "tr") and not self.hidden:
-            self.parts.append("\n")
-
-    def handle_data(self, data: str) -> None:
-        if not self.hidden:
-            self.parts.append(data)
-
-
-def html_to_text(value: str) -> str:
-    parser = TextExtractor()
-    parser.feed(value)
-    parser.close()
-    return "\n".join(line.strip() for line in "".join(parser.parts).splitlines() if line.strip())
-
-
-def decode_text(value: Any, codepage: int | None = None) -> tuple[str, str]:
-    if isinstance(value, str):
-        return value, "unicode"
-    if not isinstance(value, bytes):
-        raise ValueError("Unexpected body type")
-    if value.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return value.decode("utf-16"), "utf-16"
-    codecs = [f"cp{codepage}"] if codepage and codepage != 65001 else []
-    codecs = ["utf-8-sig"] + codecs
-    for codec in codecs:
-        try:
-            return value.decode(codec), codec
-        except (UnicodeError, LookupError):
-            pass
-    return value.decode("utf-8", errors="replace"), "utf-8-replacement"
 
 
 def body_format(presence: dict[str, dict[str, Any]]) -> str:
@@ -135,19 +89,6 @@ def sample_body(message: Any, values: dict[str, Any], limit: int) -> dict[str, A
     return result
 
 
-def header_fields(values: dict[str, Any]) -> dict[str, Any]:
-    raw = values["transport_headers"]
-    names = {"message_id": "Message-ID", "in_reply_to": "In-Reply-To", "references": "References"}
-    if raw["status"] not in ("present", "empty"):
-        return {name: field(status=raw["status"]) for name in names}
-    try:
-        text, _ = decode_text(raw["value"])
-        headers = Parser(policy=policy.default).parsestr(text, headersonly=True)
-        return {name: field(headers.get_all(header)) for name, header in names.items()}
-    except Exception:
-        return {name: field(status="error") for name in names}
-
-
 def direction(values: dict[str, Any]) -> str:
     flags = values["message_flags"]["value"]
     if isinstance(flags, int):
@@ -159,17 +100,6 @@ def direction(values: dict[str, Any]) -> str:
     if values["received_time"]["status"] == "present":
         return "received_evidence"
     return "unknown"
-
-
-def email_kind(values: dict[str, Any]) -> str:
-    item_class = values["message_class"]["value"]
-    if not isinstance(item_class, str):
-        return "unknown"
-    if item_class == "IPM.Note" or item_class.startswith("IPM.Note."):
-        return "email"
-    if item_class.startswith(("IPM.", "REPORT.")):
-        return "non_email"
-    return "unsupported"
 
 
 @dataclass(frozen=True)

@@ -66,6 +66,18 @@ in the main pipeline flows. Do not reintroduce timestamps without explicit discu
 
 ## Persistence Layer
 
+Email V1 adds `pst.py` (shared optional-parser adapter and text decoding), `ingest/email.py`
+(read-only streaming and retry ledger), `email_store.py` (explicit migration and email tables),
+and `email_cli.py` (profile-scoped operators). Email clients use `clients.create_email_store`.
+Base schema v8 and its startup validation remain unchanged. The separately versioned email
+extension is installed only by `email migrate --backup`, after creating/reopening/verifying a
+SQLite backup, with transactional DDL and data-preservation checks. No automatic migrations.
+`email init` explicitly initializes only a missing base database; ordinary email commands never
+initialize it. Original bodies are immutable after successful import; future cleaning belongs
+in a separate representation keyed by email ID. No received classification is inferred from a
+delivery timestamp. No memory, Qdrant, inference, web, or cleanup-recovery operations occur.
+Real migrations/imports remain a separate reviewed operator step; see `docs/email-ingestion.md`.
+
 Two stores, distinct roles:
 
 - **SQLite (`SummaryStore`)** — relational source of truth for all pipeline records. Schema v8: the ten entity tables plus `jobs` and `_jarvis_meta`. Always query SQLite for full records. Database paths come from the resolved profile.

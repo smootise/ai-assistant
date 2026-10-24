@@ -22,6 +22,7 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 > Update this section at the end of any session where meaningful progress is made.
 
 ### Done
+- Email ingestion V1: profile-scoped, streaming PST-to-SQLite CLI with immutable original text, archive-scoped identities, incremental item/run transactions, failure ledger and resumable imports. Separately versioned email extension installs only through verified-backup migration; base v8 remains unchanged. Synthetic validation only; real migration and 100-item trial await review.
 - PST discovery: standalone read-only inventory and deterministic representative sampling, isolated optional Windows libpff environment, private/structural report separation, and synthetic tests. No email ingestion or real archive inspection; database, vector and web behavior unchanged.
 - Phase 3 Commit 3: final synthetic CLI workflows for personal/mom verify full lineage, isolated retrieval/answers, stateful fake Qdrant cleanup/replay, cached artifacts, and legacy UUID reuse. Direct web runners now enforce the existing personal-only guard before SQLite access. Documentation and backup/recovery guidance updated; final approval and real-data deployment remain separate.
 - Stabilize the dry-run force regression by comparing SQLite schema/records rather than checkpoint-sensitive file bytes; cover WAL checkpoints and assert cleanup/persistence/vector clients remain unused even with `--persist`.

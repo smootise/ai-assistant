@@ -52,6 +52,29 @@ structural-only `pst_samples_structure.json`. Existing reports are never overwri
 
 See [Windows installation, properties, limits and report semantics](docs/pst-discovery.md).
 
+### Email ingestion V1 (PST to SQLite)
+
+Email import uses the selected profile's SQLite database and preserves original text and metadata.
+It requires an explicit, verified-backup migration; it never runs a migration at startup.
+Install the optional parser in a separate environment and follow the
+[safe 100-item trial procedure](docs/email-ingestion.md#safe-100-item-trial).
+
+```powershell
+python -m jarvis.cli --profile mom ingest pst --pst "D:\Archives\mail.pst" --limit 100 --dry-run
+python -m jarvis.cli --profile mom email migrate --backup "D:\JARVIS_Backups\mom-before-email.sqlite"
+python -m jarvis.cli --profile mom ingest pst --pst "D:\Archives\mail.pst" --limit 100
+python -m jarvis.cli --profile mom email status
+python -m jarvis.cli --profile mom email list --limit 5
+python -m jarvis.cli --profile mom email show "<email_id>"
+```
+
+`email init` explicitly creates a missing v8 profile database when needed; it refuses existing files.
+`--limit` caps new/retried source-item attempts, including non-email items and folder failures.
+Previously recorded imports do not consume it. `--dry-run` writes no import records or schema.
+`email list --failures` exposes retryable failure IDs and codes; `email show` prints private content.
+Omit `--limit` only after reviewing the trial. No LLM, embeddings, cleaning, threading or web changes
+are included. See [email storage, identity and recovery details](docs/email-ingestion.md).
+
 ---
 
 ## Quickstart

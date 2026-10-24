@@ -13,6 +13,9 @@ dependencies = [
     "qdrant-client",
 ]
 
+[project.optional-dependencies]
+pst = ["libpff-python==20260926"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

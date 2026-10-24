@@ -109,6 +109,34 @@ before opening storage. Runner guards also cover direct calls; profile-aware web
 
 ## Data Flow
 
+### Email V1: independent raw email storage
+
+PST import is a separate SQLite-only path: read-only PST -> shared `jarvis.pst` adapter ->
+`ingest.email` -> the selected profile's `EmailStore`. The standalone discovery utility reuses
+the same adapter through compatibility exports. `pypff` is an optional extra loaded only for
+PST import; counts, inspection and migration do not require it.
+
+The base schema remains v8. A separately versioned email extension (`email_schema_version=1`,
+bound to `email_profile_name`) adds `email_archives`, `email_import_runs`, and `email_items`.
+Existing ChatGPT tables, IDs and records are preserved. New email tables are not created by
+startup or by `SummaryStore`. `email migrate --backup` creates and verifies a consistent SQLite
+backup, locks the source for transactional DDL, rejects intervening changes, validates the new
+schema and old logical data, commits, and validates the committed schema again. This explicit
+email migration is separate from the schema-preserving Phase 1–3 profile rollout above.
+
+`email_items` is an archive-scoped source ledger: imported emails, explicitly skipped non-email
+items, failed message/folder/archive reads, and resolved diagnostic failures. Each item plus its
+run counters commits atomically. A full-file archive SHA-256 and folder/index locator determine
+the stable email ID; Message-ID is retained as evidence and is never a uniqueness constraint.
+Identical byte copies resume the same archive; different bytes form independent archives.
+
+Original text is stored in `original_body` with metadata, recipient, header and body-provenance
+JSON. Successful items are never overwritten on resume. A future cleaned representation must
+reference the original's email ID separately. No signature/quote removal, threading, inference,
+embeddings, ChatGPT segmentation, or web integration occurs. Source changes quarantine the
+archive; partial item commits are retained for operator review rather than deleted.
+See [Email ingestion](email-ingestion.md) for limits, migration and trial commands.
+
 ### Ingestion
 
 Raw source files are parsed, normalized to a canonical message schema, and split into

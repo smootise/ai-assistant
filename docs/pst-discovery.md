@@ -1,9 +1,11 @@
 # PST archive discovery
 
-This standalone utility helps decide a future email data model. It never imports JARVIS,
-opens SQLite, connects to Qdrant/Ollama, sends data over the network, or changes the source PST.
+This standalone utility inspects archive structure. It reuses the standard-library-only
+`jarvis.pst` helpers without loading application configuration, opening SQLite, connecting to
+Qdrant/Ollama, sending data over the network, or changing the source PST.
 No real archive was inspected during implementation. Running it against an actual archive is
-a separate user-authorized action.
+a separate user-authorized action. [Email ingestion V1](email-ingestion.md) is a separate command;
+the discovery command continues to produce reports only.
 
 ## Windows 11 installation
 

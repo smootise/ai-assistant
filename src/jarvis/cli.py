@@ -29,6 +29,7 @@ from jarvis.ollama import OllamaClient
 from jarvis.store import DatabaseCompatibilityError
 from jarvis.paths import PathBoundaryError, ProfilePaths, identifier, validate_tree
 from jarvis.summarizer import ConversationSummarizer
+from jarvis.email_cli import add_email_parsers, run_email_command
 
 
 def setup_logging(log_level: str) -> None:
@@ -849,7 +850,7 @@ def main() -> int:
     parser.add_argument(
         "--profile",
         default=None,
-        help="Profile name (CLI > JARVIS_PROFILE > personal); non-personal is inspection-only",
+        help="Profile name (CLI > JARVIS_PROFILE > personal)",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -948,6 +949,7 @@ def main() -> int:
         "ingest", help="Ingest and normalize a raw conversation export"
     )
     ingest_sub = ingest_parser.add_subparsers(dest="source", help="Source platform")
+    add_email_parsers(subparsers, ingest_sub)
 
     ingest_chatgpt = ingest_sub.add_parser(
         "chatgpt", help="Ingest a raw ChatGPT conversation export"
@@ -1198,6 +1200,9 @@ def main() -> int:
     except ConfigurationError as exc:
         parser.error(str(exc))
     setup_logging("DEBUG" if args.debug else config["log_level"])
+
+    if args.command == "email" or (args.command == "ingest" and args.source == "pst"):
+        return run_email_command(args, config)
 
     if args.command == "summarize":
         return cmd_summarize(args, config)

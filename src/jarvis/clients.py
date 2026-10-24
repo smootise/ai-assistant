@@ -1,6 +1,6 @@
 """Construct clients from an already resolved configuration; never reload global config."""
 
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from jarvis.embedder import EmbeddingClient
 from jarvis.memory import MemoryLayer
@@ -8,6 +8,16 @@ from jarvis.ollama import OllamaClient
 from jarvis.profiles import ConfigurationError
 from jarvis.store import SummaryStore
 from jarvis.vector_store import VectorStore
+
+if TYPE_CHECKING:
+    from jarvis.email_store import EmailStore
+
+
+def create_email_store(config: Mapping[str, Any], *, read_only: bool = False) -> "EmailStore":
+    from pathlib import Path
+    from jarvis.email_store import EmailStore
+
+    return EmailStore(Path(config["db_path"]), config["profile_name"], read_only=read_only)
 
 
 def create_summary_store(config: Mapping[str, Any], *, read_only: bool = False) -> SummaryStore:
