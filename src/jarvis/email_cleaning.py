@@ -55,8 +55,14 @@ class _VisibleHTML(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         self.links: list[str | None] = []
+        self.hidden_tag: str | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style"}:
+            self.hidden_tag = tag
+            return
+        if self.hidden_tag is not None:
+            return
         if tag in {"p", "div", "br", "tr", "blockquote", "li"}:
             self.parts.append("\n" + ("- " if tag == "li" else ""))
         if tag in {"td", "th"}:
@@ -67,6 +73,10 @@ class _VisibleHTML(HTMLParser):
             self.parts.append(alternative)
 
     def handle_endtag(self, tag: str) -> None:
+        if self.hidden_tag is not None:
+            if tag == self.hidden_tag:
+                self.hidden_tag = None
+            return
         if tag in {"p", "div", "tr", "blockquote", "li"}:
             self.parts.append("\n")
         if tag == "a" and self.links:
@@ -75,7 +85,8 @@ class _VisibleHTML(HTMLParser):
                 self.parts.append(f" <{href}>")
 
     def handle_data(self, data: str) -> None:
-        self.parts.append(data)
+        if self.hidden_tag is None:
+            self.parts.append(data)
 
 
 @dataclass(frozen=True)
@@ -103,8 +114,9 @@ class CleanedEmail:
 
 def _normalize(body: str, indicators: set[str]) -> str:
     text = body.replace("\r\n", "\n").replace("\r", "\n")
-    if re.search(r"<(?:html|body|div|p|table)\b[^>]*>", text, re.I) and re.search(
-        r"</(?:html|body|div|p|table)>", text, re.I
+    if re.search(r"<(?:script|style)\b[^>]*>", text, re.I) or (
+        re.search(r"<(?:html|body|div|p|table)\b[^>]*>", text, re.I)
+        and re.search(r"</(?:html|body|div|p|table)>", text, re.I)
     ):
         parser = _VisibleHTML()
         parser.feed(text)

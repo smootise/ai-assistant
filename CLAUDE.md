@@ -22,6 +22,7 @@ Sub-files carry task-specific detail and are auto-loaded when working in their s
 > Update this section at the end of any session where meaningful progress is made.
 
 ### Done
+- Email Processing V1 follow-up: correct CI Flake8 argument order and exclude HTML script/style content from processed text, with synthetic regressions verifying immutable-original recovery. No real profile database access.
 - Email Processing V1: deterministic French/English cleaning, conservative recoverable section classification, quoted-history retention, separately versioned SQLite representations, explicit verified-backup migration, bounded resumable batches/force, private comparison and content-free evaluation. Synthetic tests only; real mom processing awaits review and explicit authorization.
 - Email ingestion V1: approved at `d0e0f44`. Operator verified the 6.7 GB mom PST: 10,978 emails imported, 101 non-email items skipped, zero failed imports, one metadata warning, archive integrity verified. Immutable original text/metadata remain in SQLite. Ingestion V1 is complete; later processing stays separate.
 - PST discovery: standalone read-only inventory and deterministic representative sampling, isolated optional Windows libpff environment, private/structural report separation, and synthetic tests. No email ingestion or real archive inspection; database, vector and web behavior unchanged.

@@ -56,6 +56,7 @@ are heuristic evidence, not assertions about authorship or reconstructed convers
 | CRLF/CR line endings, NBSP/entities, zero-width formatting | Normalize to LF and ordinary spacing; preserve originals |
 | Whitespace | Remove trailing whitespace and common outer indentation; reduce runs of blank lines to one blank line; preserve relative list indentation, tabs and column spacing |
 | Residual complete HTML blocks | Standard-library conversion with paragraph/list/table boundaries, image alternative text and visible link destinations; flag for review |
+| HTML script/style blocks | Exclude their content from normalized/processed text, including standalone blocks; exact content remains recoverable in the immutable original shown by `email compare` |
 | Outlook headers | `De`/`From` followed within eight lines by `Envoyé`/`Sent`/`Date` and `Objet`/`Subject` identifies a quoted tail |
 | Gmail replies | Single-line `Le ... a écrit :` and `On ... wrote:` identify a quoted tail |
 | Forwards | French/English original/forwarded-message delimiters identify a quoted tail |
@@ -154,9 +155,10 @@ the current version, so its count can exceed 100 after multiple runs.
 Rules intentionally retain much newsletter prose, legal disclaimers, long/unmarked signatures,
 wrapped/unknown reply markers and ambiguous formatting. A recognized quoted tail may include
 interleaved newly authored replies; all of it stays in processed text. Unmarked quoted text can
-remain in `new`. HTML conversion is not browser rendering: links, tables, script/style text and
-hidden content can need manual review. Original HTML fallback information already lost by the
-importer's text extraction cannot be recovered without the PST; this stage never reopens it.
+remain in `new`. HTML conversion is not browser rendering: links, tables and other hidden content
+can need manual review. Script/style content is excluded and stays recoverable in the original.
+Original HTML fallback information already lost by the importer's text extraction cannot be
+recovered without the PST; this stage never reopens it.
 Recognized tracking parameters are removed without resolving redirects or fetching links. Unknown
 tracking and signed URL conventions remain; signed URLs are recognized only by the listed keys.
 An explicit signature separator is still heuristic: short title-cased prose without recognized
@@ -175,9 +177,8 @@ recoverable sections, migration backup/WAL/rollback, idempotency, batch limits, 
 failure retry, force preservation, algorithm versions, profile isolation, and service prohibition.
 The shared test guards refuse SQLite access outside temporary databases and block live services.
 
-Development validation on Windows/Python 3.14.3: the repository regression run passed with
-**918 passed, 4 skipped**. After the final indentation/separator regressions, the focused
-`tests/test_email_cleaning.py tests/test_email_processing.py` run passed **52 tests**. Flake8
-passed for `src`, `tools`, and the discovery/ingestion/processing tests; Black's 100-column check
-passed for all modified Python files. CI also lints the new tests. No real database evaluation
-was performed.
+Follow-up validation on Windows/Python 3.14.3: the full repository suite passed with
+**929 passed, 4 skipped**, including the script/style and immutable-original recovery regressions.
+The focused cleaning/processing suite passed **61 tests**. The exact Flake8 command parsed from
+the corrected CI workflow passed, as did Black's 100-column check for modified Python files.
+No real database evaluation was performed.

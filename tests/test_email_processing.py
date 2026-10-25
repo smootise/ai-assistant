@@ -128,6 +128,26 @@ def test_resume_force_and_original_metadata_immutability(
         )
 
 
+@pytest.mark.parametrize("tag", ["script", "style"])
+def test_html_hidden_content_remains_recoverable_in_immutable_original(
+    tmp_path: Path, tag: str
+) -> None:
+    path = tmp_path / "synthetic.db"
+    body = f"<div>Visible AB-123 at 99 €<{tag}>HIDDEN_{tag}</{tag}></div>"
+    seed_database(path, "synthetic", [body])
+    migrate_processing_schema(path, tmp_path / "before-processing.db", "synthetic")
+    with closing(EmailProcessingStore(path, "synthetic")) as store:
+        original = store.get_email("email-000")
+        assert process_emails(store)["processed"] == 1
+        comparison = store.compare("email-000")
+        assert comparison["processed_text"] == "Visible AB-123 at 99 €"
+        assert comparison["original_body"] == body
+        assert f"HIDDEN_{tag}" in comparison["original_body"]
+        assert store.get_email("email-000") == original
+        assert process_emails(store, force=True)["processed"] == 1
+        assert store.get_email("email-000") == original
+
+
 def test_interruption_and_failure_retry_preserve_completed_work(
     processing_db: Path, tmp_path: Path
 ) -> None:

@@ -198,6 +198,41 @@ def test_html_image_alternative_text_is_retained() -> None:
     assert result.needs_review
 
 
+@pytest.mark.parametrize("tag", ["script", "style"])
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_html_script_and_style_content_is_excluded(tag: str, wrapped: bool) -> None:
+    body = (
+        f'Before AB-123<{tag.upper()} type="text/plain">'
+        f'HIDDEN_{tag}: <a href="https://hidden.invalid">hidden</a>'
+        f"</{tag.upper()}> after 99 €"
+    )
+    if wrapped:
+        body = f"<div>{body}</div>"
+    result = clean_email(body)
+    assert result.processed_text == "Before AB-123 after 99 €"
+    assert f"HIDDEN_{tag}" not in result.normalized_text
+    assert "https://hidden.invalid" not in result.processed_text
+    assert "html_converted_review" in result.indicators
+    assert result.needs_review
+    assert "".join(section.text for section in result.sections) == result.normalized_text
+
+
+@pytest.mark.parametrize("tag", ["script", "style"])
+def test_unclosed_html_script_and_style_content_is_excluded(tag: str) -> None:
+    result = clean_email(f"Visible REF-123<{tag}>HIDDEN_{tag}")
+    assert result.processed_text == "Visible REF-123"
+    assert result.needs_review
+
+
+def test_html_script_and_style_preserve_surrounding_links_and_alternative_text() -> None:
+    result = clean_email(
+        '<p><a href="https://shop.invalid/item?id=42">AB-123</a></p>'
+        "<script>hidden_script()</script><style>.hidden { color: red; }</style>"
+        '<div><img alt="Prix 99 €" src="https://shop.invalid/pixel"></div>'
+    )
+    assert result.processed_text == "AB-123 <https://shop.invalid/item?id=42>\n\nPrix 99 €"
+
+
 @pytest.mark.parametrize("body", [None, "", " \r\n\r\n "])
 def test_empty_bodies_are_successful_but_need_review(body: str | None) -> None:
     result = clean_email(body)

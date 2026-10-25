@@ -25,8 +25,8 @@ jobs:
       - name: Lint
         run: >-
           flake8 src tools tests/test_pst_discovery.py tests/test_email_store.py
-          tests/test_email_ingestion.py --max-line-length=100
-          tests/test_email_cleaning.py tests/test_email_processing.py
+          tests/test_email_ingestion.py tests/test_email_cleaning.py
+          tests/test_email_processing.py --max-line-length=100
 
       - name: Test
         run: python -m pytest --maxfail=1 --disable-warnings -q
