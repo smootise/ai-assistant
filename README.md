@@ -96,6 +96,25 @@ private original/processed text and recoverable sections. There are no embedding
 thread reconstruction, attachment or web changes. See [cleaning rules, limitations and small mom
 evaluation instructions](docs/email-processing.md). Development uses synthetic databases only.
 
+### Email embedding preparation
+
+Prepare versioned, traceable chunks from processed emails with conservative French/English
+signature exclusion, exact duplicate references and advisory near-duplicate decisions. This stage
+uses SQLite only, with no model calls or vector writes. After code review and operator approval:
+
+```powershell
+python -m jarvis.cli --profile mom email preparation-migrate --backup "D:\JARVIS_Backups\mom-before-preparation-v1.sqlite"
+python -m jarvis.cli --profile mom email prepare --limit 25
+python -m jarvis.cli --profile mom email evaluate-chunks
+python -m jarvis.cli --profile mom email preview-chunks "<email_id>"
+```
+
+Repeating `prepare` resumes the next bounded batch (default 100 attempts). `--max-chars` (default
+1600) and `--overlap` (default 160) select an independent configuration; pass the same values to
+preview/evaluation. Preview prints private original, cleaned and final text with decisions.
+Original and existing processed records remain unchanged. See [rules, storage, limitations and
+small-sample evaluation](docs/email-embedding-preparation.md) before using real data.
+
 ---
 
 ## Quickstart

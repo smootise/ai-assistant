@@ -1,5 +1,11 @@
 # Email Processing V1 — deterministic cleaning
 
+Operator follow-up: all **10,978 mom emails** have now been successfully processed with zero
+failures (average original/processed lengths 2,567/2,385; 8,365 review flags). The original trial
+instructions below remain historical operator guidance. The separate
+[Email Embedding Preparation V1](email-embedding-preparation.md) addresses remaining business
+signatures, chunking and duplicates without modifying these existing processing results.
+
 This is a separate SQLite-only stage after the approved Email Ingestion V1 commit `d0e0f44`.
 It reads stored originals, without opening the PST. There are no LLM calls, embeddings, Qdrant
 writes, conversation reconstruction, attachment processing, or web changes. Development and

@@ -10,6 +10,9 @@ import sys
 from typing import Any
 
 from jarvis.clients import create_email_processing_store, create_email_store, create_summary_store
+from jarvis.clients import create_email_preparation_store
+from jarvis.email_preparation import PreparationOptions, prepare_emails
+from jarvis.email_preparation_store import migrate_preparation_schema
 from jarvis.email_processing import process_emails
 from jarvis.email_processing_store import migrate_processing_schema
 from jarvis.email_store import EmailError, migrate_email_schema
@@ -58,6 +61,22 @@ def add_email_parsers(subparsers: Any, ingest_subparsers: Any) -> None:
         "compare", help="Print private original, processed text and sections"
     )
     compare.add_argument("email_id")
+    preparation_migration = commands.add_parser(
+        "preparation-migrate", help="Back up, verify and install the chunk preparation extension"
+    )
+    preparation_migration.add_argument("--backup", required=True, type=Path)
+    for name, help_text in (
+        ("prepare", "Prepare a bounded resumable batch without embeddings"),
+        ("preview-chunks", "Print private original, cleaned text, chunks and decisions"),
+        ("evaluate-chunks", "Content-free chunk, exclusion and duplicate statistics"),
+    ):
+        parser = commands.add_parser(name, help=help_text)
+        parser.add_argument("--max-chars", type=positive_integer, default=1600)
+        parser.add_argument("--overlap", type=int, default=160)
+        if name == "prepare":
+            parser.add_argument("--limit", type=positive_integer, default=100)
+        if name == "preview-chunks":
+            parser.add_argument("email_id")
 
 
 def validate_backup_boundary(paths: ProfilePaths, backup: Path) -> Path:
@@ -100,16 +119,39 @@ def run_email_command(args: argparse.Namespace, config: dict[str, Any]) -> int:
             create_summary_store(config)
             print("Initialized a new v8 database. Email migration is still required.")
             return 0
-        if args.email_command in {"migrate", "processing-migrate"}:
+        if args.email_command in {"migrate", "processing-migrate", "preparation-migrate"}:
             backup = validate_backup_boundary(paths, args.backup)
-            migration = (
-                migrate_processing_schema
-                if args.email_command == "processing-migrate"
-                else migrate_email_schema
-            )
+            migration = {
+                "migrate": migrate_email_schema,
+                "processing-migrate": migrate_processing_schema,
+                "preparation-migrate": migrate_preparation_schema,
+            }[args.email_command]
             result = migration(paths.context.db_path, backup, profile)
             print(f"Email schema: {result}.")
             return 0
+        if args.email_command in {"prepare", "preview-chunks", "evaluate-chunks"}:
+            try:
+                options = PreparationOptions(args.max_chars, args.overlap)
+            except ValueError as error:
+                raise EmailError(str(error)) from None
+            with closing(
+                create_email_preparation_store(config, read_only=args.email_command != "prepare")
+            ) as store:
+                if args.email_command == "prepare":
+                    result = prepare_emails(
+                        store,
+                        options=options,
+                        limit=args.limit,
+                        progress=lambda message: print(message, file=sys.stderr),
+                    )
+                elif args.email_command == "preview-chunks":
+                    result = store.preview_preparation(args.email_id, options)
+                else:
+                    result = store.evaluate_preparation(options)
+            print(json.dumps(result, indent=2, ensure_ascii=True))
+            if result.get("status") == "interrupted":
+                return 130
+            return 1 if result.get("status") == "partial" else 0
         if args.email_command in {"process", "evaluate", "compare"}:
             with closing(
                 create_email_processing_store(config, read_only=args.email_command != "process")

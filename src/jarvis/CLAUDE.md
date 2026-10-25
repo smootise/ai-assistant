@@ -88,6 +88,17 @@ errors retry, failed force preserves prior success, and new algorithm versions r
 No PST, inference, vector, attachment, thread reconstruction or web work belongs in this stage.
 See `docs/email-processing.md`; real mom processing requires review and explicit authorization.
 
+Email Embedding Preparation V1 adds `email_preparation.py` (pure signature/footer recheck,
+message/section chunks and lexical near decisions) and `email_preparation_store.py` (checkpoints,
+exact shared contents, every source occurrence). Use `clients.create_email_preparation_store`.
+`email preparation-migrate --backup` installs its independent v1 extension through the verified
+backup helper, fingerprinting all original and processed rows. Bump preparation rules version
+after behavior changes; sizes and processing version are part of the generation key. Exact
+duplicates share text only; near matches remain separate. Each email commits atomically, errors
+retry and failed regeneration retains prior chunks. Recheck upstream signature exclusions and
+retain uncertain business facts. No original/processed writes, service clients, or web work.
+See `docs/email-embedding-preparation.md`; do not run against real mom before operator review.
+
 Two stores, distinct roles:
 
 - **SQLite (`SummaryStore`)** — relational source of truth for all pipeline records. Schema v8: the ten entity tables plus `jobs` and `_jarvis_meta`. Always query SQLite for full records. Database paths come from the resolved profile.

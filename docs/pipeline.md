@@ -28,6 +28,18 @@ private before/after text and section evidence. `email evaluate` is read-only an
 content-free length/category/review/failure statistics. No LLM/vector stage or PST reread occurs.
 See [Email Processing V1](email-processing.md) for limitations and the review-gated mom trial.
 
+### Deterministic email embedding preparation
+
+After `email preparation-migrate --backup`, `email prepare --limit 25` reads successful processed
+messages and commits versioned chunks, conservative exclusions and exact duplicate references in
+separate tables. No LLM/embedding/Qdrant/PST calls occur. `--max-chars` (1600) and `--overlap` (160)
+select an independent generation. Repeat the same command to resume; unchanged successes skip,
+failures retry, and each email commits atomically. Originals and processed records stay immutable.
+`email preview-chunks <email_id>` privately compares original/processed text, sections, exclusions,
+chunks and duplicate references. `email evaluate-chunks` prints only aggregate statistics. Supply
+the same size flags to inspect a nondefault generation. Near matches never merge distinct text.
+See [preparation rules, versioning, recovery and operator sample](email-embedding-preparation.md).
+
 ## ChatGPT pipeline and recovery
 
 SQLite-only persistence does not contact Qdrant or construct an embedding client. This includes

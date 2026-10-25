@@ -12,6 +12,18 @@ from jarvis.vector_store import VectorStore
 if TYPE_CHECKING:
     from jarvis.email_store import EmailStore
     from jarvis.email_processing_store import EmailProcessingStore
+    from jarvis.email_preparation_store import EmailPreparationStore
+
+
+def create_email_preparation_store(
+    config: Mapping[str, Any], *, read_only: bool = False
+) -> "EmailPreparationStore":
+    from pathlib import Path
+    from jarvis.email_preparation_store import EmailPreparationStore
+
+    return EmailPreparationStore(
+        Path(config["db_path"]), config["profile_name"], read_only=read_only
+    )
 
 
 def create_email_processing_store(

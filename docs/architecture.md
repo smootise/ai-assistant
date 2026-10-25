@@ -154,6 +154,25 @@ old results. Quotes remain in processed text; uncertain sections remain and are 
 SQLite-only, with no PST, inference, embeddings, Qdrant, attachment or web operations. Development
 uses synthetic databases and does not access the real mom data. See [rules and operator evaluation](email-processing.md).
 
+### Email Embedding Preparation V1
+
+Successful processed emails feed a deterministic preparation stage with no service clients.
+`email_preparation.py` owns conservative signature/footer decisions inside new/quoted messages,
+bounded section/message chunks, source offsets and lexical near comparisons.
+`email_preparation_store.py` adds a separately backed-up preparation extension v1: checkpoints
+in `email_preparations`, exact shared text in `email_embedding_contents`, and every source
+position/reference in `email_embedding_occurrences`. Base v8/email v1/processing v1 stay intact.
+`email preparation-migrate --backup` uses the same verified-backup transaction helper, preserving
+all existing originals and processed results. No automatic migration occurs.
+
+Generation keys include rules/processing versions and chunk sizes. Per-email transactions and
+input fingerprints enable resumable, idempotent batches and safe retries. Exact SHA-256/equality
+matches share text; near token-sequence matches remain separate with advisory evidence.
+Full source content stays recoverable; uncertain signatures/business facts stay included.
+Future indexing can identify text by generation/content ID and resolve all citations through
+SQLite occurrences. No email vectors, retrieval integration, threads or web changes are included.
+See [Email Embedding Preparation V1](email-embedding-preparation.md) for rules, limits and trial.
+
 ### Ingestion
 
 Raw source files are parsed, normalized to a canonical message schema, and split into
