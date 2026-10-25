@@ -9,7 +9,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
-from typing import Any
+from typing import Any, Callable
 
 from jarvis.pst import serialize
 from jarvis.store import SummaryStore
@@ -106,10 +106,16 @@ def validate_email_schema(connection: sqlite3.Connection, profile: str) -> None:
             raise EmailError("Email schema is incomplete or incompatible; no automatic repair")
 
 
-def fingerprint(connection: sqlite3.Connection) -> str:
+def fingerprint(
+    connection: sqlite3.Connection,
+    *,
+    excluded_objects: dict[str, str] | None = None,
+    excluded_meta: set[str] | None = None,
+) -> str:
     """Logical baseline including arbitrary existing tables, constraints, indexes and rows."""
     digest = hashlib.sha256()
-    excluded = email_objects()
+    excluded = email_objects() if excluded_objects is None else excluded_objects
+    metadata = EMAIL_META if excluded_meta is None else excluded_meta
     objects = connection.execute(
         "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name"
     ).fetchall()
@@ -123,7 +129,7 @@ def fingerprint(connection: sqlite3.Connection) -> str:
         columns = [row[1] for row in connection.execute(f"PRAGMA table_info({table})")]
         ordering = ", ".join(quote(name) for name in columns)
         for row in connection.execute(f"SELECT * FROM {table} ORDER BY {ordering}"):
-            if entry[1] == "_jarvis_meta" and row[0] in EMAIL_META:
+            if entry[1] == "_jarvis_meta" and row[0] in metadata:
                 continue
             digest.update(json_value(row).encode("utf-8"))
     for pragma in ("user_version", "application_id"):
@@ -139,16 +145,45 @@ def integrity_check(connection: sqlite3.Connection) -> None:
 
 
 def migrate_email_schema(db_path: Path, backup_path: Path, profile: str) -> str:
+    return migrate_extension(
+        db_path,
+        backup_path,
+        profile,
+        ddl=EMAIL_DDL,
+        objects=email_objects(),
+        markers={"email_schema_version": EMAIL_SCHEMA_VERSION, "email_profile_name": profile},
+        validate=validate_email_schema,
+    )
+
+
+def migrate_extension(
+    db_path: Path,
+    backup_path: Path,
+    profile: str,
+    *,
+    ddl: tuple[str, ...],
+    objects: dict[str, str],
+    markers: dict[str, str],
+    validate: Callable[[sqlite3.Connection, str], None],
+    prerequisite: Callable[[sqlite3.Connection, str], None] | None = None,
+) -> str:
+    def baseline_of(connection: sqlite3.Connection) -> str:
+        return fingerprint(connection, excluded_objects=objects, excluded_meta=set(markers))
+
     db_path = db_path.resolve()
     SummaryStore(str(db_path), read_only=True)
     with closing(connect(db_path, read_only=True)) as source:
-        markers = dict(source.execute("SELECT key, value FROM _jarvis_meta"))
+        if prerequisite is not None:
+            prerequisite(source, profile)
+        installed = dict(source.execute("SELECT key, value FROM _jarvis_meta"))
         existing = {row[0] for row in source.execute("SELECT name FROM sqlite_master")}
-        if "email_schema_version" in markers:
-            validate_email_schema(source, profile)
+        if set(markers) <= set(installed):
+            validate(source, profile)
             return "already_installed"
-        if existing & set(email_objects()) or EMAIL_META & set(markers):
-            raise EmailError("Unversioned email objects exist; explicit operator recovery required")
+        if existing & set(objects) or set(markers) & set(installed):
+            raise EmailError(
+                "Unversioned extension objects exist; explicit operator recovery required"
+            )
         backup_path = backup_path.expanduser().absolute()
         if backup_path.resolve() != backup_path or backup_path.exists() or backup_path.is_symlink():
             raise EmailError("Backup must be a new, unredirected file")
@@ -165,40 +200,40 @@ def migrate_email_schema(db_path: Path, backup_path: Path, profile: str) -> str:
             pass
         source.execute("BEGIN")
         integrity_check(source)
-        baseline = fingerprint(source)
+        baseline = baseline_of(source)
         with closing(connect(backup_path)) as backup:
             source.backup(backup)
             integrity_check(backup)
-            if fingerprint(backup) != baseline:
+            if baseline_of(backup) != baseline:
                 raise EmailError("Backup does not match the source snapshot")
         source.rollback()
     # Reopen the backup independently, confirming committed data can be restored/read.
     SummaryStore(str(backup_path), read_only=True)
     with closing(connect(backup_path, read_only=True)) as backup:
         integrity_check(backup)
-        if fingerprint(backup) != baseline:
+        if baseline_of(backup) != baseline:
             raise EmailError("Reopened backup verification failed")
     with closing(connect(db_path)) as connection:
         connection.execute("BEGIN IMMEDIATE")
         try:
-            if fingerprint(connection) != baseline:
+            if baseline_of(connection) != baseline:
                 raise EmailError("Database changed after backup; create a fresh backup and retry")
-            for statement in EMAIL_DDL:
+            for statement in ddl:
                 connection.execute(statement)
             connection.executemany(
                 "INSERT INTO _jarvis_meta(key, value) VALUES (?, ?)",
-                [("email_schema_version", EMAIL_SCHEMA_VERSION), ("email_profile_name", profile)],
+                list(markers.items()),
             )
-            validate_email_schema(connection, profile)
+            validate(connection, profile)
             integrity_check(connection)
-            if fingerprint(connection) != baseline:
+            if baseline_of(connection) != baseline:
                 raise EmailError("Migration altered existing data; rolled back")
             connection.commit()
         except BaseException:
             connection.rollback()
             raise
     with closing(connect(db_path, read_only=True)) as migrated:
-        validate_email_schema(migrated, profile)
+        validate(migrated, profile)
         integrity_check(migrated)
     return "installed"
 

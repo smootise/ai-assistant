@@ -78,6 +78,16 @@ in a separate representation keyed by email ID. No received classification is in
 delivery timestamp. No memory, Qdrant, inference, web, or cleanup-recovery operations occur.
 Real migrations/imports remain a separate reviewed operator step; see `docs/email-ingestion.md`.
 
+Email Processing V1 adds `email_cleaning.py` (pure deterministic rules), `email_processing.py`
+(bounded per-email checkpoints), and `email_processing_store.py` (separate versioned results).
+Use `clients.create_email_processing_store`. The explicit `email processing-migrate --backup`
+reuses `email_store.migrate_extension`; its preservation fingerprint includes original emails.
+Base v8/email v1 stay unchanged. Keep quoted and uncertain content in processed text; preserve all
+section text with qualitative detection evidence. Current version successes skip on resume;
+errors retry, failed force preserves prior success, and new algorithm versions retain old rows.
+No PST, inference, vector, attachment, thread reconstruction or web work belongs in this stage.
+See `docs/email-processing.md`; real mom processing requires review and explicit authorization.
+
 Two stores, distinct roles:
 
 - **SQLite (`SummaryStore`)** — relational source of truth for all pipeline records. Schema v8: the ten entity tables plus `jobs` and `_jarvis_meta`. Always query SQLite for full records. Database paths come from the resolved profile.

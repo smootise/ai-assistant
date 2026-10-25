@@ -15,6 +15,19 @@ metadata field states, folder/item provenance and failures are retained in email
 No ChatGPT conversation/segment rows or artifacts are created. See the
 [email operator guide](email-ingestion.md) for schema, preservation, status and safe trial steps.
 
+### Deterministic email processing
+
+After an explicit backed-up `email processing-migrate`, `email process --limit 100` cleans a
+bounded batch of SQLite originals into separately versioned representations. The default batch
+limit is 100. Successful current-version rows are skipped; failures/interrupted items retry on
+the next invocation. `--force` explicitly reprocesses current-version rows, starting at the lowest
+eligible email ID each invocation. Each email commits independently; originals remain immutable.
+Quoted content and uncertain classifications stay in output; extracted signatures/boilerplate and
+tracking parameters remain recoverable in normalized sections. `email compare <email_id>` prints
+private before/after text and section evidence. `email evaluate` is read-only and prints cumulative
+content-free length/category/review/failure statistics. No LLM/vector stage or PST reread occurs.
+See [Email Processing V1](email-processing.md) for limitations and the review-gated mom trial.
+
 ## ChatGPT pipeline and recovery
 
 SQLite-only persistence does not contact Qdrant or construct an embedding client. This includes

@@ -1,4 +1,4 @@
-"""Profile-routed email operators; content is printed only by explicit show."""
+"""Profile-routed email operators; content is printed only by explicit show/compare."""
 
 from __future__ import annotations
 
@@ -9,7 +9,9 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from jarvis.clients import create_email_store, create_summary_store
+from jarvis.clients import create_email_processing_store, create_email_store, create_summary_store
+from jarvis.email_processing import process_emails
+from jarvis.email_processing_store import migrate_processing_schema
 from jarvis.email_store import EmailError, migrate_email_schema
 from jarvis.ingest.email import import_pst
 from jarvis.paths import ProfilePaths
@@ -42,6 +44,20 @@ def add_email_parsers(subparsers: Any, ingest_subparsers: Any) -> None:
     listing.add_argument("--failures", action="store_true")
     show = commands.add_parser("show", help="Print an original email including private body text")
     show.add_argument("email_id")
+    processing_migration = commands.add_parser(
+        "processing-migrate", help="Back up, verify and install the processing extension"
+    )
+    processing_migration.add_argument("--backup", required=True, type=Path)
+    process = commands.add_parser("process", help="Clean a bounded batch of stored original emails")
+    process.add_argument("--limit", type=positive_integer, default=100)
+    process.add_argument("--force", action="store_true", help="Reprocess current-version results")
+    commands.add_parser(
+        "evaluate", help="Content-free statistics for the current processing version"
+    )
+    compare = commands.add_parser(
+        "compare", help="Print private original, processed text and sections"
+    )
+    compare.add_argument("email_id")
 
 
 def validate_backup_boundary(paths: ProfilePaths, backup: Path) -> Path:
@@ -84,11 +100,35 @@ def run_email_command(args: argparse.Namespace, config: dict[str, Any]) -> int:
             create_summary_store(config)
             print("Initialized a new v8 database. Email migration is still required.")
             return 0
-        if args.email_command == "migrate":
+        if args.email_command in {"migrate", "processing-migrate"}:
             backup = validate_backup_boundary(paths, args.backup)
-            result = migrate_email_schema(paths.context.db_path, backup, profile)
+            migration = (
+                migrate_processing_schema
+                if args.email_command == "processing-migrate"
+                else migrate_email_schema
+            )
+            result = migration(paths.context.db_path, backup, profile)
             print(f"Email schema: {result}.")
             return 0
+        if args.email_command in {"process", "evaluate", "compare"}:
+            with closing(
+                create_email_processing_store(config, read_only=args.email_command != "process")
+            ) as store:
+                if args.email_command == "process":
+                    result = process_emails(
+                        store,
+                        limit=args.limit,
+                        force=args.force,
+                        progress=lambda message: print(message, file=sys.stderr),
+                    )
+                elif args.email_command == "evaluate":
+                    result = store.evaluate()
+                else:
+                    result = store.compare(args.email_id)
+            print(json.dumps(result, indent=2, ensure_ascii=True))
+            if result.get("status") == "interrupted":
+                return 130
+            return 1 if result.get("status") == "partial" else 0
         with closing(create_email_store(config, read_only=True)) as store:
             if args.email_command == "status":
                 result = store.status()

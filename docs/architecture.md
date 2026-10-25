@@ -137,6 +137,23 @@ embeddings, ChatGPT segmentation, or web integration occurs. Source changes quar
 archive; partial item commits are retained for operator review rather than deleted.
 See [Email ingestion](email-ingestion.md) for limits, migration and trial commands.
 
+### Email Processing V1: deterministic derived representations
+
+After operator-verified ingestion of 10,978 emails from the 6.7 GB mom PST (101 skipped non-email
+items, no failures, one metadata warning, verified integrity), deterministic cleaning reads only
+stored originals. The importer remains unchanged. A separate processing extension v1 adds
+`email_processed`, keyed by `(email_id, processing_version)`, with normalized/processed text,
+recoverable section JSON, confidence/detection evidence, review flags, input fingerprint and UTC
+timestamps. Original email text/metadata and base v8/email v1 schemas remain unchanged.
+
+`email processing-migrate --backup` reuses the verified-backup transaction helper; only processing
+objects/metadata are excluded from preservation checks, so original email rows are fingerprinted.
+No startup migration occurs. Per-email transactions provide resumable bounded batches, fixed
+failure codes, retry, current-version skipping and explicit force. New algorithm versions retain
+old results. Quotes remain in processed text; uncertain sections remain and are flagged. This is
+SQLite-only, with no PST, inference, embeddings, Qdrant, attachment or web operations. Development
+uses synthetic databases and does not access the real mom data. See [rules and operator evaluation](email-processing.md).
+
 ### Ingestion
 
 Raw source files are parsed, normalized to a canonical message schema, and split into

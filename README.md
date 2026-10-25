@@ -75,6 +75,27 @@ Previously recorded imports do not consume it. `--dry-run` writes no import reco
 Omit `--limit` only after reviewing the trial. No LLM, embeddings, cleaning, threading or web changes
 are included. See [email storage, identity and recovery details](docs/email-ingestion.md).
 
+### Email Processing V1 (deterministic cleaning)
+
+Clean stored originals in the selected profile without PST access or running services. This
+separate layer preserves originals, quoted history and uncertain text, and retains extracted
+sections. Install its extension through a verified backup before processing. After review and
+explicit authorization for the selected real profile:
+
+```powershell
+python -m jarvis.cli --profile mom email processing-migrate --backup "D:\JARVIS_Backups\mom-before-processing-v1.sqlite"
+python -m jarvis.cli --profile mom email process --limit 100
+python -m jarvis.cli --profile mom email evaluate
+python -m jarvis.cli --profile mom email compare "<email_id>"
+```
+
+`process` defaults to 100 attempts and resumes by skipping successful current-version records.
+`--force` explicitly reprocesses that version within the limit; each forced invocation starts at
+the first eligible ID. `evaluate` prints content-free cumulative statistics; `compare` prints
+private original/processed text and recoverable sections. There are no embeddings, LLM calls,
+thread reconstruction, attachment or web changes. See [cleaning rules, limitations and small mom
+evaluation instructions](docs/email-processing.md). Development uses synthetic databases only.
+
 ---
 
 ## Quickstart
