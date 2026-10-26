@@ -1,0 +1,585 @@
+[
+  {
+    "id": "fr-business",
+    "body": "Bonjour,\nLa r\u00e9union est fix\u00e9e \u00e0 mardi.\n\nCordialement,\nAlice Martin\nResponsable commerciale\nAtelier Exemple\nLyon\nT\u00e9l : 01 23 45 67 89\nalice@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "8aced545fbcea88400613285fc78e8c78e41ba0f436d4610b53a577aa87853a3",
+      "signatures": [
+        [
+          40,
+          154
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "en-business",
+    "body": "Hello,\nThe meeting is on Tuesday.\n\nBest regards,\nBob Smith\nAccount Manager\nExample Workshop\nLondon\nPhone: +44 20 1234 5678\nbob@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "dbd91d3e7d628f1a4af65f2b7c1f7ba9f8587a37a58d3b6345c5757eaa3f5cf0",
+      "signatures": [
+        [
+          35,
+          142
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "fr-short",
+    "body": "Re\u00e7u.\n\nCordialement,\nAlice Martin",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "067d24d02aa67e03a3f628ad3905a4bc956e1de4a7926fe82127467737f21763",
+      "signatures": [
+        [
+          7,
+          33
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "en-short",
+    "body": "Received.\n\nRegards,\nBob Smith",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "7d0c94b578230378a5279358783e39c7434a0e120250a70d2808d6dff025dd60",
+      "signatures": [
+        [
+          11,
+          29
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "fr-mobile",
+    "body": "Dossier re\u00e7u.\n\nEnvoy\u00e9 de mon iPhone",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "8269907f2277c2487eb0b4a5fe004296ff0bc99e6050ea7c69ab2c730175120c",
+      "signatures": [
+        [
+          15,
+          35
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "en-mobile",
+    "body": "Files received.\n\nSent from my iPhone",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "f454eafd9725a595b47bfa0fcc157e39c9c6c9f58659f5519bc616927bb588aa",
+      "signatures": [
+        [
+          17,
+          36
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "standard",
+    "body": "Pi\u00e8ces re\u00e7ues.\n\n-- \nAlice Martin\nalice@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "2a794fe446ab0a68b2ae33845091976b3fb63ece31efd2aeab967a7dc6a560f9",
+      "signatures": [
+        [
+          16,
+          54
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "unmarked",
+    "body": "\u00c0 mardi.\n\nAlice Martin\nResponsable\nAtelier Exemple\n01 23 45 67 89\nalice@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "3299012ae6ff8cab90af23f4496024911e154ac57206cf9252a160f09b53106c",
+      "signatures": [
+        [
+          10,
+          87
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "social",
+    "body": "Bien re\u00e7u.\n\nCordialement,\nAlice Martin\nResponsable commerciale\nAtelier Exemple\nLyon\nT\u00e9l : 01 23 45 67 89\nalice@example.invalid\nLinkedIn : https://example.invalid/alice",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "ebf276ce6de498a77f3898a050214f4abc2b9bbc67a0e51802a1ba8638950a02",
+      "signatures": [
+        [
+          12,
+          167
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "crlf",
+    "body": "Hello,\r\nSee you Tuesday.\r\n\r\nRegards,\r\n  Bob Smith  \r\n  bob@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "112d40fced61f09733b337f29cdd07c0decb047c72453774b41823be85a724fc",
+      "signatures": [
+        [
+          28,
+          74
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "unicode",
+    "body": "R\u00e9sum\u00e9 re\u00e7u \ud83d\udc4b.\n\nCordialement,\n\u00c9lodie No\u00ebl\n\u00e9lodie@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "12a9f934047ce868bfe347410f8f51d99c745725723b4b28d1205189efc320ad",
+      "signatures": [
+        [
+          16,
+          64
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "outlook-fr",
+    "body": "Merci.\n\nCordialement,\nAlice Martin\nResponsable commerciale\nAtelier Exemple\nLyon\nT\u00e9l : 01 23 45 67 89\nalice@example.invalid\n\nDe : Bob <bob@example.invalid>\nEnvoy\u00e9 : lundi\nObjet : rendez-vous\n\n\u00c0 mardi.\n\nBest regards,\nBob Smith\nAccount Manager\nExample Workshop\nLondon\nPhone: +44 20 1234 5678\nbob@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "3ee4363f466925383b94a31cdde57bf56f0097c7fc20302313a2d2983077dfd0",
+      "signatures": [
+        [
+          8,
+          122
+        ],
+        [
+          201,
+          308
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "outlook-en",
+    "body": "Thanks.\n\nFrom: Alice <alice@example.invalid>\nSent: Monday\nSubject: meeting\n\nSee you.\n\nCordialement,\nAlice Martin\nResponsable commerciale\nAtelier Exemple\nLyon\nT\u00e9l : 01 23 45 67 89\nalice@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "d8ce908506cceb958833ef32fd7f0c6adad38fd2ed0bb853562a2eaf417a2303",
+      "signatures": [
+        [
+          86,
+          200
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "gmail",
+    "body": "Bien re\u00e7u.\n\nLe lundi 5 octobre 2026 \u00e0 10:00, Bob a \u00e9crit :\n> \u00c0 mardi.\n> \n> Regards,\n> Bob Smith\n> bob@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "1ea1a89ecbec4543facf05e98526362cfd9a4ef6417950f30bf2169a26b43f66",
+      "signatures": [
+        [
+          73,
+          117
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "nested",
+    "body": "OK.\n\nOn Monday, Alice wrote:\n> OK.\n> On Sunday, Bob wrote:\n>> Merci.\n>> Cordialement,\n>> Alice Martin\n>> alice@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "7f11ef04163f2a1a7dd41723f22a11871e3cf0313d180f94e25abae01a0945c0",
+      "signatures": [
+        [
+          69,
+          126
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "forward",
+    "body": "Pour information.\n\n----- Forwarded message -----\nFrom: Bob\nSubject: meeting\n\nHello.\n\nBest regards,\nBob Smith\nAccount Manager\nExample Workshop\nLondon\nPhone: +44 20 1234 5678\nbob@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "46c439ecb0c8a1a57de1b6b26291add74e756a763cb99beedc29bc96f92f480c",
+      "signatures": [
+        [
+          85,
+          192
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "duplicate-signatures",
+    "body": "Message.\nCordialement,\nAlice Martin\nResponsable commerciale\nAtelier Exemple\nLyon\nT\u00e9l : 01 23 45 67 89\nalice@example.invalid\n\nFrom: Alice\nSent: Monday\nSubject: RE\n\nPrevious.\nCordialement,\nAlice Martin\nResponsable commerciale\nAtelier Exemple\nLyon\nT\u00e9l : 01 23 45 67 89\nalice@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "630446bdb123d058a3ae58d101db579ec0b6e784056ea6e2422c7a6e0109efe6",
+      "signatures": [
+        [
+          9,
+          123
+        ],
+        [
+          173,
+          287
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "postscript",
+    "body": "Bonjour.\n\nCordialement,\nAlice Martin\nResponsable commerciale\nAtelier Exemple\nLyon\nT\u00e9l : 01 23 45 67 89\nalice@example.invalid\n\nPS : confirmer le devis de 450 EUR avant vendredi.",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "f0e9b9d923be298ea5f20f65de6d7b37391721dc85eb039caba98912c6dbf553",
+      "signatures": [
+        [
+          10,
+          124
+        ]
+      ],
+      "critical": [
+        [
+          126,
+          176
+        ]
+      ]
+    }
+  },
+  {
+    "id": "order-after-signoff",
+    "body": "Re\u00e7u.\n\nCordialement,\nVeuillez livrer 25 pi\u00e8ces REF-123 au prix de 12,50 EUR.",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "c609281981645cb4dbde518c42534e60034c64f409d25886dcea26bef5265168",
+      "signatures": [],
+      "critical": [
+        [
+          21,
+          76
+        ]
+      ]
+    }
+  },
+  {
+    "id": "thanks-instruction",
+    "body": "Hello.\n\nThanks,\nPlease approve invoice INV-2026 for 500 EUR.",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "4e44b3882992fd0f0b52b9a19f89b2fa4bdebf083a14dc23d4ee2bb6d2a88287",
+      "signatures": [],
+      "critical": [
+        [
+          16,
+          60
+        ]
+      ]
+    }
+  },
+  {
+    "id": "contact-instruction",
+    "body": "Pour la livraison, contactez :\nAlice Martin\n01 23 45 67 89\nalice@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "7511978361ca12d9e025e6f56500b2f8475b63e7368298e118daef2781672927",
+      "signatures": [],
+      "critical": [
+        [
+          0,
+          80
+        ]
+      ]
+    }
+  },
+  {
+    "id": "order-form",
+    "body": "ORDER FORM\nProduct: REF-123\nQuantity: 50\nPrice: 200 EUR\nSupplier: alice@example.invalid\nPhone: 01 23 45 67 89",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "c74a8fefb028707a23ff60e4adf3a1209c73687033139e439b7a4287b3f6453b",
+      "signatures": [],
+      "critical": [
+        [
+          0,
+          109
+        ]
+      ]
+    }
+  },
+  {
+    "id": "newsletter",
+    "body": "Offre de la semaine : 30 % sur les produits.\nCommander avant vendredi.\nhttps://example.invalid/shop\nSe d\u00e9sabonner : https://example.invalid/unsubscribe",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "c633c4c1fe4e9a4ead036d451157030477df4d99feda25bdad873af13adc886c",
+      "signatures": [],
+      "critical": [
+        [
+          0,
+          99
+        ]
+      ]
+    }
+  },
+  {
+    "id": "hyphen-list",
+    "body": "Next steps:\n- Confirm order\n- Pay 500 EUR\n- Deliver Friday",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "36d5975934c6577b0b52cc7b1657bd6614ec3524ccfe00fab374c4305288a55b",
+      "signatures": [],
+      "critical": [
+        [
+          0,
+          58
+        ]
+      ]
+    }
+  },
+  {
+    "id": "price-separator",
+    "body": "Proposal\n--\nOrder total\n500 EUR\nDelivery Friday",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "a3db47b618b810d496ff816a6c310285cb2ab0b11dd12433c57b6eb3bcd4762d",
+      "signatures": [],
+      "critical": [
+        [
+          0,
+          47
+        ]
+      ]
+    }
+  },
+  {
+    "id": "empty",
+    "body": "",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signatures": [],
+      "critical": []
+    }
+  },
+  {
+    "id": "no-signature",
+    "body": "La livraison doit arriver avant le 12/11/2026. Le contrat est valid\u00e9.",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "3f89d2f4ea87ec2c3883d2c5d97fb9986881ec0e5c1bd76ea1ec3c442a897ace",
+      "signatures": [],
+      "critical": [
+        [
+          0,
+          69
+        ]
+      ]
+    }
+  },
+  {
+    "id": "only-contact",
+    "body": "alice@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "78d66dbfbec60c3f74aa150451ce5c0c7d4ad25f09f23a30f2f20dd3eb59ac21",
+      "signatures": [],
+      "critical": [
+        [
+          0,
+          21
+        ]
+      ]
+    }
+  },
+  {
+    "id": "html-extracted",
+    "body": "Bonjour,\nLa pi\u00e8ce jointe est correcte.\n\nCordialement,\nAlice Martin\nResponsable commerciale\nAtelier Exemple\nLyon\nT\u00e9l : 01 23 45 67 89\nalice@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "html-extracted",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "948b92184fe328c58441624e9b7e68d884ac2e347792a79c933074d735f10d48",
+      "signatures": [
+        [
+          40,
+          154
+        ]
+      ],
+      "critical": []
+    }
+  },
+  {
+    "id": "long",
+    "body": "Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. Le dossier contient les informations suivantes. \n\nCordialement,\nAlice Martin\nResponsable commerciale\nAtelier Exemple\nLyon\nT\u00e9l : 01 23 45 67 89\nalice@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain",
+    "label": {
+      "status": "reviewed",
+      "source": "synthetic-authored",
+      "reviewer": "synthetic-author-v1",
+      "body_sha256": "dabe63b47af3d70441c100ac4a9873531786a70509aba1eae2d31ccedb109f83",
+      "signatures": [
+        [
+          4322,
+          4436
+        ]
+      ],
+      "critical": [
+        [
+          0,
+          4320
+        ]
+      ]
+    }
+  }
+]

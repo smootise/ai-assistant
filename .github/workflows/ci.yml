@@ -27,7 +27,25 @@ jobs:
           flake8 src tools tests/test_pst_discovery.py tests/test_email_store.py
           tests/test_email_ingestion.py tests/test_email_cleaning.py
           tests/test_email_processing.py tests/test_email_preparation.py
-          tests/test_email_preparation_store.py --max-line-length=100
+          tests/test_email_preparation_store.py tests/test_email_signature_benchmark.py
+          --max-line-length=100
 
       - name: Test
         run: python -m pytest --maxfail=1 --disable-warnings -q
+
+  signature-candidates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install isolated research dependencies
+        run: pip install -e . -r tools/requirements-signature.txt
+      - name: Exercise actual candidate APIs with synthetic annotations only
+        run: >-
+          python -m tools.email_signature_benchmark run
+          --input tests/fixtures/signature_benchmark.json
+          --reference tests/fixtures/signature_reference.json
+          --detectors baseline mail-reply melusine talon-brute talon-ml corpus hybrid baseline-hybrid
+          --report signature-ci-results.json

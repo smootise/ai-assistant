@@ -1,5 +1,10 @@
 # Email Embedding Preparation V1
 
+Follow-up: [signature detection research and benchmark](email-signature-research.md) compares
+local libraries, corpus evidence and conservative combinations in isolation. It includes synthetic
+results and a read-only procedure for later operator evaluation. V1 behavior and existing chunks
+remain unchanged; `email-prepare-v2` is a proposal only.
+
 This deterministic SQLite-only stage reads successful `email-clean-v1` representations and
 prepares text for future indexing. It makes **no LLM, embedding, Qdrant, PST, attachment, thread
 reconstruction, or web calls**. Original and existing processed emails are never updated.

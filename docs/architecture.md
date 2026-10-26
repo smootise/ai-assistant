@@ -156,6 +156,11 @@ uses synthetic databases and does not access the real mom data. See [rules and o
 
 ### Email Embedding Preparation V1
 
+Independent signature research lives in `tools/email_signature_benchmark.py`, outside the runtime
+pipeline. It compares V1 and optional local libraries using recoverable spans and synthetic labels;
+its separately invoked operator exporter only reads existing processed rows. No production
+detector, schema, chunk or vector changes occur. See [research and proposed V2 boundary](email-signature-research.md).
+
 Successful processed emails feed a deterministic preparation stage with no service clients.
 `email_preparation.py` owns conservative signature/footer decisions inside new/quoted messages,
 bounded section/message chunks, source offsets and lexical near comparisons.

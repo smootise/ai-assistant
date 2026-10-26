@@ -186,6 +186,8 @@ celerybeat.pid
 .venv
 .venv-pst/
 .venv-email/
+.venv-signature/
+signature-private/
 *.pst
 *.ost
 pst_inventory.json

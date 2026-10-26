@@ -1,0 +1,5 @@
+# Isolated research environment only; never add these to production requirements.
+melusine==3.4.0
+mail-parser-reply==1.36
+# PyPI 1.4.4 is obsolete; use the reviewed modern source revision.
+talon[ml] @ https://github.com/mailgun/talon/archive/44d1fa5e5b511734f9ed2eeb727dc57218446c22.zip#sha256=18026afe23d56b45a67b1ac79d50ef74caacb580e093b2aa06ce92f9fae63f85

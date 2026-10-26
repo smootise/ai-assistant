@@ -1,0 +1,26 @@
+[
+  {
+    "id": "reference-0",
+    "body": "Bonjour,\nRendez-vous num\u00e9ro 0.\n\nCordialement,\nAlice Martin\nResponsable commerciale\nAtelier Exemple\nLyon\nT\u00e9l : 01 23 45 67 89\nalice@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain"
+  },
+  {
+    "id": "reference-1",
+    "body": "Bonjour,\nRendez-vous num\u00e9ro 1.\n\nCordialement,\nAlice Martin\nResponsable commerciale\nAtelier Exemple\nLyon\nT\u00e9l : 01 23 45 67 89\nalice@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain"
+  },
+  {
+    "id": "reference-2",
+    "body": "Bonjour,\nRendez-vous num\u00e9ro 2.\n\nCordialement,\nAlice Martin\nResponsable commerciale\nAtelier Exemple\nLyon\nT\u00e9l : 01 23 45 67 89\nalice@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain"
+  },
+  {
+    "id": "reference-3",
+    "body": "Bonjour,\nRendez-vous num\u00e9ro 3.\n\nCordialement,\nAlice Martin\nResponsable commerciale\nAtelier Exemple\nLyon\nT\u00e9l : 01 23 45 67 89\nalice@example.invalid",
+    "sender": "Alice Martin <alice@example.invalid>",
+    "format": "plain"
+  }
+]

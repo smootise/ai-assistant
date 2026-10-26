@@ -115,6 +115,25 @@ preview/evaluation. Preview prints private original, cleaned and final text with
 Original and existing processed records remain unchanged. See [rules, storage, limitations and
 small-sample evaluation](docs/email-embedding-preparation.md) before using real data.
 
+### Email signature benchmark (research only)
+
+Compare the unchanged V1 detector with optional local Melusine, Mail Reply Parser, Talon and
+conservative repetition/agreement prototypes. Install optional dependencies in `.venv-signature`
+with `tools/requirements-signature.txt`, then run from the repository root:
+
+```powershell
+$env:PYTHONPATH = "src;."
+.venv-signature\Scripts\python.exe -m tools.email_signature_benchmark run --input tests/fixtures/signature_benchmark.json --reference tests/fixtures/signature_reference.json --detectors baseline mail-reply melusine talon-brute talon-ml corpus hybrid baseline-hybrid --report signature-results-new.json
+```
+
+`--report` writes fresh content-free metrics. Optional `--private-review` writes full source text,
+labels and detector spans to a fresh path outside Git. No LLMs, vectors, PST or production writes
+occur. Real-data access is a separate, explicitly invoked `export-readonly` command requiring
+`--db`, `--profile`, `--allow-private-read` and `--private-output`; `--count` defaults to 75
+(50–100), `--seed` to 20261026. Optional `--private-reference` exports the disjoint remaining
+corpus for repetition evidence. Do not run it before review. See the
+[research, synthetic findings, metrics and private annotation procedure](docs/email-signature-research.md).
+
 ---
 
 ## Quickstart
